@@ -14,6 +14,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import com.wangzan101.mika.core.tool.Verb
 import com.wangzan101.mika.core.run.RunProvenance
+import com.wangzan101.mika.core.run.RunOrigin
 
 /** 一次动作执行前的审批结论。 */
 sealed interface Decision {
@@ -32,6 +33,8 @@ sealed interface Decision {
     data class Mismatch(val hit: Irreversible, val reason: String) : Decision
     /** 要花钱,本次运行却问不到手机旁的用户,直接拒绝。 */
     data class Denied(val hit: Irreversible) : Decision
+    /** A credential screen immediately consumes any outstanding grant and needs user takeover. */
+    data object PasswordTakeover : Decision
     /** 作用在 Mika 自己身上,不做。 */
     data object OwnApp : Decision
 }
@@ -62,7 +65,8 @@ class ConfirmDecision(
     /** 判定放在锁屏等待之后:按此刻重新读的一屏判。 */
     suspend fun judge(tool: String, args: JsonObject, origin: Origin): Decision {
         outwardSite = null
-        if (autonomous || approvals.autonomous()) {
+        // Bridge (and generic remote sources) can never inherit a local Autonomous toggle.
+        if (provenance.origin == RunOrigin.Ui && (autonomous || approvals.autonomous())) {
             val target = tools.gateTarget(tool)
             if (IrreversibleDetector.needsCheck(target, args)) {
                 val aim = tools.interfaces.actionTarget(tools.declared(tool), args)
@@ -76,6 +80,12 @@ class ConfirmDecision(
         val aim = tools.interfaces.actionTarget(tools.declared(tool), args)
         val checked = aim.args
         if (ownApp(tool, args, aim.aimed)) return Decision.OwnApp
+        // Fail closed before any write when the bridge encounters a credential entry screen.
+        if (provenance.origin == RunOrigin.Bridge &&
+            (passwordScreen(aim.aimed) || passwordScreen(aim.now()))) {
+            confirmations?.reset()
+            return Decision.PasswordTakeover
+        }
         tools.approvalRisk(tool, checked)?.let { declared ->
             return approve(tool, checked, origin, null, declared, null, null, null) ?: Decision.Clear
         }
@@ -90,7 +100,9 @@ class ConfirmDecision(
         // 复看确认过的所见文字(@vN 才有):读屏里没有文字时(自绘界面)付款的同意按它核对象
         val seen = aim.seen
         val hit = IrreversibleDetector.classify(target, checked, snap, fresh)
-        val risk = risks.assess(verb, hit) { fresh ?: snap }
+        val unresolved = IrreversibleDetector.unresolved(target, checked, snap, fresh)
+        val classified = risks.assess(verb, hit) { fresh ?: snap }
+        val risk = if (hit == null && unresolved) classified.copy(level = ActionRisk.Unknown) else classified
         outwardSite = outward(hit, fresh ?: snap)
         approve(tool, checked, origin, hit, risk, fresh ?: snap, typing, seen)?.let { return it }
         if (hit != null || !IrreversibleDetector.unresolved(target, checked, snap, fresh)) return Decision.Clear
@@ -122,7 +134,7 @@ class ConfirmDecision(
         fun audit(decision: String) {
             if (decision != "allowed" || risk.level.outward || risk.payment) recorder?.approval(origin, tool, asked, risk, decision)
         }
-        when (ApprovalPolicy.decide(risk, provenance)) {
+        when (ApprovalPolicy.decide(risk, provenance, approvals.mode(), approvals.attendance(provenance))) {
             Approval.Allow -> return null.also { audit("allowed") }
             Approval.Deny -> return Decision.Denied(asked).also { audit("denied") }
             Approval.Ask -> Unit
@@ -135,6 +147,14 @@ class ConfirmDecision(
             Permit.NoGrant -> required.also { audit("required") }
             is Permit.Mismatch -> Decision.Mismatch(asked, p.reason).also { audit("mismatch") }
         }
+    }
+
+    private fun passwordScreen(screen: ScreenSnapshot?): Boolean {
+        if (screen == null) return false
+        if (screen.elements.any { it.secret }) return true
+        fun containsSecret(node: com.wangzan101.mika.core.uistate.UiTreeNode): Boolean =
+            node.secret || node.children.any(::containsSecret)
+        return screen.windows.any { window -> window.nodes.any(::containsSecret) }
     }
 
     /** 执行了一个写操作:同意按它的规则作废或保留。 */
