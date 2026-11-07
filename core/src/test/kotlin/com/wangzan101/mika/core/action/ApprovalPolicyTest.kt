@@ -50,8 +50,14 @@ class ApprovalPolicyTest {
     @Test fun genericRemoteCannotInheritBridgeExceptionOrAutonomy() {
         for (origin in listOf(RunOrigin.Mcp, RunOrigin.Channel, RunOrigin.Trigger, RunOrigin.Child)) {
             for (mode in ApprovalMode.entries) {
-                assertEquals("$origin $mode", Approval.Deny, ApprovalPolicy.decide(
+                // Generic remote keeps legacy Ask semantics for harmless direct actions;
+                // a direct tool that explicitly needs confirmation must still be denied.
+                assertEquals("$origin $mode", Approval.Allow, ApprovalPolicy.decide(
                     Risk(ActionRisk.External), RunProvenance(origin, Attendance.Present), mode))
+                assertEquals("$origin $mode needs approval", Approval.Deny, ApprovalPolicy.decide(
+                    Risk(ActionRisk.External, ask = com.wangzan101.mika.core.gate.ConfirmationRequest(
+                        IrrevAction.send, "peer", "message", null, "com.example")),
+                    RunProvenance(origin, Attendance.Present), mode))
                 assertEquals("$origin $mode", Approval.Deny, ApprovalPolicy.decide(
                     Risk(ActionRisk.Irreversible, payment = true), RunProvenance(origin, Attendance.Reachable), mode))
             }
