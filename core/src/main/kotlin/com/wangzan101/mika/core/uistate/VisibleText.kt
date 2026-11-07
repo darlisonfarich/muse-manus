@@ -38,22 +38,13 @@ internal object VisibleText {
     }
 
     fun missing(screen: ScreenSnapshot, recognized: List<VisibleTextLine>): List<VisibleTextLine> {
-        val secret = screen.elements.filter { it.secret }.map { it.bounds } +
-            screen.windows.flatMap { window ->
-                val out = mutableListOf<List<Int>>()
-                fun visit(node: UiTreeNode) {
-                    if (node.secret) out += node.bounds
-                    node.children.forEach(::visit)
-                }
-                window.nodes.forEach(::visit)
-                out
-            }
+        // Fail closed on malformed secret bounds; even tiny overlap hides the entire line.
+        val secret = SecretRegions.collect(screen.elements, screen.windows) ?: return emptyList()
         val known = screen.elements.filter { !it.secret && it.name.isNotBlank() }
         val unique = mutableListOf<VisibleTextLine>()
-        for (line in recognized.sortedWith(compareBy({ it.bounds.getOrElse(1) { 0 } }, { it.bounds.getOrElse(0) { 0 } }))) {
+        for (line in SecretRegions.filterOcr(recognized, secret).sortedWith(compareBy({ it.bounds.getOrElse(1) { 0 } }, { it.bounds.getOrElse(0) { 0 } }))) {
             val value = key(line.text)
             if (value.isEmpty() || line.bounds.size != 4 || line.bounds[2] <= line.bounds[0] || line.bounds[3] <= line.bounds[1]) continue
-            if (secret.any { overlap(line.bounds, it) >= 0.3 }) continue
             if (known.any { overlap(line.bounds, it.bounds) >= 0.5 && same(value, key(it.name)) }) continue
             val duplicate = unique.indexOfFirst { overlap(line.bounds, it.bounds) >= 0.65 && same(value, key(it.text)) }
             if (duplicate >= 0) {
