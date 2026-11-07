@@ -38,9 +38,9 @@ internal object RequestConfirmation : SurfaceAware {
             "action" to str("Kind of action that spends the money (order for placing an order or booking).", CONFIRM_ACTIONS),
             "target" to str("Who or where the money goes (shop, seller, service), as shown on screen. At most $CONFIRM_FIELD_MAX characters."),
             "content" to str("What is bought: item, spec, quantity. At most $CONFIRM_FIELD_MAX characters."),
-            "amount" to str("Amount and currency the user will pay, as shown on screen."),
+            "amount" to str("Amount and currency if money is involved; omit for sending, posting, submitting or deleting."),
             "app" to str(APP_NOTE),
-        ), listOf("action", "target", "content", "amount", "app"))
+        ), listOf("action", "target", "content", "app"))
 
     /** app 参数写什么按本任务的屏说:一块屏时写那块的写法,几块屏时各写一句。 */
     override fun def(ctx: ToolContext): ToolDef {
@@ -63,9 +63,8 @@ internal object RequestConfirmation : SurfaceAware {
                 a.str("amount", max = 10000)?.let(::capField), a.str("app")!!.trim())
             return fail("payment_requires_takeover", HINT_PAYMENT_TAKEOVER)
         }
-        // 只有花钱要问:写不出金额的操作不用申请,直接做
-        if (a.str("amount")?.any(Char::isDigit) != true) throw ArgError("amount",
-            "required: the total the user will pay, as shown on screen. An action that spends no money needs no approval: do it directly")
+        // In Strict mode outward actions also require approval; they need no monetary amount.
+        // The separate risk gate still blocks payments and verifies declared amounts for orders.
         val app = ctx.confirmTarget(a.str("app")!!.trim())
         val req = ConfirmationRequest(
             kind, capField(a.str("target", max = 10000)!!), capField(a.str("content", max = 10000)!!),
