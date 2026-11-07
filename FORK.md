@@ -11,17 +11,16 @@ os arquivos alterados em relação ao projeto original estão listados abaixo.
 ## Nova identidade
 
 - **Nome do app:** Muse Manus (variante de desenvolvimento: Muse Manus Dev)
-- **applicationId / namespace Android:** `com.darlisonfarich.musemanus`
-  (o original é `com.wangzan101.mika`)
-- Os pacotes dos arquivos-fonte Kotlin **não** foram renomeados nesta etapa: continuam
-  `com.wangzan101.mika`, o que é independente do `namespace`/`applicationId`.
+- **applicationId Android:** `com.darlisonfarich.musemanus` (original: `com.wangzan101.mika`).
+- **namespace Android e pacotes Kotlin:** preservados como `com.wangzan101.mika` para manter
+  as referências existentes a `R` e `BuildConfig`, sem renomear classes do Mika.
 
 ## Modificações da branch `feat/muse-manus-identity`
 
-1. **`app/build.gradle.kts`** — `namespace` e `applicationId` trocados de
-   `com.wangzan101.mika` para `com.darlisonfarich.musemanus`; o nome da variante de
-   desenvolvimento (`devInstall`) mudou de "Mika Dev" para "Muse Manus Dev".
-   O `applicationIdSuffix` `.dev` foi mantido.
+1. **`app/build.gradle.kts`** — apenas `applicationId` alterado de
+   `com.wangzan101.mika` para `com.darlisonfarich.musemanus`; o `namespace` permanece
+   `com.wangzan101.mika`. O nome de `devInstall` mudou para "Muse Manus Dev",
+   preservando `applicationIdSuffix` `.dev`.
 2. **`app/src/main/res/values/strings.xml`** — `app_name` trocado de "Mika" para
    "Muse Manus".
 3. **`app/src/main/java/com/wangzan101/mika/about/MikaLinks.kt`** — a checagem de
@@ -33,9 +32,9 @@ os arquivos alterados em relação ao projeto original estão listados abaixo.
    publica o APK debug (`app/build/outputs/apk/debug/*.apk`) como artefato da CI com o
    nome `muse-manus-debug-apk`, também em caso de sucesso (o upload existente só roda
    em falha e só sobe relatórios de teste). Nenhum outro job ou gatilho foi alterado.
-   Nota: a escrita em `.github/workflows/` não é permitida à integração de API usada
-   neste projeto, então este passo é aplicado pela interface web do GitHub, neste mesmo PR.
-5. **`FORK.md`** — este arquivo, novo.
+5. **`app/src/test/java/com/wangzan101/mika/about/ApkIntegrityTest.kt`** — fixture
+   oficial adaptada à URL do fork; a URL do repositório original agora é testada como rejeitada.
+6. **`FORK.md`** — este arquivo, novo e atualizado com as correções do PR nº 1.
 
 ## Observação de instalação
 
