@@ -11,6 +11,8 @@ import android.content.pm.PackageManager
 import android.content.res.Resources
 import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.Bitmap
+import java.io.ByteArrayOutputStream
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
@@ -39,6 +41,7 @@ import com.wangzan101.mika.core.uistate.ScreenFacts
 import com.wangzan101.mika.core.uistate.ScreenPort
 import com.wangzan101.mika.core.uistate.ScreenEvent
 import com.wangzan101.mika.core.uistate.ScreenSnapshot
+import com.wangzan101.mika.core.uistate.SecretRegions
 import com.wangzan101.mika.core.uistate.VisibleTextLine
 import com.wangzan101.mika.core.uistate.SystemCommandResult
 import com.wangzan101.mika.core.uistate.SystemAction
@@ -238,9 +241,28 @@ class AndroidScreen(
     }.distinctUntilChanged { a, b -> a.packageName == b.packageName && a.userId == b.userId }
 
     override suspend fun screenshotPng(): ByteArray? = withContext(Dispatchers.IO) {
-        // 黑图没有可用画面信息,也不能凭它区分安全窗口和合成失败;不要交给模型或 OCR。
+        // Never encode the raw full-resolution frame: re-check the tree around capture.
         if (!frameServable() || frameBlack() == true) return@withContext null
-        display.current?.latestFramePng()
+        val generation = ScreenAccessibility.windowGeneration()
+        val before = read()
+        val raw = display.current?.latestFrameBitmap() ?: return@withContext null
+        try {
+            val after = read()
+            if (generation != ScreenAccessibility.windowGeneration() || before.hash != after.hash ||
+                !after.hasAppWindow || before.passwordField != after.passwordField
+            ) return@withContext null
+            val previous = SecretRegions.collect(before.entries.map { it.element }, before.windows) ?: return@withContext null
+            val areas = SecretRegions.collect(after.entries.map { it.element }, after.windows) ?: return@withContext null
+            if (areas != previous) return@withContext null
+            val safe = SecretBitmap.redact(raw, areas) ?: return@withContext null
+            try {
+                ByteArrayOutputStream().also { safe.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+            } finally {
+                if (safe !== raw) safe.recycle()
+            }
+        } finally {
+            raw.recycle()
+        }
     }
 
     /** 最近一次启动开始的单调时钟时刻（纳秒），与虚拟屏生产者的帧时间戳比较。 */
@@ -274,7 +296,26 @@ class AndroidScreen(
     override suspend fun readVisibleText(): List<VisibleTextLine>? = withContext(Dispatchers.IO) {
         if (!hasDisplay || !frameServable() || frameBlack() == true) return@withContext null
         StillFrameRead.read(SystemClock::uptimeMillis, { delay(it) }, ::frameSignature) {
-            display.current?.latestFrameBitmap()?.let { PhoneOcr.read(it) }
+            val generation = ScreenAccessibility.windowGeneration()
+            val before = read()
+            val raw = display.current?.latestFrameBitmap() ?: return@read null
+            var transferredToOcr = false
+            try {
+                val after = read()
+                if (generation != ScreenAccessibility.windowGeneration() || before.hash != after.hash ||
+                    !after.hasAppWindow || before.passwordField != after.passwordField
+                ) return@read null
+                val previous = SecretRegions.collect(before.entries.map { it.element }, before.windows) ?: return@read null
+                val areas = SecretRegions.collect(after.entries.map { it.element }, after.windows) ?: return@read null
+                if (areas != previous) return@read null
+                // OCR must never receive an unmasked bitmap.
+                val safe = SecretBitmap.redact(raw, areas) ?: return@read null
+                if (safe !== raw) raw.recycle()
+                transferredToOcr = true
+                PhoneOcr.read(safe, areas)
+            } finally {
+                if (!transferredToOcr) raw.recycle()
+            }
         }
     }
 

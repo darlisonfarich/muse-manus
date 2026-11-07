@@ -41,3 +41,36 @@ os arquivos alterados em relação ao projeto original estão listados abaixo.
 Como o `applicationId` mudou, o Muse Manus é um **app novo** para o Android: ele não
 atualiza nem herda os dados de uma instalação do Mika original — os dois podem coexistir
 instalados no mesmo aparelho.
+
+
+## Segurança P0 — mascaramento de capturas e OCR (PR separado, em revisão)
+
+Esta alteração ocorre **após** a integração da identidade; preserva `LICENSE`, `NOTICE`,
+todos os créditos e os pacotes Kotlin originais.
+
+- `core/src/main/kotlin/com/wangzan101/mika/core/uistate/SecretRegions.kt` (novo):
+  recolhe áreas `secret=true` tanto dos elementos quanto dos nós aninhados da árvore;
+  converte coordenadas com margem conservadora; descarta linhas OCR que toquem áreas
+  secretas, mesmo com interseção mínima; falha fechado em geometria inválida.
+- `app/src/main/java/com/wangzan101/mika/cap/phone/a11y/SecretBitmap.kt` (novo):
+  desenha máscaras pretas opacas em uma cópia da imagem **antes** da conversão em
+  JPEG/PNG ou do reconhecimento OCR.
+- `AndroidScreen.kt`: screenshots e OCR da tela virtual usam árvores estáveis antes/
+  depois da captura, verificam a geração de janelas e devolvem `null` quando a leitura
+  da árvore é inconfiável; a imagem crua não sai do método.
+- `MainScreenCapture.kt`: exige árvore de acessibilidade estável e legível, inclui
+  diálogos do sistema na coleta e aplica máscara antes do JPEG/OCR da tela principal;
+  se a análise for impossível, marca a captura como bloqueada.
+- `PhoneOcr.kt` e `VisibleText.kt`: OCR recebe somente imagens já mascaradas e
+  aplica um segundo filtro de interseção em linhas reconhecidas.
+- `ScreenReader.kt`: não concatena texto de campo de senha ao rótulo de contêiner pai.
+- `SecretRegionsTest.kt` (novo) e `SecretBitmapAndroidTest.kt` (novo):
+  testes de geometria, interseção, falha fechada e pixel opaco. O teste de bitmap
+  requer Android real/emulador e não é executado pelos quatro jobs JVM da CI atual.
+
+**Limite conhecido:** quando um aplicativo desenha um segredo em pixels sem identificá-lo
+como campo sensível na árvore de acessibilidade (por exemplo, um código de autenticador
+exibido em um `TextView` normal), não é possível garantir sua identificação apenas por
+`secret=true`. O revisor deve avaliar esse risco antes de autorizar capturas reais.
+Este PR não acrescenta lista de aplicativos proibidos e não altera as regras de aprovação
+de ações, que pertencem ao PR seguinte.
