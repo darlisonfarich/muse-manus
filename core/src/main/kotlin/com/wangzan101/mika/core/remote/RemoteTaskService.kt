@@ -30,14 +30,23 @@ class RemoteTaskService(
     val fileAccess get() = tasks.fileAccess
     val exportEnabled get() = records != null
 
-    fun start(goal: String, conversation: String? = null, requestId: String? = null, attachments: List<String> = emptyList()): RemoteTask {
+    fun start(goal: String, conversation: String? = null, requestId: String? = null, attachments: List<String> = emptyList()): RemoteTask =
+        startValidated(goal, conversation, requestId, attachments, bridge = false)
+
+    /** Only used by the HTTP endpoint after authenticated access was established. */
+    fun startBridge(goal: String, conversation: String? = null, requestId: String? = null, attachments: List<String> = emptyList()): RemoteTask =
+        startValidated(goal, conversation, requestId, attachments, bridge = true)
+
+    private fun startValidated(goal: String, conversation: String?, requestId: String?, attachments: List<String>, bridge: Boolean): RemoteTask {
         val clean = if (attachments.isNotEmpty() && goal.isBlank()) "" else required(goal, "goal", MAX_GOAL)
         if (attachments.isNotEmpty() && fileAccess == null) invalid("This phone does not support task attachments")
         val thread = conversation?.trim()?.takeIf { it.isNotEmpty() }
         if (thread != null && !isConversation(thread)) throw RemoteTaskError.BadConversation()
         if (requestId != null && !isUuid(requestId)) invalid("request_id must be a canonical lowercase UUID")
         if (attachments.any { !ID.matches(it) }) invalid("Invalid attachment ID")
-        return when (val r = tasks.start(clean, thread, requestId, attachments)) {
+        val result = if (bridge) tasks.startBridge(clean, thread, requestId, attachments)
+            else tasks.start(clean, thread, requestId, attachments)
+        return when (val r = result) {
             is StartOutcome.Started -> r.task
             is StartOutcome.Refused -> throw RemoteTaskError.General(RemoteTaskError.Code.UNAVAILABLE, r.message)
         }
