@@ -98,7 +98,7 @@ internal object Refusals {
         put("action", hit.action.name); put("matched", hit.matched)
         put("message", when (hit.action) {
             IrrevAction.pay -> "This step is a payment, so it was not run. $PAYMENT_TAKEOVER"
-            IrrevAction.order -> "Placing the order requires a one-time local confirmation. Describe the items, seller and payable total using request_confirmation. $SINGLE_USE"
+            IrrevAction.order -> "This step spends money (order), so it was not run. First call request_confirmation saying where, what is bought and how much it costs, and do it after the user approves. $SINGLE_USE"
             else -> "This outward or irreversible action requires a one-time local confirmation. Call request_confirmation with the correct action, target, content and app; amount is optional if no money is involved. $SINGLE_USE"
         })
         put("recoverable", true); put("counts_as_failure", false)
