@@ -49,6 +49,9 @@ interface RemoteTasks {
     val fileAccess: RemoteTaskFiles? get() = null
     fun scope(owner: String): RemoteTasks = this
     fun start(goal: String, conversation: String?, requestId: String? = null, attachments: List<String> = emptyList()): StartOutcome
+    /** Only the authenticated bridge route is permitted to call this. Ordinary MCP never can. */
+    fun startBridge(goal: String, conversation: String?, requestId: String? = null, attachments: List<String> = emptyList()): StartOutcome =
+        StartOutcome.Refused("Bridge task start requires an authenticated bridge endpoint")
     fun get(id: String): RemoteTask?
     /** 新的在前。保留给原有 MCP 与直接服务调用。 */
     fun list(limit: Int): List<RemoteTask>
