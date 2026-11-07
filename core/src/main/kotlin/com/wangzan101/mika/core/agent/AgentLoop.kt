@@ -689,6 +689,9 @@ class AgentLoop(
                 // 不在屏上、要问的一步(会改动东西的 root 命令):用和付款同一张确认卡片当场问,申报就是这一步本身
                 override suspend fun approve(request: ConfirmationRequest): ToolExecution =
                     user.confirm(Outcome.Confirm(request, request.app), step, running)
+
+                override suspend fun passwordTakeover(): ToolExecution? =
+                    user.takeover(Outcome.Takeover("login", "A password or PIN field requires your direct input on the phone."), running)
             })
             val ran = when (action) {
                 is ActionOutcome.Cancelled -> return TaskState.Cancelled
