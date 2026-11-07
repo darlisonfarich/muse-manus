@@ -15,6 +15,7 @@ import kotlinx.serialization.json.contentOrNull
 import com.wangzan101.mika.core.tool.Verb
 import com.wangzan101.mika.core.run.RunProvenance
 import com.wangzan101.mika.core.run.RunOrigin
+import com.wangzan101.mika.core.action.ApprovalMode
 
 /** 一次动作执行前的审批结论。 */
 sealed interface Decision {
@@ -102,7 +103,7 @@ class ConfirmDecision(
         val hit = IrreversibleDetector.classify(target, checked, snap, fresh)
         val unresolved = IrreversibleDetector.unresolved(target, checked, snap, fresh)
         val classified = risks.assess(verb, hit) { fresh ?: snap }
-        val risk = if (hit == null && unresolved) classified.copy(level = ActionRisk.Unknown) else classified
+        val risk = if (hit == null && unresolved && (provenance.origin == RunOrigin.Bridge || approvals.mode() == ApprovalMode.Strict)) classified.copy(level = ActionRisk.Unknown) else classified
         outwardSite = outward(hit, fresh ?: snap)
         approve(tool, checked, origin, hit, risk, fresh ?: snap, typing, seen)?.let { return it }
         if (hit != null || !IrreversibleDetector.unresolved(target, checked, snap, fresh)) return Decision.Clear
