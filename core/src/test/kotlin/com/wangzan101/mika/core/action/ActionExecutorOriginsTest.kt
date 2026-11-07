@@ -51,15 +51,16 @@ class ActionExecutorOriginsTest(private val label: String, private val action: I
         val (screen, executor) = setup()
         val out = executor.run(Part.ToolCall("c1", "phone_tap", """{"ref":"@e1","snapshotId":"s1"}"""), origin)
         out as ActionOutcome.Refused
-        assertEquals("confirmation_required", out.code)
+        val expectedCode = if (action == IrrevAction.pay) "payment_requires_takeover" else "confirmation_required"
+        assertEquals(expectedCode, out.code)
         assertEquals(action, out.hit?.action)
         assertEquals(label, out.hit?.matched)
         assertTrue("没有执行", screen.taps.isEmpty())
         val confirmations = events.filterIsInstance<RunEvent.Confirmation>().map { it.copy(atMs = 0) }
-        assertEquals(listOf(RunEvent.Confirmation(0, action.name, label, null, null, "required")), confirmations)
+        assertEquals(if (action == IrrevAction.pay) emptyList() else listOf(RunEvent.Confirmation(0, action.name, label, null, null, "required")), confirmations)
         // 没执行的动作不记成执行结果;模型单步的拦下说明本身就是交给模型的结果,照常记一条
         val results = events.filterIsInstance<RunEvent.ToolResult>()
-        assertTrue(results.all { it.changed == null && it.callId == "c1" && "confirmation_required" in it.resultJson })
+        assertTrue(results.all { it.changed == null && it.callId == "c1" && expectedCode in it.resultJson })
         assertEquals(if (origin.policy.recordsRefusal) 1 else 0, results.size)
     }
 
