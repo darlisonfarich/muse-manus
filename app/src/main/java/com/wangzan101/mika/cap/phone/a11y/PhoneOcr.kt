@@ -10,6 +10,7 @@ import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.wangzan101.mika.core.uistate.VisibleTextLine
+import com.wangzan101.mika.core.uistate.SecretRegions
 import com.wangzan101.mika.core.uistate.normalize
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.Collections
@@ -28,7 +29,7 @@ internal object PhoneOcr {
         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
 
-    suspend fun read(bitmap: Bitmap): List<VisibleTextLine> {
+    suspend fun read(bitmap: Bitmap, secretAreas: List<SecretRegions.Box>): List<VisibleTextLine> {
         val recognizers = try { listOf(chinese, latin) } catch (e: Exception) {
             bitmap.recycle()
             throw e
@@ -54,7 +55,8 @@ internal object PhoneOcr {
                     ), line.confidence.takeIf { it > 0f })
                 } }
                 if (remaining.decrementAndGet() == 0) {
-                    val complete = lines.toList()
+                    // Defense in depth: OCR lines intersecting a mask never escape the recognizer.
+                    val complete = SecretRegions.filterOcr(lines.toList(), secretAreas)
                     bitmap.recycle()
                     // 两套都出错不是「屏上没字」:照实报错,读屏结果才写得出 ocr: failed
                     if (continuation.isActive) {
