@@ -126,6 +126,12 @@ class ConfirmationGate {
         if (verb !in KEEPS_GRANT) grant = null
     }
 
+    /** Timeout does not mean a user explicitly denied this action. */
+    @Synchronized fun expire() {
+        pending = null
+        grant = null
+    }
+
     @Synchronized fun reset() {
         pending = null
         grant = null
