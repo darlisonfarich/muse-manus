@@ -26,7 +26,7 @@ class PhoneOcrTest {
         canvas.drawText("中文测试", 80f, 170f, paint)
         canvas.drawText("HELLO OCR", 80f, 350f, paint)
 
-        val lines = PhoneOcr.read(bitmap)
+        val lines = PhoneOcr.read(bitmap, emptyList())
         assertTrue(lines.toString(), lines.any { "中文" in it.text })
         assertTrue(lines.toString(), lines.any { "HELLO" in it.text.uppercase() })
     }
