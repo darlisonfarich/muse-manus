@@ -67,7 +67,11 @@ object ApprovalPolicy {
         configured: ApprovalMode = ApprovalMode.Ask,
         attendance: Attendance = run.attendance,
     ): Approval {
-        val mode = if (run.origin == RunOrigin.Bridge) ApprovalMode.Strict else configured
+        val mode = when (run.origin) {
+            RunOrigin.Bridge -> ApprovalMode.Strict
+            RunOrigin.Ui -> configured
+            else -> ApprovalMode.Ask // Generic remote sessions never acquire local Autonomous privileges.
+        }
         // A payment button is NEVER unlocked by confirmation in non-autonomous mode.
         // Generic remote sources cannot use local autonomous permission either.
         if (risk.action == IrrevAction.pay) return if (mode == ApprovalMode.Autonomous &&
