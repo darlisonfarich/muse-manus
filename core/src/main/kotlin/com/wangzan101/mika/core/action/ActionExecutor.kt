@@ -141,7 +141,25 @@ class ActionExecutor(
         when (d) {
             is Decision.Required -> return blocked(call, args, origin, before, d.hit, null, followUp)
             is Decision.Mismatch -> return blocked(call, args, origin, before, d.hit, d.reason, followUp)
-            is Decision.Denied -> return approvalUnavailable(call, args, origin, before, d.hit, followUp)
+            is Decision.Denied -> {
+                if (d.hit.action == com.wangzan101.mika.core.risk.IrrevAction.pay)
+                    return paymentHandoff(call, args, origin, before, d.hit, followUp)
+                return approvalUnavailable(call, args, origin, before, d.hit, followUp)
+            }
+            Decision.PasswordTakeover -> {
+                // Never run the requested tool; hand the session to the local owner first.
+                val answer = if (origin is Origin.Model) followUp.passwordTakeover() else null
+                val code = "password_requires_takeover"
+                val content = answer?.content ?: buildJsonObject {
+                    put("ok", false); put("error", code); put("message", "Password entry requires local user takeover.")
+                    put("executed", false); put("counts_as_failure", false)
+                }
+                if (origin.policy.recordsRefusal) {
+                    followUp.refused(content)
+                    recorder.result(origin.step, call.name, verb, content, tools.portRecord(call.name, args), null, null, 0, origin.policy.source, call.id)
+                }
+                return ActionOutcome.Refused(code, content, before)
+            }
             Decision.Unresolved -> return refuse("target_unresolved", origin, before)
             Decision.OwnApp -> return ownApp(call, args, origin, before, followUp)
             else -> Unit
@@ -316,6 +334,20 @@ class ActionExecutor(
 
     private fun refuse(code: String, origin: Origin, before: List<GuardVerdict>) =
         ActionOutcome.Refused(code, Refusals.content(code, origin.policy.refusals, before, null, null), before)
+
+    private fun paymentHandoff(
+        call: Part.ToolCall, args: JsonObject, origin: Origin, before: List<GuardVerdict>,
+        hit: Irreversible, followUp: FollowUp,
+    ): ActionOutcome {
+        val code = "payment_requires_takeover"
+        val content = Refusals.content(code, origin.policy.refusals, before, hit, null)
+        if (origin.policy.recordsRefusal) {
+            followUp.refused(content)
+            recorder.result(origin.step, call.name, tools.verb(call.name), content,
+                tools.portRecord(call.name, args), null, null, 0, origin.policy.source, call.id)
+        }
+        return ActionOutcome.Refused(code, content, before, hit)
+    }
 
     private fun approvalUnavailable(
         call: Part.ToolCall, args: JsonObject, origin: Origin, before: List<GuardVerdict>, hit: Irreversible, followUp: FollowUp,
