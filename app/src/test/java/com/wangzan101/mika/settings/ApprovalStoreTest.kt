@@ -1,5 +1,8 @@
 package com.wangzan101.mika.settings
 
+import com.wangzan101.mika.core.action.ApprovalMode
+import com.wangzan101.mika.core.run.RunOrigin
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -23,7 +26,25 @@ class ApprovalStoreTest {
         }
         assertTrue(ApprovalStore(f).autonomous.value)
         ApprovalStore(f).setAutonomous(false)
-        assertFalse("mode" in f.readText() || "grants" in f.readText())
+        assertTrue("\"mode\":\"Ask\"" in f.readText())
+        assertFalse("grants" in f.readText())
+    }
+
+    @Test fun approvalModesPersistAndBridgeFloorNeverLowers() {
+        val file = tmp.root.resolve("modes.json")
+        val store = ApprovalStore(file)
+        assertEquals(ApprovalMode.Ask, store.mode.value)
+        store.setMode(ApprovalMode.Strict)
+        assertEquals(ApprovalMode.Strict, ApprovalStore(file).mode.value)
+        assertFalse(ApprovalStore(file).autonomous.value)
+        val control = ApprovalControl(store)
+        val bridge = control.start(origin = RunOrigin.Bridge)
+        assertEquals(ApprovalMode.Strict, bridge.mode())
+        control.setMode(ApprovalMode.Autonomous)
+        assertEquals(ApprovalMode.Strict, bridge.mode())
+        assertFalse(bridge.autonomous())
+        assertTrue(bridge.gate() != null)
+        assertEquals(ApprovalMode.Autonomous, ApprovalStore(file).mode.value)
     }
 
     private fun control() = ApprovalControl(ApprovalStore(tmp.root.resolve("a.json")))

@@ -1,6 +1,7 @@
 package com.wangzan101.mika.core.general
 
 import com.wangzan101.mika.core.gate.ConfirmationRequest
+import com.wangzan101.mika.core.action.ApprovalMode
 import com.wangzan101.mika.core.risk.IrrevAction
 import com.wangzan101.mika.core.prompt.Prompts
 import com.wangzan101.mika.core.tool.ArgError
@@ -48,7 +49,11 @@ internal object RequestConfirmation : SurfaceAware {
         val surfaces = ctx.focus.surfaces
         val how = if (surfaces.size == 1) surfaces.single().targetNote
         else surfaces.joinToString("; ") { "on the ${it.id} screen, ${it.targetNote}" }
-        return ToolDef(base.name, base.description, base.props + ("app" to str("$APP_NOTE: $how.")), base.required)
+        val strict = ctx.approvalMode == ApprovalMode.Strict
+        val fields = base.props + ("app" to str("$APP_NOTE: $how."))
+        val props = if (strict) fields + ("amount" to str("Currency and amount only when the action spends money; omit for a non-monetary outward action.")) else fields
+        return ToolDef(base.name, base.description, props,
+            if (strict) base.required.filterNot { it == "amount" } else base.required)
     }
 
     private const val APP_NOTE = "Where the action happens, as on screen now"
@@ -63,9 +68,12 @@ internal object RequestConfirmation : SurfaceAware {
                 a.str("amount", max = 10000)?.let(::capField), a.str("app")!!.trim())
             return fail("payment_requires_takeover", HINT_PAYMENT_TAKEOVER)
         }
-        // 只有花钱要问:写不出金额的操作不用申请,直接做
-        if (a.str("amount")?.any(Char::isDigit) != true) throw ArgError("amount",
-            "required: the total the user will pay, as shown on screen. An action that spends no money needs no approval: do it directly")
+        // Preserve Ask-mode validation: only paid actions use approval in the legacy mode.
+        // Strict allows a genuine non-monetary outward action with no fabricated amount.
+        if (ctx.approvalMode != ApprovalMode.Strict && a.str("amount")?.any(Char::isDigit) != true)
+            throw ArgError("amount", "required: the total the user will pay, as shown on screen. An action that spends no money needs no approval: do it directly")
+        if (kind == IrrevAction.order && a.str("amount")?.any(Char::isDigit) != true)
+            throw ArgError("amount", "order requires the payable total shown on screen")
         val app = ctx.confirmTarget(a.str("app")!!.trim())
         val req = ConfirmationRequest(
             kind, capField(a.str("target", max = 10000)!!), capField(a.str("content", max = 10000)!!),

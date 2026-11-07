@@ -4,6 +4,7 @@ import com.wangzan101.mika.core.gate.ConfirmationRequest
 import com.wangzan101.mika.core.run.Attendance
 import com.wangzan101.mika.core.run.RunOrigin
 import com.wangzan101.mika.core.run.RunProvenance
+import com.wangzan101.mika.core.risk.IrrevAction
 
 /**
  * 一个动作的风险等级(记进审批记录,核查据此知道任务做过对外的事)。[Read] 只看或只在界面间移动;[Change] 在界面上改东西(点、打字);
@@ -20,7 +21,7 @@ enum class ActionRisk { Read, Change, External, Irreversible, Unknown;
  * [ask] 不为空时是不在屏上、改了收不回的一步(工具按这次的参数声明,如会改动东西的 root 命令),询问时也先问用户,
  * 给用户看的就是它;同意只放行一字不差的这一步。
  */
-data class Risk(val level: ActionRisk, val payment: Boolean = false, val ask: ConfirmationRequest? = null)
+data class Risk(val level: ActionRisk, val payment: Boolean = false, val ask: ConfirmationRequest? = null, val action: IrrevAction? = null)
 
 /** 用户在确认卡片上的选择:同意这一次,或不同意。 */
 enum class ConfirmChoice { Once, Deny;
@@ -28,14 +29,21 @@ enum class ConfirmChoice { Once, Deny;
     val approved: Boolean get() = this != Deny
 }
 
-/** 询问 / 自主:此刻是不是自主模式(中途换成自主时,正在跑的任务从下一步起照它)。由设置提供,测试里换成固定值。 */
+/** Persisted policy: Ask (legacy), Strict (outward actions), Autonomous (local only). */
+enum class ApprovalMode { Ask, Strict, Autonomous }
+
+/** The task policy and user presence are read *at every action*, not cached at run start. */
 fun interface ApprovalSettings {
-    /** 自主模式:连付款也不先问。 */
     fun autonomous(): Boolean
+    fun mode(): ApprovalMode = if (autonomous()) ApprovalMode.Autonomous else ApprovalMode.Ask
+    fun attendance(run: RunProvenance): Attendance = run.attendance
 
     companion object {
-        /** 询问(默认):付款和工具声明要问的那几步(见 [Risk.ask])先问。 */
         val ASK = ApprovalSettings { false }
+        val STRICT = object : ApprovalSettings {
+            override fun autonomous() = false
+            override fun mode() = ApprovalMode.Strict
+        }
     }
 }
 
@@ -53,9 +61,30 @@ sealed interface Approval {
  * (渠道、定时、MCP 发起的)时这些都不做。
  */
 object ApprovalPolicy {
-    fun decide(risk: Risk, run: RunProvenance = RunProvenance()): Approval = when {
-        !risk.payment && risk.ask == null -> Approval.Allow
-        run.attendance == Attendance.Unattended || run.origin != RunOrigin.Ui -> Approval.Deny
-        else -> Approval.Ask
+    fun decide(
+        risk: Risk,
+        run: RunProvenance = RunProvenance(),
+        configured: ApprovalMode = ApprovalMode.Ask,
+        attendance: Attendance = run.attendance,
+    ): Approval {
+        val mode = when (run.origin) {
+            RunOrigin.Bridge -> ApprovalMode.Strict
+            RunOrigin.Ui -> configured
+            else -> ApprovalMode.Ask // Generic remote sessions never acquire local Autonomous privileges.
+        }
+        // A payment button is NEVER unlocked by confirmation in non-autonomous mode.
+        // Generic remote sources cannot use local autonomous permission either.
+        if (risk.action == IrrevAction.pay) return if (mode == ApprovalMode.Autonomous &&
+            run.origin == RunOrigin.Ui) Approval.Allow else Approval.Deny
+        if (run.origin == RunOrigin.Ui && mode == ApprovalMode.Autonomous) return Approval.Allow
+        val required = risk.ask != null || risk.payment ||
+            (mode == ApprovalMode.Strict && risk.level.outward)
+        if (!required) return Approval.Allow
+        return when (run.origin) {
+            RunOrigin.Bridge -> Approval.Ask // Unattended bridge runs wait for a local tap.
+            RunOrigin.Ui -> if (attendance != Attendance.Unattended) Approval.Ask else Approval.Deny
+            else -> Approval.Deny // MCP, channel, trigger, child do NOT inherit bridge privileges.
+        }
     }
 }
+

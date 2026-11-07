@@ -57,7 +57,7 @@ class ReplayerDeniedApprovalTest {
         val d: ToolDispatcher = toolDispatcher(s).also { it.captureTargets = true }
         val executor = ActionExecutor(d, OperationGuards(), ConfirmationGate(), {}, ActionRecorder(sink))
         val out = Replayer(d, executor, gate = {}, sink = sink).run(RouteChoice(route, listOf("矿泉水")))
-        assertTrue("UI replay should stop for confirmation, got $out", out is ReplayOutcome.StoppedForConfirmation)
+        assertTrue("UI replay must hand payment to the user rather than auto-replay, got $out", out is ReplayOutcome.Diverged)
         assertTrue(s.taps.isEmpty())
     }
 }

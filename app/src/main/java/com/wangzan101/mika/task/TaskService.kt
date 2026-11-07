@@ -264,7 +264,7 @@ class TaskService : Service() {
             ACTION_START_MCP -> intent.getStringExtra(EXTRA_MCP_ID)?.let { id ->
                 if ((application as com.wangzan101.mika.MikaApp).remoteTasks.claimStart(id)) {
                     begin(intent.getStringExtra(EXTRA_GOAL).orEmpty(), intent.getStringExtra(EXTRA_CONVERSATION),
-                        provenance = RunProvenance(RunOrigin.Mcp,
+                        provenance = RunProvenance(if (intent.getBooleanExtra(EXTRA_BRIDGE_START, false)) RunOrigin.Bridge else RunOrigin.Mcp,
                             Attendance.entries.firstOrNull { it.name == intent.getStringExtra(EXTRA_ATTENDANCE) } ?: Attendance.Unattended),
                         mcpExternalId = id)
                 }
@@ -364,7 +364,8 @@ class TaskService : Service() {
         val store = ConversationStore.shared(this)
         val conversationId = requestedConversation ?: store.newConversation()
         // 定时和电脑交来的任务不丢:这个对话还有任务时排在它后面
-        val queueHere = provenance.origin == RunOrigin.Trigger || provenance.origin == RunOrigin.Mcp || provenance.origin == RunOrigin.Channel
+        val queueHere = provenance.origin == RunOrigin.Trigger || provenance.origin == RunOrigin.Mcp ||
+            provenance.origin == RunOrigin.Bridge || provenance.origin == RunOrigin.Channel
         when (val r = center.tryStart(conversationId, newGoal, queueInConversation = queueHere,
             channelPeer = channelPeer, channelMessageId = channelMessageId, followUp = followUp)) {
             StartResult.DuplicateChannelMessage -> acknowledgeChannel(channelPeer, channelMessageId)
@@ -429,7 +430,7 @@ class TaskService : Service() {
 
     /** 用户(或电脑)在新对话里交来的第一句话:后台请模型起一个标题记下(只起一次,起不出来就不记)。 */
     private fun nameConversation(store: ConversationStore, id: String, first: String, provenance: RunProvenance) {
-        if (provenance.origin != RunOrigin.Ui && provenance.origin != RunOrigin.Mcp && provenance.origin != RunOrigin.Channel) return
+        if (provenance.origin !in setOf(RunOrigin.Ui, RunOrigin.Mcp, RunOrigin.Bridge, RunOrigin.Channel)) return
         scope.launch(Dispatchers.IO) {
             runCatching {
                 val env = TaskEnvironment.of(this@TaskService)
@@ -996,6 +997,7 @@ class TaskService : Service() {
         private const val EXTRA_TRIGGER_CONDITION = "trigger_condition"
         private const val EXTRA_MCP_ID = "mcp_id"
         private const val EXTRA_ATTENDANCE = "attendance"
+        private const val EXTRA_BRIDGE_START = "bridge_start"
         private const val EXTRA_CHANNEL_ID = "channel_id"
         private const val EXTRA_PEER_ID = "peer_id"
         private const val EXTRA_CHANNEL_MESSAGE_ID = "channel_message_id"
@@ -1102,11 +1104,15 @@ class TaskService : Service() {
         }
 
         /** 电脑交来的任务([RemoteTaskHub]):记在 [conversation] 这个对话里,来源记成 MCP。 */
-        fun startMcp(context: Context, goal: String, conversation: String, externalId: String, attendance: Attendance) {
+        fun startMcp(context: Context, goal: String, conversation: String, externalId: String, attendance: Attendance,
+            origin: RunOrigin = RunOrigin.Mcp) {
+            require(origin == RunOrigin.Mcp || origin == RunOrigin.Bridge)
             if (FeatureFlags.get(context).quitRequested()) return
+            // TaskService is exported=false; only RemoteTaskHub dispatches this internally.
             context.startForegroundService(Intent(context, TaskService::class.java).setAction(ACTION_START_MCP)
                 .putExtra(EXTRA_GOAL, goal).putExtra(EXTRA_CONVERSATION, conversation)
-                .putExtra(EXTRA_MCP_ID, externalId).putExtra(EXTRA_ATTENDANCE, attendance.name))
+                .putExtra(EXTRA_MCP_ID, externalId).putExtra(EXTRA_ATTENDANCE, attendance.name)
+                .putExtra(EXTRA_BRIDGE_START, origin == RunOrigin.Bridge))
         }
 
         fun cancelMcp(context: Context, externalId: String) {

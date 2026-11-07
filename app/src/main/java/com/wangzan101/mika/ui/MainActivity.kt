@@ -194,6 +194,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // A foreground user visit is fresh local presence, never inferred from a remote request.
+        com.wangzan101.mika.task.DeviceStateWatcher.markUserPresent()
         monitor.refresh()
     }
 
@@ -467,9 +469,11 @@ private fun MikaRoot(
         }
         Route.Settings -> {
             val autonomous by app.approvals.autonomous.collectAsState()
+            val approvalMode by app.approvals.mode.collectAsState()
             SettingsScreen(store, status, release, onFix, onBack = back, onOpenMemory = { nav.push(Route.Memory) },
                 onOpenModels = { nav.push(Route.Models) },
                 autonomous = autonomous, onAutonomous = app.approvalControl::setAutonomous,
+                approvalMode = approvalMode, onApprovalMode = app.approvalControl::setMode,
                 updateVersion = updateState.update?.version, onOpenAbout = { nav.push(Route.About) },
                 mcpServers = app.mcpServers)
         }

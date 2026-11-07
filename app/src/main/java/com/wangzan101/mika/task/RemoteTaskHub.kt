@@ -49,6 +49,8 @@ class RemoteTaskHub(
         override val fileAccess get() = this@RemoteTaskHub.fileAccess.scope(owner)
         override fun start(goal: String, conversation: String?, requestId: String?, attachments: List<String>) =
             startOwned(owner, goal, conversation, requestId, attachments)
+        override fun startBridge(goal: String, conversation: String?, requestId: String?, attachments: List<String>) =
+            startOwned(owner, goal, conversation, requestId, attachments, origin = RunOrigin.Bridge)
         override fun get(id: String) = getOwned(owner, id)
         override fun list(limit: Int) = listOwned(owner, limit)
         override fun page(limit: Int, before: String?) = pageOwned(owner, limit, before)
@@ -72,10 +74,12 @@ class RemoteTaskHub(
     override fun start(goal: String, conversation: String?, requestId: String?, attachments: List<String>) =
         startOwned(null, goal, conversation, requestId, attachments)
 
-    private fun startOwned(owner: String?, goal: String, conversation: String?, requestId: String?, attachments: List<String>): StartOutcome = try {
+    private fun startOwned(owner: String?, goal: String, conversation: String?, requestId: String?, attachments: List<String>,
+        origin: RunOrigin = RunOrigin.Mcp): StartOutcome = try {
+        require(origin != RunOrigin.Bridge || owner != null) { "Only scoped authenticated starts may be Bridge" }
         val id = requestId ?: UUID.randomUUID().toString()
-        val task = if (attachments.isEmpty()) launch(owner, id, goal, conversation, Attendance.Reachable)
-            else startWithFiles(owner, id, goal, conversation, attachments)
+        val task = if (attachments.isEmpty()) launch(owner, id, goal, conversation, Attendance.Reachable, origin = origin)
+            else startWithFiles(owner, id, goal, conversation, attachments, origin)
         StartOutcome.Started(task)
     } catch (e: IOException) {
         throw e
@@ -86,7 +90,8 @@ class RemoteTaskHub(
         StartOutcome.Refused("Mika could not start the task on the phone. Check its status before trying again.")
     }
 
-    private fun startWithFiles(owner: String?, id: String, goal: String, conversation: String?, attachments: List<String>): RemoteTask {
+    private fun startWithFiles(owner: String?, id: String, goal: String, conversation: String?,
+        attachments: List<String>, origin: RunOrigin): RemoteTask {
         val access = requireNotNull(if (owner == null) fileAccess else fileAccess.scope(owner))
         val request = JSONArray(listOf(goal) + attachments).toString()
         return synchronized(fileStartLock) {
@@ -94,20 +99,20 @@ class RemoteTaskHub(
             val target = conversation ?: RemoteTaskService.newConversation()
             access.uploads.consume(attachments) { uploads ->
                 access.start(target, goal, uploads) { withPaths ->
-                    launch(owner, id, withPaths, conversation, Attendance.Reachable, request, target)
+                    launch(owner, id, withPaths, conversation, Attendance.Reachable, request, target, origin)
                 }
             }
         }
     }
 
     @Synchronized private fun launch(owner: String?, id: String, goal: String, conversation: String?, attendance: Attendance,
-        fileRequest: String? = null, target: String? = conversation): RemoteTask {
+        fileRequest: String? = null, target: String? = conversation, origin: RunOrigin = RunOrigin.Mcp): RemoteTask {
         if (owner != null && conversation != null && !receipts.conversationAvailable(conversation, owner))
             throw RemoteTaskError.General(RemoteTaskError.Code.NOT_FOUND, "Conversation not found")
         receipts.find(id, goal, conversation, fileRequest, owner)?.let { return current(it) }
         val task = RemoteTask(id, target ?: RemoteTaskService.newConversation(), goal, clock(), null, owner = owner)
         receipts.insert(task, newChat = conversation == null, fileRequest = fileRequest)
-        try { TaskService.startMcp(context, goal, task.conversation, id, attendance) }
+        try { TaskService.startMcp(context, goal, task.conversation, id, attendance, origin) }
         catch (e: Exception) {
             receipts.finish(id, TaskState.Failed("Mika could not start the task on the phone.", FailKind.Environment), emptyList())
             throw e

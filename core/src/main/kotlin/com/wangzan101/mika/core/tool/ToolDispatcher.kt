@@ -75,6 +75,11 @@ class ToolDispatcher internal constructor(
         else -> null
     }
 
+    /** Call before the first tool catalog is generated, so Strict can offer non-monetary confirmation. */
+    fun configureApprovalMode(mode: com.wangzan101.mika.core.action.ApprovalMode) {
+        ctx.approvalMode = mode
+    }
+
     private val registry = ToolRegistry(ctx, tools, ::groupOf)
 
     /** 本任务已展开的能力组(按展开的先后)。 */

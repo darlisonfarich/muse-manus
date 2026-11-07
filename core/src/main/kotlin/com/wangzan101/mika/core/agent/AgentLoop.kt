@@ -214,7 +214,9 @@ class AgentLoop(
     /** 用户本次说的话(memory_save、skill_save 的引文校验用);给了就收集,只在内存里、每个任务开始清空。 */
     private val utterances get() = tools.utterances
 
-    private val user = UserExchange(tools, confirmations, confirmTimeoutMs, inputTimeoutMs, { utterances }, { _state.value = it }, ::emit, ::now)
+    private val user = UserExchange(tools, confirmations, confirmTimeoutMs, inputTimeoutMs, { utterances }, { _state.value = it }, ::emit, ::now) {
+        approvals.attendance(provenance)
+    }
     private val replay = routes?.let { RouteReplay(it, tools, ::awaitGate, { r -> gateState = r; _state.value = r }, ::emit, clock) }
 
     @Volatile private var job: Job? = null
@@ -243,6 +245,9 @@ class AgentLoop(
     private suspend fun runInternal(task: String, priorTurns: List<Turn>, inbox: RunInbox?, runProvenance: RunProvenance, threadId: String): TaskState {
         cancelRequested = false
         provenance = runProvenance
+        tools.configureApprovalMode(
+            if (runProvenance.origin == RunOrigin.Bridge) com.wangzan101.mika.core.action.ApprovalMode.Strict else approvals.mode()
+        )
         user.begin(threadId, runProvenance, interaction)
         inbox?.bind(object : RunInbox.Handler {
             override suspend fun answer(text: String, askId: String?) = user.answerInput(text, askId)
@@ -689,6 +694,15 @@ class AgentLoop(
                 // 不在屏上、要问的一步(会改动东西的 root 命令):用和付款同一张确认卡片当场问,申报就是这一步本身
                 override suspend fun approve(request: ConfirmationRequest): ToolExecution =
                     user.confirm(Outcome.Confirm(request, request.app), step, running)
+
+                override suspend fun passwordTakeover(): ToolExecution? =
+                    user.takeover(Outcome.Takeover("login", "A password or PIN field requires your direct input on the phone."), running)
+
+                override suspend fun paymentTakeover(): ToolExecution? {
+                    if (provenance.origin == RunOrigin.Bridge &&
+                        approvals.attendance(provenance) == com.wangzan101.mika.core.run.Attendance.Unattended) return null
+                    return user.takeover(Outcome.Takeover("payment", "Payment must be completed manually on your phone."), running)
+                }
             })
             val ran = when (action) {
                 is ActionOutcome.Cancelled -> return TaskState.Cancelled

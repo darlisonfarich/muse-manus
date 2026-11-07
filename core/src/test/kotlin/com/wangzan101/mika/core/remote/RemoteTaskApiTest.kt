@@ -37,6 +37,23 @@ class RemoteTaskApiTest {
         putJsonObject("params") { put("name", name); put("arguments", args) }
     }.toString()).second["result"]!!.jsonObject
 
+    @Test fun bridgeTasksCannotBeLaunchedFromUnscopedOrGenericRemoteRoutes() {
+        val body = """{"goal":"Muse task"}"""
+        assertEquals(401, request("/api/v1/bridge/tasks", "POST", body, token = null).first)
+        // Normal authenticated token cannot make a Bridge run on an implementation that
+        // has not explicitly enabled the bridge-scoped start contract.
+        assertEquals(503, request("/api/v1/bridge/tasks", "POST", body).first)
+        assertTrue(tasks.tasks.isEmpty())
+        val direct = RemoteEndpoints(tasks, "test")
+        val unscoped = HttpRequest("POST", "/api/v1/bridge/tasks",
+            mapOf("content-type" to "application/json"), body.toByteArray(),
+            InetAddress.getByName("127.0.0.1"))
+        assertEquals(403, direct.handle(unscoped).status)
+        // Legacy MCP/HTTP remains an independent generic origin.
+        assertEquals(201, request("/api/v1/tasks", "POST", body).first)
+        assertEquals(1, tasks.tasks.size)
+    }
+
     @Test fun bothAdaptersUseTheSameTasksAndConversationNamespace() {
         assertTrue(request("/api/v1").second["capabilities"]!!.jsonArray.any { it.jsonPrimitive.content == "task_recovery" })
         assertEquals(400, request("/api/v1/tasks", "POST", """{"goal":"invalid","request_id":null}""").first)

@@ -53,7 +53,7 @@ sealed interface TaskState {
     /**
      * 等用户同意一次要花钱的操作(只能同意这一次);用 [AgentLoop.answerConfirmation] 回答,等到回答、取消或超时(超时按不同意)。
      */
-    data class WaitingConfirmation(val request: ConfirmationRequest) : TaskState
+    data class WaitingConfirmation(val request: ConfirmationRequest, val pausedWaitingUser: Boolean = false) : TaskState
     /**
      * 模型不带工具调用的回复就是 [answer](原样给用户看)。核对有三种结果:
      * [reviewed] 为 false 是什么也没核对(聊天、回答里没有可核对的值、也没请核查模型),这时 [verified] 也是 false,界面不打标;

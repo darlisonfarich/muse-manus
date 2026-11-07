@@ -63,10 +63,10 @@ class UnavailableApprovalTest {
             Origin.Model(1), object : FollowUp { override fun refused(content: JsonObject) { reported = content } })
         assertTrue(result is ActionOutcome.Refused)
         val refusal = result as ActionOutcome.Refused
-        assertEquals("approval_unavailable", refusal.code)
+        assertEquals("payment_requires_takeover", refusal.code)
         assertEquals("确认支付", refusal.hit?.matched)
         assertEquals(refusal.content, reported)
-        assertEquals("approval_unavailable", reported!!["error"]!!.jsonPrimitive.content)
+        assertEquals("payment_requires_takeover", reported!!["error"]!!.jsonPrimitive.content)
         assertEquals("false", reported!!["executed"]!!.jsonPrimitive.content)
         assertEquals(0, screen.taps)
         assertEquals(1, events.filterIsInstance<RunEvent.Approval>().size)
@@ -91,7 +91,8 @@ class UnavailableApprovalTest {
             assertEquals(0, screen.taps)
             val returned = model.requests[2].last { it.role == Role.Tool }.parts.filterIsInstance<Part.ToolResult>().single()
             val content = Json.parseToJsonElement(returned.content).jsonObject
-            assertEquals("approval_unavailable", content["error"]!!.jsonPrimitive.content)
+            val expected = if (label == "确认支付") "payment_requires_takeover" else "approval_unavailable"
+            assertEquals(expected, content["error"]!!.jsonPrimitive.content)
             assertEquals("false", content["executed"]!!.jsonPrimitive.content)
             assertTrue(returned.isError)
         }

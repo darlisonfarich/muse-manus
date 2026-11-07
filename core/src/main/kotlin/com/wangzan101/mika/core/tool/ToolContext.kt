@@ -1,6 +1,7 @@
 package com.wangzan101.mika.core.tool
 
 import com.wangzan101.mika.core.gate.ConfirmationRequest
+import com.wangzan101.mika.core.action.ApprovalMode
 import com.wangzan101.mika.core.knowledge.GuideCatalog
 import com.wangzan101.mika.core.memory.Change
 import com.wangzan101.mika.core.memory.MemoryStore
@@ -61,6 +62,9 @@ internal class ToolContext(
     val scripts: BundledScripts?,
     val shots: Shots,
 ) {
+    /** Frozen tool shape is selected when the run begins; the risk policy itself stays live. */
+    var approvalMode: ApprovalMode = ApprovalMode.Ask
+
     private val parts = HashMap<CapabilityKey<*>, Any>()
 
     /** 能力在任务开始时放进来的东西;没放为 null。 */

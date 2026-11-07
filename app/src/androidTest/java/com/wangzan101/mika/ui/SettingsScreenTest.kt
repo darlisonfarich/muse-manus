@@ -1,5 +1,7 @@
 package com.wangzan101.mika.ui
 
+import com.wangzan101.mika.core.action.ApprovalMode
+
 import com.wangzan101.mika.core.shell.HelperRestart
 import com.wangzan101.mika.ChineseUi
 import androidx.compose.foundation.layout.Column
@@ -346,24 +348,26 @@ class SettingsScreenTest {
         compose.onNodeWithText("长任务的摘要分条写").assertIsDisplayed()
     }
 
-    /** 「自主模式」在任务运行最前面,默认关;点开关或整行都切换。 */
+    /** The task page selects one of three persisted approval modes. */
     @Test
-    fun autonomousSwitchComesFirstAndToggles() {
-        val toggled = mutableListOf<Boolean>()
-        var on by mutableStateOf(false)
+    fun approvalModeSelectorSupportsAskStrictAndAutonomous() {
+        val selected = mutableListOf<ApprovalMode>()
+        var mode by mutableStateOf(ApprovalMode.Ask)
         compose.setContent {
             DuringWorkScreen(
                 keepScreenOn = true, onKeepScreenOn = {}, muteTarget = true, onMuteTarget = {},
-                parallel = null, onParallelMax = {}, onBack = {}, autonomous = on, onAutonomous = { toggled += it; on = it },
+                parallel = null, onParallelMax = {}, onBack = {},
+                approvalMode = mode, onApprovalMode = { selected += it; mode = it },
             )
         }
-        compose.onNodeWithText(AutonomyCopy.GROUP).assertIsDisplayed()
-        compose.onNodeWithText(AutonomyCopy.TITLE).assertIsDisplayed()
-        compose.onNodeWithTag("work-autonomous").assertIsOff().performClick()
-        compose.onNodeWithTag("work-autonomous").assertIsOn()
-        compose.onNodeWithText(AutonomyCopy.TITLE).performClick()
-        compose.onNodeWithTag("work-autonomous").assertIsOff()
-        assertEquals(listOf(true, false), toggled)
+        compose.onNodeWithText("Nível de aprovação").assertIsDisplayed()
+        compose.onNodeWithText("Estrito:", substring = true).performClick()
+        assertEquals(ApprovalMode.Strict, mode)
+        compose.onNodeWithText("Autônomo:", substring = true).performClick()
+        assertEquals(ApprovalMode.Autonomous, mode)
+        compose.onNodeWithText("Perguntar:", substring = true).performClick()
+        assertEquals(ApprovalMode.Ask, mode)
+        assertEquals(listOf(ApprovalMode.Strict, ApprovalMode.Autonomous, ApprovalMode.Ask), selected)
     }
 
     /** 「看图定位已验证」挪到开发者选项:有看图模型才出现,点了切换。 */

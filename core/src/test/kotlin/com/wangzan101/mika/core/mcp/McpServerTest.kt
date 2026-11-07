@@ -50,7 +50,7 @@ class McpServerTest {
         val send = session.call("mcp_fake__send", "{}")
         assertEquals("true", send["ok"].toString())
         assertEquals(2, endpoint.calls)
-        assertFalse(events.any { it is RunEvent.Approval && it.tool == "mcp_fake__send" })
+        assertTrue(events.any { it is RunEvent.Approval && it.tool == "mcp_fake__send" && it.decision == "allowed" })
         assertTrue(events.any { it is RunEvent.ToolResult })
         session.close()
         assertEquals(RunPhase.Ended, store.get(session.spec.id)?.phase)

@@ -22,6 +22,12 @@ interface FollowUp {
      */
     suspend fun approve(request: ConfirmationRequest): ToolExecution? = null
 
+    /** Credential entry is handed to the user before executing the blocked tool call. */
+    suspend fun passwordTakeover(): ToolExecution? = null
+
+    /** Money itself is never gate-approved: a present local user must take over. */
+    suspend fun paymentTakeover(): ToolExecution? = null
+
     companion object {
         val NONE = object : FollowUp {}
     }
