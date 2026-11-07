@@ -194,6 +194,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // A foreground user visit is fresh local presence, never inferred from a remote request.
+        com.wangzan101.mika.task.DeviceStateWatcher.markUserPresent()
         monitor.refresh()
     }
 
