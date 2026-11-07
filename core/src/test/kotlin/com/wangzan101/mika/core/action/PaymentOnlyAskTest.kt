@@ -209,7 +209,7 @@ class PaymentOnlyAskTest {
         val s = Chat()
         val send = tools(call("request_confirmation", """{"action":"send","target":"张三","content":"明天见","app":"com.chat"}"""))
         val m = FakeModel(OBSERVE, send, tap("@e3"), FINISH)
-        val l = loop(m, s)
+        val l = loop(m, s, approvals = ApprovalSettings.STRICT)
         val run = async { l.run("t") }
         advanceUntilIdle()
         assertTrue(l.state.value is TaskState.WaitingConfirmation)
