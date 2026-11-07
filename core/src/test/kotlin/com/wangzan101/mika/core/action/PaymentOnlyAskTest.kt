@@ -166,20 +166,30 @@ class PaymentOnlyAskTest {
     @Test fun donationStillRequiresUserTakeover() = runTest {
         val s = Chat(page = donationPage)
         val m = FakeModel(OBSERVE, tap("@e3"), GIVE_UP)
-        loop(m, s).run("t")
+        val l = loop(m, s)
+        val run = async { l.run("t") }
+        advanceUntilIdle()
+        assertTrue(l.state.value is TaskState.WaitingTakeover)
+        l.resumeAfterTakeover("done")
+        run.await()
         assertTrue(s.taps.isEmpty())
-        assertEquals("confirmation_required", m.result(2).s("error"))
-        assertTrue(m.result(2).s("message"), "hand_to_user" in m.result(2).s("message"))
+        assertEquals("payment_requires_takeover", m.result(2).s("error"))
+        assertTrue(m.result(2).toString(), "\"takeover\"" in m.result(2).toString())
     }
 
     @Test fun payingIsHandedToTheUser() = runTest {
         val s = Chat(page = checkoutPage)
         val m = FakeModel(OBSERVE, tap("@e4"), GIVE_UP)
-        loop(m, s).run("t")
+        val l = loop(m, s)
+        val run = async { l.run("t") }
+        advanceUntilIdle()
+        assertTrue(l.state.value is TaskState.WaitingTakeover)
+        l.resumeAfterTakeover("done")
+        run.await()
         assertTrue(s.taps.isEmpty())
         val r = m.result(2)
-        assertEquals("confirmation_required", r.s("error"))
-        assertTrue(r.s("message"), "hand_to_user" in r.s("message"))
+        assertEquals("payment_requires_takeover", r.s("error"))
+        assertTrue(r.toString(), "\"takeover\"" in r.toString())
     }
 
     @Test fun anApprovedOrderRunsOnceOnlyAndTheCardHasOneChoice() = runTest {
@@ -195,16 +205,18 @@ class PaymentOnlyAskTest {
         assertEquals("confirmation_required", m.result(4).s("error"))
     }
 
-    @Test fun confirmationIsOnlyForSpendingMoney() = runTest {
-        // 写不出金额的申请(发消息)不交给用户,直接告诉模型去做
+    @Test fun nonMonetaryOutwardActionsCanBeConfirmedWithoutAmount() = runTest {
         val s = Chat()
         val send = tools(call("request_confirmation", """{"action":"send","target":"张三","content":"明天见","app":"com.chat"}"""))
         val m = FakeModel(OBSERVE, send, tap("@e3"), FINISH)
         val l = loop(m, s)
-        l.run("t")
+        val run = async { l.run("t") }
+        advanceUntilIdle()
+        assertTrue(l.state.value is TaskState.WaitingConfirmation)
+        l.answerConfirmation(ConfirmChoice.Once)
+        run.await()
         val r = m.result(2)
-        assertEquals("false", r.s("ok"))
-        assertTrue(r.toString(), "amount" in r.toString())
+        assertEquals("true", r.s("ok"))
         assertEquals(listOf("@e3"), s.taps)
     }
 
@@ -241,8 +253,8 @@ class PaymentOnlyAskTest {
         val s = Chat(page = checkoutPage); val sink = Events()
         val m = FakeModel(OBSERVE, ASK_ORDER, GIVE_UP)
         loop(m, s, sink = sink, timeout = 60_000).run("t")
-        assertEquals("confirmation_declined", m.result(2).s("error"))
-        assertEquals(listOf(null, "timed_out"), sink.all.filterIsInstance<RunEvent.Confirmation>().map { it.decision })
+        assertEquals("confirmation_expired", m.result(2).s("error"))
+        assertEquals(listOf(null, "expired"), sink.all.filterIsInstance<RunEvent.Confirmation>().map { it.decision })
     }
 
     @Test fun mikaNeverOperatesItself() = runTest {
