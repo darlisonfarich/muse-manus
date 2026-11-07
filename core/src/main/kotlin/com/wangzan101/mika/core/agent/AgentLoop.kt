@@ -694,6 +694,12 @@ class AgentLoop(
 
                 override suspend fun passwordTakeover(): ToolExecution? =
                     user.takeover(Outcome.Takeover("login", "A password or PIN field requires your direct input on the phone."), running)
+
+                override suspend fun paymentTakeover(): ToolExecution? {
+                    if (provenance.origin == RunOrigin.Bridge &&
+                        approvals.attendance(provenance) == com.wangzan101.mika.core.run.Attendance.Unattended) return null
+                    return user.takeover(Outcome.Takeover("payment", "Payment must be completed manually on your phone."), running)
+                }
             })
             val ran = when (action) {
                 is ActionOutcome.Cancelled -> return TaskState.Cancelled
