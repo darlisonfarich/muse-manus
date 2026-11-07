@@ -5,6 +5,7 @@ import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityWindowInfo
 import com.wangzan101.mika.core.uistate.ScreenSnapshot
+import com.wangzan101.mika.core.uistate.SecretRegions
 import com.wangzan101.mika.core.uistate.normalize
 import com.wangzan101.mika.core.userscreen.CapturedScreen
 import com.wangzan101.mika.core.userscreen.UserScreen
@@ -45,9 +46,17 @@ internal object MainScreenCapture {
 
     /** 截图(调用方已把浮层藏好)。读树要在截图的同一时刻:截完马上读。 */
     suspend fun shoot(service: ScreenAccessibility): Pair<ScreenAccessibility.MainShot, ScreenRead?> {
+        // A frame captured during a tree/window transition cannot safely be redacted.
+        val generation = ScreenAccessibility.windowGeneration()
+        val before = runCatching { readTree(service) }.getOrNull()
         val shot = service.takeMainScreenshot()
-        val read = runCatching { readTree(service) }.getOrNull()
-        return shot to read
+        val after = runCatching { readTree(service) }.getOrNull()
+        val stable = generation == ScreenAccessibility.windowGeneration() && before != null && after != null &&
+            before.hash == after.hash && before.passwordField == after.passwordField && after.hasAppWindow &&
+            SecretRegions.collect(before.entries.map { it.element }, before.windows) != null &&
+            SecretRegions.collect(before.entries.map { it.element }, before.windows) ==
+                SecretRegions.collect(after.entries.map { it.element }, after.windows)
+        return shot to after.takeIf { stable }
     }
 
     /** 截下的画面和树整理成一屏(在后台:编码、认字);[topInset]/[bottomInset] 是状态栏、导航条占掉的像素。 */
@@ -70,18 +79,26 @@ internal object MainScreenCapture {
             ScreenAccessibility.MainShot.Secure -> Result.Captured(CapturedScreen(null, UserScreen("", now, pkg, label, blocked = true)))
             is ScreenAccessibility.MainShot.Ok -> {
                 val bmp = shot.bitmap
+                fun blocked() = Result.Captured(CapturedScreen(null, UserScreen("", now, pkg, label, blocked = true)))
                 try {
-                    val jpeg = ByteArrayOutputStream().also { bmp.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, it) }.toByteArray()
-                    // 安卓 12 以前防截屏的窗口截出来是黑的:屏上有 App 窗口而画面几乎全黑就当作截不到,不发黑图
-                    if (read?.anyAppWindow != false && BitmapImageOps.isMostlyBlack(jpeg)) {
-                        return@withContext Result.Captured(CapturedScreen(null, UserScreen("", now, pkg, label, blocked = true)))
+                    // No readable, stable accessibility tree => no screenshot and no OCR.
+                    val tree = read?.takeIf { it.hasAppWindow } ?: return@withContext blocked()
+                    val areas = SecretRegions.collect(tree.entries.map { it.element }, tree.windows)
+                        ?: return@withContext blocked()
+                    val safe = SecretBitmap.redact(bmp, areas) ?: return@withContext blocked()
+                    try {
+                        val jpeg = ByteArrayOutputStream().also { safe.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, it) }.toByteArray()
+                        // Treat a fully black/secure image as unavailable; never send the raw frame.
+                        if (BitmapImageOps.isMostlyBlack(jpeg)) return@withContext blocked()
+                        val snap = snapshotOf(tree, bmp.width, bmp.height)
+                        val ocr = if (UserScreenText.needsOcr(snap)) recognize(safe, areas) else null
+                        val (lines, fromOcr) = UserScreenText.lines(snap, ocr,
+                            top = normalize(topInset, bmp.height),
+                            bottom = normalize(bmp.height - bottomInset, bmp.height))
+                        Result.Captured(CapturedScreen(jpeg, UserScreen("", now, pkg, label, lines = lines, fromOcr = fromOcr)))
+                    } finally {
+                        if (safe !== bmp) safe.recycle()
                     }
-                    val snap = read?.let { snapshotOf(it, bmp.width, bmp.height) }
-                    val ocr = if (snap != null && UserScreenText.needsOcr(snap)) recognize(bmp) else null
-                    val (lines, fromOcr) = snap?.let {
-                        UserScreenText.lines(it, ocr, top = normalize(topInset, bmp.height), bottom = normalize(bmp.height - bottomInset, bmp.height))
-                    } ?: (emptyList<com.wangzan101.mika.core.userscreen.ScreenLine>() to false)
-                    Result.Captured(CapturedScreen(jpeg, UserScreen("", now, pkg, label, lines = lines, fromOcr = fromOcr)))
                 } finally {
                     bmp.recycle()
                 }
@@ -91,7 +108,8 @@ internal object MainScreenCapture {
 
     /** 主屏上属于 App 的窗口(状态栏、导航栏、输入法、浮层不算)读成元素。 */
     private fun readTree(service: ScreenAccessibility): ScreenRead {
-        val windows = service.windowsOn(Display.DEFAULT_DISPLAY).filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+        // Include system windows so password fields inside system dialogs are redacted too.
+        val windows = service.windowsOn(Display.DEFAULT_DISPLAY)
         val m = service.resources.displayMetrics
         val size = runCatching { service.overlays().area() }.getOrNull()
         return ScreenReader.read(windows, size?.width ?: m.widthPixels, size?.height ?: m.heightPixels)
@@ -102,8 +120,8 @@ internal object MainScreenCapture {
         width = width, height = height, hasWindow = r.anyAppWindow, windows = r.windows,
     )
 
-    private suspend fun recognize(bmp: Bitmap) = try {
-        withTimeoutOrNull(OCR_WAIT_MS) { PhoneOcr.read(bmp.copy(Bitmap.Config.ARGB_8888, false)) }
+    private suspend fun recognize(bmp: Bitmap, areas: List<SecretRegions.Box>) = try {
+        withTimeoutOrNull(OCR_WAIT_MS) { PhoneOcr.read(bmp.copy(Bitmap.Config.ARGB_8888, false), areas) }
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
