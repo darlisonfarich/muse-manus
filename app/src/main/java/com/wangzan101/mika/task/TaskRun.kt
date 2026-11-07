@@ -791,7 +791,7 @@ class TaskRun(
                     }
                 }
             }
-            val runApproval = approvalControl.start(remote = provenance.origin == RunOrigin.Mcp).also { approval = it }
+            val runApproval = approvalControl.start(origin = provenance.origin, presence = states::attendance).also { approval = it }
             val childRunner = if (provenance.origin == RunOrigin.Ui && web != null) ChildAgentRunner(
                 create = { childSpec ->
                     val childTools = toolDispatcher(accessedPhone, model.capabilities.vision,
