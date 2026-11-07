@@ -22,6 +22,9 @@ interface FollowUp {
      */
     suspend fun approve(request: ConfirmationRequest): ToolExecution? = null
 
+    /** Credential entry is handed to the user before executing the blocked tool call. */
+    suspend fun passwordTakeover(): ToolExecution? = null
+
     companion object {
         val NONE = object : FollowUp {}
     }
