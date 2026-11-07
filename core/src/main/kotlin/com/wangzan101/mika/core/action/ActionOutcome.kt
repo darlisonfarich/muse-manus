@@ -96,8 +96,11 @@ internal object Refusals {
     private fun required(hit: Irreversible) = buildJsonObject {
         put("ok", false); put("error", "confirmation_required")
         put("action", hit.action.name); put("matched", hit.matched)
-        put("message", if (hit.action == IrrevAction.pay) "This step is a payment, so it was not run. $PAYMENT_TAKEOVER"
-            else "This step spends money (${hit.action.name}), so it was not run. First call request_confirmation saying where, what is bought and how much it costs, and do it after the user approves. $SINGLE_USE")
+        put("message", when (hit.action) {
+            IrrevAction.pay -> "This step is a payment, so it was not run. $PAYMENT_TAKEOVER"
+            IrrevAction.order -> "Placing the order requires a one-time local confirmation. Describe the items, seller and payable total using request_confirmation. $SINGLE_USE"
+            else -> "This outward or irreversible action requires a one-time local confirmation. Call request_confirmation with the correct action, target, content and app; amount is optional if no money is involved. $SINGLE_USE"
+        })
         put("recoverable", true); put("counts_as_failure", false)
     }
 
