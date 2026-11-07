@@ -119,7 +119,7 @@ object RemoteStatus {
                 put("note", "Mika is asking a question. Answer this question remotely or on the phone.")
             }
             is TaskState.WaitingConfirmation -> {
-                put("waiting_for", "confirmation")
+                put("waiting_for", if (s.pausedWaitingUser) "paused_waiting_user" else "confirmation")
                 put("app", s.request.app)
                 put("note", ON_PHONE_NOTE)
             }
