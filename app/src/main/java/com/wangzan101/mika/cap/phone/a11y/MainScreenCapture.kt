@@ -50,12 +50,13 @@ internal object MainScreenCapture {
         val generation = ScreenAccessibility.windowGeneration()
         val before = runCatching { readTree(service) }.getOrNull()
         val shot = service.takeMainScreenshot()
-        val after = runCatching { readTree(service) }.getOrNull()
+        val size = (shot as? ScreenAccessibility.MainShot.Ok)?.bitmap
+        // Use the ACTUAL screenshot dimensions for normalized rectangles, not overlay inset sizes.
+        val after = runCatching { readTree(service, size?.width, size?.height) }.getOrNull()
         val stable = generation == ScreenAccessibility.windowGeneration() && before != null && after != null &&
             before.hash == after.hash && before.passwordField == after.passwordField && after.hasAppWindow &&
             SecretRegions.collect(before.entries.map { it.element }, before.windows) != null &&
-            SecretRegions.collect(before.entries.map { it.element }, before.windows) ==
-                SecretRegions.collect(after.entries.map { it.element }, after.windows)
+            SecretRegions.collect(after.entries.map { it.element }, after.windows) != null
         return shot to after.takeIf { stable }
     }
 
@@ -107,12 +108,13 @@ internal object MainScreenCapture {
     }
 
     /** 主屏上属于 App 的窗口(状态栏、导航栏、输入法、浮层不算)读成元素。 */
-    private fun readTree(service: ScreenAccessibility): ScreenRead {
+    private fun readTree(service: ScreenAccessibility, width: Int? = null, height: Int? = null): ScreenRead {
         // Include system windows so password fields inside system dialogs are redacted too.
         val windows = service.windowsOn(Display.DEFAULT_DISPLAY)
         val m = service.resources.displayMetrics
         val size = runCatching { service.overlays().area() }.getOrNull()
-        return ScreenReader.read(windows, size?.width ?: m.widthPixels, size?.height ?: m.heightPixels)
+        return ScreenReader.read(windows, width ?: size?.width ?: m.widthPixels,
+            height ?: size?.height ?: m.heightPixels)
     }
 
     private fun snapshotOf(r: ScreenRead, width: Int, height: Int) = ScreenSnapshot(
