@@ -40,7 +40,7 @@ object ClassifiedRisk : RiskJudge {
             IrrevAction.send -> false
             else -> screen()?.let(IrreversibleDetector::hasPayableAmount) == true
         }
-        return Risk(level, payment)
+        return Risk(level, payment, action = hit.action)
     }
 
     /** 动作落在哪个元素上:带编号的按编号找,打字落在有焦点的输入框,坐标点击取包含该点的最小元素。 */
