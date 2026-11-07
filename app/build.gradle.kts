@@ -11,7 +11,7 @@ val gitHash: String = runCatching {
 }.getOrNull()?.takeIf { it.isNotEmpty() } ?: "dev"
 
 android {
-    namespace = "com.darlisonfarich.musemanus"
+    namespace = "com.wangzan101.mika"
     compileSdk = 36
 
     defaultConfig {
