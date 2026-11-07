@@ -90,6 +90,22 @@ class RemoteTaskApi(
             val access = device ?: throw ApiError(503, "device_unavailable", "Device state is unavailable")
             return ok(runBlocking { access.state().toJson() })
         }
+        if (req.path == "$ROOT/bridge/tasks") {
+            method(req, "POST")
+            // Authentication is completed by RemoteHost; owner is assigned only on success.
+            // Direct, unscoped uses of RemoteEndpoints MUST NOT be able to impersonate Bridge.
+            if (req.accessOwner == null) throw ApiError(403, "bridge_auth_required", "Authenticated bridge access is required")
+            if (query.isNotEmpty()) invalid("Task submission accepts no query parameters")
+            val b = body(req, setOf("goal", "conversation", "attachments", "request_id"))
+            val ids = b["attachments"]?.let { value ->
+                (value as? JsonArray)?.map {
+                    (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content ?: invalid("Expected upload IDs")
+                } ?: invalid("attachments must be an array")
+            }.orEmpty()
+            val requestId = if ("request_id" in b) string(b, "request_id").orEmpty() else null
+            val task = fileIO { service.startBridge(string(b, "goal").orEmpty(), string(b, "conversation"), requestId, ids) }
+            return ok(RemoteStatus.describe(task), 201)
+        }
         if (req.path == "$ROOT/tasks") {
             return when (req.method) {
                 "GET" -> {
