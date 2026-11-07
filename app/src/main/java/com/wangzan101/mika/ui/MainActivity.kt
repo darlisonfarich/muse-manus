@@ -469,9 +469,11 @@ private fun MikaRoot(
         }
         Route.Settings -> {
             val autonomous by app.approvals.autonomous.collectAsState()
+            val approvalMode by app.approvals.mode.collectAsState()
             SettingsScreen(store, status, release, onFix, onBack = back, onOpenMemory = { nav.push(Route.Memory) },
                 onOpenModels = { nav.push(Route.Models) },
                 autonomous = autonomous, onAutonomous = app.approvalControl::setAutonomous,
+                approvalMode = approvalMode, onApprovalMode = app.approvalControl::setMode,
                 updateVersion = updateState.update?.version, onOpenAbout = { nav.push(Route.About) },
                 mcpServers = app.mcpServers)
         }
