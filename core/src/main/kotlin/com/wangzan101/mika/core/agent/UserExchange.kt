@@ -42,10 +42,12 @@ internal class UserExchange(
     private val setState: (TaskState) -> Unit,
     private val emit: (RunEvent) -> Unit,
     private val now: () -> Long,
+    private val liveAttendance: () -> Attendance? = { null },
 ) {
     private var threadId = "local"
     private var provenance = RunProvenance()
     private var interaction: Interaction = LocalInteraction
+    private fun attendance(): Attendance = liveAttendance() ?: provenance.attendance
     @Volatile var activeAsk: Delivery.Ask? = null
         private set
     @Volatile private var takeoverReply: CompletableDeferred<HandBack>? = null
@@ -105,7 +107,7 @@ internal class UserExchange(
 
     /** 等用户回答追问,最多 [inputTimeoutMs];超时返回 null。用户的回答可能是验证码一类,不记。 */
     suspend fun awaitAnswer(prompt: String, options: List<String>?): String? {
-        if (provenance.attendance == Attendance.Unattended) return null
+        if (attendance() == Attendance.Unattended) return null
         val pending = CompletableDeferred<String>().also { inputReply = it }
         val ask = ask(Delivery.Ask.Kind.Input, prompt)
         activeAsk = ask
@@ -133,7 +135,7 @@ internal class UserExchange(
 
     /** 等用户交回;取消任务(aborted)时返回 null。等待不超时,避免仍需用户处理时丢掉任务现场。 */
     suspend fun takeover(o: Outcome.Takeover, running: TaskState): ToolExecution? {
-        if (provenance.attendance == Attendance.Unattended || provenance.origin == RunOrigin.Child) return null
+        if ((attendance() == Attendance.Unattended && provenance.origin != RunOrigin.Bridge) || provenance.origin == RunOrigin.Child) return null
         val pending = CompletableDeferred<HandBack>().also { takeoverReply = it }
         val ask = ask(Delivery.Ask.Kind.Takeover, o.message)
         activeAsk = ask
@@ -197,13 +199,13 @@ internal class UserExchange(
             DeclareResult.Unsupported -> return error("payment_requires_takeover", Refusals.PAYMENT_TAKEOVER, recoverable = true)
             DeclareResult.Pending -> Unit
         }
-        if (provenance.attendance == Attendance.Unattended || provenance.origin == RunOrigin.Child) {
+        if ((attendance() == Attendance.Unattended && provenance.origin != RunOrigin.Bridge) || provenance.origin == RunOrigin.Child) {
             g.decide(ConfirmChoice.Deny, step)
             emit(event("declined_unattended"))
             return error("confirmation_declined", CONFIRMATION_DECLINED, recoverable = false)
         }
         // 付款只在手机上同意:渠道、定时、MCP 发起的任务不问
-        if (provenance.origin != RunOrigin.Ui) {
+        if (provenance.origin != RunOrigin.Ui && provenance.origin != RunOrigin.Bridge) {
             g.decide(ConfirmChoice.Deny, step)
             emit(event("declined_remote"))
             return error("confirmation_declined", CONFIRMATION_DECLINED, recoverable = false)
@@ -211,23 +213,28 @@ internal class UserExchange(
         val pending = CompletableDeferred<ConfirmChoice>().also { confirmationReply = it }
         val ask = ask(Delivery.Ask.Kind.Confirm, "${r.action.name}: ${r.target} ${r.content}")
         activeAsk = ask
-        setState(TaskState.WaitingConfirmation(r))
+        val bridge = provenance.origin == RunOrigin.Bridge
+        setState(TaskState.WaitingConfirmation(r, pausedWaitingUser = bridge))
         emit(event(null))
-        // 没人回答(不在手机旁)就按不同意,绝不自动同意
-        val timeout = if (provenance.attendance == Attendance.Reachable) confirmTimeoutMs ?: 15 * 60_000L else confirmTimeoutMs
+        if (bridge) emit(RunEvent.State(now(), "paused_waiting_user", "Waiting for a local confirmation on the phone"))
+        // Bridge requests are paused for up to 30 minutes even if the owner is away.
+        val timeout = if (bridge) 30 * 60_000L
+            else if (attendance() == Attendance.Reachable) confirmTimeoutMs ?: 15 * 60_000L else confirmTimeoutMs
         val answer = try {
-            if (announce(ask) == DeliveryState.Failed) null
+            val sent = announce(ask)
+            // The on-device confirmation notification is independent of channel delivery.
+            if (sent == DeliveryState.Failed && !bridge) null
             else if (timeout == null) pending.await() else withTimeoutOrNull(timeout) { pending.await() }
         } finally { confirmationReply = null; resolve(ask) }
-        val choice = answer ?: ConfirmChoice.Deny
-        g.decide(choice, step)
         setState(running)
-        emit(event(when {
-            answer == null -> "timed_out"
-            choice.approved -> "approved"
-            else -> "declined"
-        }))
-        return if (choice.approved) ToolExecution(buildJsonObject { put("ok", true); put("approved", true); put("message", CONFIRMATION_APPROVED) })
+        if (answer == null) {
+            g.expire()
+            emit(event("expired"))
+            return error("confirmation_expired", "No local confirmation received within the permitted window.", recoverable = true)
+        }
+        g.decide(answer, step)
+        emit(event(if (answer.approved) "approved" else "declined"))
+        return if (answer.approved) ToolExecution(buildJsonObject { put("ok", true); put("approved", true); put("message", CONFIRMATION_APPROVED) })
         else error("confirmation_declined", CONFIRMATION_DECLINED, recoverable = false)
     }
 
