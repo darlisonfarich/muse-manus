@@ -245,6 +245,9 @@ class AgentLoop(
     private suspend fun runInternal(task: String, priorTurns: List<Turn>, inbox: RunInbox?, runProvenance: RunProvenance, threadId: String): TaskState {
         cancelRequested = false
         provenance = runProvenance
+        tools.configureApprovalMode(
+            if (runProvenance.origin == RunOrigin.Bridge) com.wangzan101.mika.core.action.ApprovalMode.Strict else approvals.mode()
+        )
         user.begin(threadId, runProvenance, interaction)
         inbox?.bind(object : RunInbox.Handler {
             override suspend fun answer(text: String, askId: String?) = user.answerInput(text, askId)
