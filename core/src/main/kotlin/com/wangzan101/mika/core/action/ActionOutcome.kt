@@ -58,7 +58,10 @@ internal object Refusals {
 
     fun content(code: String, style: RefusalStyle, before: List<GuardVerdict>, hit: Irreversible?, reason: String?): JsonObject = when (style) {
         // 模型单步被守卫叫停时任务就此结束,用不到说明
-        RefusalStyle.Model -> if (code == "approval_unavailable") notRun(code,
+        RefusalStyle.Model -> if (code == "payment_requires_takeover") notRun(code, PAYMENT_TAKEOVER) {
+            hit?.let { put("action", it.action.name); put("matched", it.matched) }
+            put("counts_as_failure", false)
+        } else if (code == "approval_unavailable") notRun(code,
             "This step spends money, but this run cannot collect the user's approval. The action was not run. " +
                 "Do not retry this action in this run; explain the limitation to the user.") {
             hit?.let { put("action", it.action.name); put("matched", it.matched) }
@@ -69,6 +72,7 @@ internal object Refusals {
         }
         RefusalStyle.Script -> {
             val message = when (code) {
+                "payment_requires_takeover" -> PAYMENT_TAKEOVER
                 "guard_stopped" -> "Mika's operation guard stopped the task."
                 "guard_warning" -> "Mika's operation guard flagged this action; it was not run."
                 "confirmation_required" -> "this step spends money (${hit?.matched})"
