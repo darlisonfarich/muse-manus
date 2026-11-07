@@ -74,3 +74,41 @@ exibido em um `TextView` normal), não é possível garantir sua identificação
 `secret=true`. O revisor deve avaliar esse risco antes de autorizar capturas reais.
 Este PR não acrescenta lista de aplicativos proibidos e não altera as regras de aprovação
 de ações, que pertencem ao PR seguinte.
+
+
+## Portões de aprovação — Strict / Bridge (PR independente, aguardando revisão)
+
+Mudanças sobre a `main` pós-P0. Preservados `LICENSE`, `NOTICE` e pacotes-fonte Kotlin.
+
+- `core/action/Approval.kt`, `RiskJudge.kt`, `ConfirmDecision.kt`, `ActionExecutor.kt`,
+  `ActionOutcome.kt`, `FollowUp.kt`: três modos de aprovação; retenção de
+  `IrrevAction` no `Risk`; `Strict` exige confirmação para ações externas,
+  irreversíveis ou desconhecidas, mantendo leituras e modificações internas sem
+  nova confirmação. O pagamento em modo não autônomo sempre requer intervenção
+  manual; tela de senha em tarefa Bridge interrompe a ação e entrega ao usuário.
+  MCP/canais/temporizadores genéricos não adquirem permissão Bridge.
+- `core/run/RunProvenance.kt`, `AttendanceWindow.kt` (novo): origem `Bridge`,
+  presença por tela interativa/desbloqueada e interação/desbloqueio local recente
+  (Presente até 5 minutos, Alcançável até 30 minutos).
+- `app/settings/ApprovalStore.kt`, `ApprovalControl.kt`, `MainActivity.kt`,
+  `SettingsScreen.kt`, `SettingsSubPages.kt`: persistência dos modos
+  `Ask / Strict / Autonomous` com migração do valor legado, exibição da opção na
+  página de execução e piso `Strict` para tarefas Bridge, independente do modo global.
+- `core/remote/RemoteTasks.kt`, `RemoteTaskService.kt`, `RemoteTaskApi.kt`,
+  `app/task/RemoteTaskHub.kt`, `TaskService.kt`, `TaskRun.kt`: início Bridge
+  em rota HTTP dedicada `POST /api/v1/bridge/tasks`, somente com contexto
+  autenticado `accessOwner`, propagado pelo serviço Android privado. Início
+  MCP comum permanece origem `Mcp` e não recebe exceção.
+- `core/agent/UserExchange.kt`, `AgentLoop.kt`, `TaskState.kt`,
+  `core/gate/ConfirmationGate.kt`, `core/remote/RemoteTasks.kt`,
+  `app/task/DeviceStateWatcher.kt`: confirmação local por notificação existente,
+  pausa da ponte por até 30 minutos, exposição de `paused_waiting_user` no
+  estado da tarefa, expiração diferenciada (`confirmation_expired`) da
+  recusa expressa e reconsulta de presença em cada decisão.
+- Testes de política e risco, persistência, presença e isolamento do endpoint
+  em `ApprovalPolicyTest.kt`, `ApprovalStoreTest.kt`, `AttendanceWindowTest.kt`
+  e `RemoteTaskApiTest.kt`.
+
+**Atenção:** este PR depende da revisão e do CI; não cobre a mitigação P0 dos
+segredos que não sejam nós `secret=true`, nem teste real no POCO. As ressalvas
+do PR anterior permanecem em aberto. Os portões NÃO adotam lista de Apps proibidos.
