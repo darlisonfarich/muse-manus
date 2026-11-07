@@ -107,13 +107,13 @@ jobs:
             app/build/reports/tests/testDebugUnitTest
           retention-days: 7
           if-no-files-found: ignore
-        # Fork Muse Manus: publica o APK debug como artefato (também em sucesso)
-        - name: Upload debug APK
+      # Fork Muse Manus: publica o APK debug como artefato após build bem-sucedido.
+      - name: Upload debug APK
         uses: actions/upload-artifact@v7
         with:
-            name: muse-manus-debug-apk
+          name: muse-manus-debug-apk
           path: app/build/outputs/apk/debug/*.apk
-        retention-days: 7
+          retention-days: 7
           if-no-files-found: ignore
 
   relay:
