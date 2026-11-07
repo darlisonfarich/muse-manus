@@ -241,10 +241,15 @@ class AgentLoopGateTest {
     @Test fun payTapBlockedPointsToTakeoverOnly() = runTest {
         val s = ChatScreen().apply { button = "立即支付" }
         val m = FakeModel(OBSERVE, tapSend(), FINISH)
-        loop(m, s).run("t")
+        val l = loop(m, s)
+        val run = async { l.run("t") }
+        advanceUntilIdle()
+        assertTrue(l.state.value is TaskState.WaitingTakeover)
+        l.resumeAfterTakeover("done")
+        run.await()
         assertTrue(s.taps.isEmpty())
         val r = m.result(2)
-        assertEquals("confirmation_required", r.s("error")); assertEquals("pay", r.s("action"))
+        assertEquals("payment_requires_takeover", r.s("error")); assertEquals("pay", r.s("action"))
         val msg = r.s("message")
         // 付款单说一条路:不叫先申请确认再说付款不用它
         assertTrue(msg, "First call request_confirmation" !in msg)
