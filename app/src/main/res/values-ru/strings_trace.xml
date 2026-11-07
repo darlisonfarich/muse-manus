@@ -23,15 +23,4 @@
     <string name="trace_save">Сохранить эту трассировку</string>
     <string name="trace_saved">Трассировка сохранена</string>
     <string name="trace_failed">Не удалось экспортировать трассировку</string>
-    <string name="trace_send">Отправить по OTLP/HTTP</string>
-    <string name="trace_network_hint">Отправляются только метаданные этой трассировки.</string>
-    <string name="trace_endpoint">Адрес приёма трассировок</string>
-    <string name="trace_endpoint_hint">Для публичных адресов используйте HTTPS. HTTP разрешён для localhost и локальной сети.</string>
-    <string name="trace_header_name">Имя заголовка авторизации</string>
-    <string name="trace_header_value">Значение заголовка авторизации (необязательно)</string>
-    <string name="trace_sent">Трассировка принята</string>
-    <string name="trace_sent_warning">Трассировка принята, получатель вернул предупреждение</string>
-    <string name="trace_rejected">Получатель отклонил спанов: %1$d</string>
-    <string name="trace_http_error">Получатель вернул HTTP %1$d</string>
-    <string name="trace_send_failed">Не удалось отправить трассировку</string>
 </resources>
