@@ -335,12 +335,15 @@ class ActionExecutor(
     private fun refuse(code: String, origin: Origin, before: List<GuardVerdict>) =
         ActionOutcome.Refused(code, Refusals.content(code, origin.policy.refusals, before, null, null), before)
 
-    private fun paymentHandoff(
+    private suspend fun paymentHandoff(
         call: Part.ToolCall, args: JsonObject, origin: Origin, before: List<GuardVerdict>,
         hit: Irreversible, followUp: FollowUp,
     ): ActionOutcome {
         val code = "payment_requires_takeover"
-        val content = Refusals.content(code, origin.policy.refusals, before, hit, null)
+        // Payments never consume a confirmation grant. Unattended bridge calls are
+        // rejected immediately; present owners use the explicit takeover flow.
+        val takeover = if (origin is Origin.Model) followUp.paymentTakeover() else null
+        val content = takeover?.content ?: Refusals.content(code, origin.policy.refusals, before, hit, null)
         if (origin.policy.recordsRefusal) {
             followUp.refused(content)
             recorder.result(origin.step, call.name, tools.verb(call.name), content,
