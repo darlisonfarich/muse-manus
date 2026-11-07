@@ -167,7 +167,9 @@ class ConfirmationGate {
      * 普通提交、删除只有屏上有合计或付款面板时才要,避免把页面里的区间或待遇当成付款并反复要权。
      */
     private fun amountBinds(hit: Irreversible, s: ScreenSnapshot): Boolean = when (hit.action) {
-        IrrevAction.order, IrrevAction.pay, IrrevAction.other -> true
+        IrrevAction.order, IrrevAction.pay -> true
+        // Unknown outward operations may carry no money: do not require an invented amount.
+        IrrevAction.other -> IrreversibleDetector.hasPayableAmount(s)
         IrrevAction.send -> false
         IrrevAction.submit, IrrevAction.delete -> IrreversibleDetector.hasPayableAmount(s)
     }
