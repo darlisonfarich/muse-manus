@@ -3,6 +3,7 @@ package com.wangzan101.mika.ui
 import com.wangzan101.mika.i18n.tr
 import com.wangzan101.mika.i18n.trPlural
 import com.wangzan101.mika.R
+import com.wangzan101.mika.core.action.ApprovalMode
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -193,6 +194,8 @@ fun DuringWorkScreen(
     muteTarget: Boolean, onMuteTarget: (Boolean) -> Unit,
     parallel: ParallelSetting?, onParallelMax: (Int) -> Unit, onBack: () -> Unit,
     autonomous: Boolean = false, onAutonomous: (Boolean) -> Unit = {},
+    approvalMode: ApprovalMode = if (autonomous) ApprovalMode.Autonomous else ApprovalMode.Ask,
+    onApprovalMode: (ApprovalMode) -> Unit = { onAutonomous(it == ApprovalMode.Autonomous) },
     operatingPace: OperatingPace = OperatingPace.DEFAULT, onOperatingPace: (OperatingPace) -> Unit = {},
     selfConfig: Boolean = false, onSelfConfig: (Boolean) -> Unit = {},
     stepLimit: Int? = null, onStepLimit: (Int?) -> Unit = {},
@@ -200,12 +203,18 @@ fun DuringWorkScreen(
     var editingLimit by remember { mutableStateOf(false) }
     var customLimit by remember { mutableStateOf("") }
     PageScaffold(stringResource(R.string.settings_during_work), onBack) {
-        GroupLabel(AutonomyCopy.GROUP)
+        GroupLabel("Nível de aprovação")
         GroupCard {
-            ListRow(null, AutonomyCopy.TITLE, AutonomyCopy.SUBTITLE, first = true, onClick = { onAutonomous(!autonomous) }) {
-                MikaSwitch(autonomous, onAutonomous, Modifier.testTag("work-autonomous"))
+            ApprovalMode.entries.forEachIndexed { i, mode ->
+                val title = when (mode) {
+                    ApprovalMode.Ask -> "Perguntar: confirmar gastos e operações especiais"
+                    ApprovalMode.Strict -> "Estrito: confirmar envio, publicação, exclusão e submissão"
+                    ApprovalMode.Autonomous -> "Autônomo: apenas tarefas locais"
+                }
+                RadioRow(title, selected = approvalMode == mode, onClick = { onApprovalMode(mode) }, first = i == 0)
             }
         }
+        FooterNote("Tarefas autenticadas da ponte Muse sempre usam o nível Estrito; pagamentos são manuais. MCP e canais genéricos não herdam essa permissão.")
         GroupCard {
             ListRow(MikaIcons.Sun, stringResource(R.string.settings_keep_on), stringResource(R.string.settings_keep_on_sub), first = true, onClick = { onKeepScreenOn(!keepScreenOn) }) {
                 MikaSwitch(keepScreenOn, onKeepScreenOn, Modifier.testTag("work-keep-screen-on"))
