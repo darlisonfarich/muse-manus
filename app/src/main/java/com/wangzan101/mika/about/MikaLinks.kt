@@ -9,10 +9,10 @@ object MikaLinks {
     const val REPO = "https://github.com/wangzan101/Mika"
     const val REPO_LABEL = "github.com/wangzan101/Mika"
     const val README = "$REPO#readme"
-    const val RELEASES = "$REPO/releases"
+    const val RELEASES = "https://github.com/darlisonfarich/muse-manus/releases"
     const val NEW_ISSUE = "$REPO/issues/new"
     /** 检查更新只问 GitHub 发布页(不登录,每小时有次数限制)。 */
-    const val LATEST_RELEASE_API = "https://api.github.com/repos/wangzan101/Mika/releases/latest"
+    const val LATEST_RELEASE_API = "https://api.github.com/repos/darlisonfarich/muse-manus/releases/latest"
 
     /** 反馈时预先填进问题模板的设备与版本信息。 */
     data class Device(
