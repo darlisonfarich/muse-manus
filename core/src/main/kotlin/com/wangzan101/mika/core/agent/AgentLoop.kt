@@ -214,7 +214,9 @@ class AgentLoop(
     /** 用户本次说的话(memory_save、skill_save 的引文校验用);给了就收集,只在内存里、每个任务开始清空。 */
     private val utterances get() = tools.utterances
 
-    private val user = UserExchange(tools, confirmations, confirmTimeoutMs, inputTimeoutMs, { utterances }, { _state.value = it }, ::emit, ::now)
+    private val user = UserExchange(tools, confirmations, confirmTimeoutMs, inputTimeoutMs, { utterances }, { _state.value = it }, ::emit, ::now) {
+        approvals.attendance(provenance)
+    }
     private val replay = routes?.let { RouteReplay(it, tools, ::awaitGate, { r -> gateState = r; _state.value = r }, ::emit, clock) }
 
     @Volatile private var job: Job? = null
