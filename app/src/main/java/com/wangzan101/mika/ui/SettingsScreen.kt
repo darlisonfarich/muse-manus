@@ -85,6 +85,9 @@ fun SettingsScreen(
     /** 任务运行里的「自主模式」:当前值和换它的办法。 */
     autonomous: Boolean = false,
     onAutonomous: (Boolean) -> Unit = {},
+    approvalMode: com.wangzan101.mika.core.action.ApprovalMode = if (autonomous)
+        com.wangzan101.mika.core.action.ApprovalMode.Autonomous else com.wangzan101.mika.core.action.ApprovalMode.Ask,
+    onApprovalMode: (com.wangzan101.mika.core.action.ApprovalMode) -> Unit = { onAutonomous(it == com.wangzan101.mika.core.action.ApprovalMode.Autonomous) },
     /** 查到的新版本号;有它时「关于 Mika」一行写「x 可更新」带红点。 */
     updateVersion: String? = null,
     onOpenAbout: () -> Unit = {},
@@ -211,6 +214,7 @@ fun SettingsScreen(
             muteTarget, onMuteTarget = { flags.setMuteTarget(it); muteTarget = it },
             parallel, onParallelMax = { flags.setParallelMax(it); parallelMax = it }, onBack = toHome,
             autonomous = autonomous, onAutonomous = onAutonomous,
+            approvalMode = approvalMode, onApprovalMode = onApprovalMode,
             operatingPace = operatingPace, onOperatingPace = { flags.setOperatingPace(it); operatingPace = it },
             stepLimit = stepLimit, onStepLimit = { flags.setTaskStepLimit(it); stepLimit = it },
             selfConfig = selfConfig, onSelfConfig = { flags.setSelfConfig(it); selfConfig = it },
