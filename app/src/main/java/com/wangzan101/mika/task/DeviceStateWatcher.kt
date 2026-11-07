@@ -6,6 +6,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
+import android.os.SystemClock
+import com.wangzan101.mika.core.run.Attendance
+import com.wangzan101.mika.core.run.AttendanceWindow
 import android.os.PowerManager
 import android.view.Display
 import kotlinx.coroutines.CoroutineScope
@@ -43,6 +46,7 @@ class DeviceStateWatcher(
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             lock.refresh()
+            if (intent.action == Intent.ACTION_USER_PRESENT) markUserPresent()
         }
     }
 
@@ -59,6 +63,14 @@ class DeviceStateWatcher(
         }
         lock.refresh() // 注册前后之间的变化
     }
+
+    /** Read actual lock/interactive state and monotonic local-user evidence every time. */
+    fun attendance(): Attendance = AttendanceWindow.classify(
+        interactive = power.isInteractive,
+        unlocked = !keyguard.isKeyguardLocked,
+        lastUserAtMs = lastUserAtMs,
+        nowMs = SystemClock.elapsedRealtime(),
+    )
 
     /**
      * 轮询两块屏最上面的任务:[taskId] 不在虚拟屏最上面、却在主屏最上面,就是被用户挪走了。
@@ -88,6 +100,13 @@ class DeviceStateWatcher(
 
     companion object {
         const val POLL_MS = 500L
+
+        @Volatile private var lastUserAtMs: Long? = null
+
+        /** Broadcast USER_PRESENT or an actual foreground UI interaction provides evidence. */
+        fun markUserPresent() {
+            lastUserAtMs = SystemClock.elapsedRealtime()
+        }
 
         internal fun isMovedAway(agentTop: Int, mainTop: Int, taskId: Int) =
             taskId >= 0 && agentTop != taskId && mainTop == taskId
