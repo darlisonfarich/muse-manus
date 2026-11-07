@@ -1,47 +1,64 @@
 package com.wangzan101.mika.settings
 
+import com.wangzan101.mika.core.action.ApprovalMode
 import com.wangzan101.mika.core.action.ApprovalSettings
 import com.wangzan101.mika.core.gate.ConfirmationGate
+import com.wangzan101.mika.core.run.Attendance
+import com.wangzan101.mika.core.run.RunOrigin
+import com.wangzan101.mika.core.run.RunProvenance
 
-/**
- * 一个任务自己的审批设置:自主与否是开工时取全局的,之后跟着开发者选项里的「自主模式」变([set])。
- * 询问时只有付款先问;自主时连付款也不问。
- */
-class RunApproval(startAutonomous: Boolean) : ApprovalSettings {
-    /** 开工时就是自主:这个任务没有确认关卡,也不给 request_confirmation;中途关掉自主留给下一个任务。 */
-    val startedAutonomous: Boolean = startAutonomous
-    @Volatile private var auto = startAutonomous
+/** Per-run policy. Bridge policy cannot be lowered from Strict even by global changes. */
+class RunApproval(
+    startAutonomous: Boolean,
+    val origin: RunOrigin = RunOrigin.Ui,
+    private val userPresence: (() -> Attendance)? = null,
+    initialMode: ApprovalMode = if (startAutonomous) ApprovalMode.Autonomous else ApprovalMode.Ask,
+) : ApprovalSettings {
+    val startedAutonomous = startAutonomous && origin == RunOrigin.Ui
+    @Volatile private var configured = if (origin == RunOrigin.Bridge) ApprovalMode.Strict else initialMode
 
-    override fun autonomous(): Boolean = auto
+    override fun autonomous() = mode() == ApprovalMode.Autonomous
+    override fun mode(): ApprovalMode =
+        if (origin == RunOrigin.Bridge) ApprovalMode.Strict else configured
 
-    fun set(autonomous: Boolean) {
-        auto = autonomous
+    /** Presence is never snapshotted at task start. */
+    override fun attendance(run: RunProvenance): Attendance = userPresence?.invoke() ?: run.attendance
+
+    fun set(value: ApprovalMode) {
+        if (origin != RunOrigin.Ui || startedAutonomous) return
+        configured = value
     }
 
-    /** 这个任务(和它的子任务)用的付款确认关卡:开工时是询问才有,每次一份新的。 */
+    fun set(autonomous: Boolean) = set(if (autonomous) ApprovalMode.Autonomous else ApprovalMode.Ask)
+
     fun gate(): ConfirmationGate? = if (startedAutonomous) null else ConfirmationGate()
 }
 
-/**
- * 询问 / 自主是一个全局开关,存在 [ApprovalStore.autonomous],默认询问。每个任务开工时拿一份自己的([start]);
- * 换开关([setAutonomous]):存下来管之后的任务,正在跑的任务也跟着换(从询问换成自主,下一步起付款也不再问)。
- */
+/** Global settings track active local runs; remote tasks do not gain local autonomy. */
 class ApprovalControl(private val store: ApprovalStore) {
     private val runs = mutableSetOf<RunApproval>()
 
-    /**
-     * [remote] 为 true 是电脑经 MCP 交来的任务:不管开关,一律按询问开工、也不跟着开关变,
-     * 付款这一步在这类任务里永远不做(审批判定对非手机发起的一律拒绝),远端没有办法让它放行。
-     */
-    @Synchronized fun start(remote: Boolean = false): RunApproval =
-        if (remote) RunApproval(false) else RunApproval(store.autonomous.value).also { runs += it }
-
-    @Synchronized fun end(run: RunApproval) {
-        runs -= run
+    @Synchronized fun start(
+        remote: Boolean = false,
+        origin: RunOrigin = if (remote) RunOrigin.Mcp else RunOrigin.Ui,
+        presence: (() -> Attendance)? = null,
+    ): RunApproval {
+        val initial = when (origin) {
+            RunOrigin.Bridge -> ApprovalMode.Strict
+            RunOrigin.Ui -> store.mode.value
+            else -> ApprovalMode.Ask
+        }
+        return RunApproval(initial == ApprovalMode.Autonomous, origin, presence, initial)
+            .also { if (origin == RunOrigin.Ui) runs += it }
     }
 
-    @Synchronized fun setAutonomous(on: Boolean) {
-        store.setAutonomous(on)
-        runs.forEach { it.set(on) }
+    @Synchronized fun end(run: RunApproval) { runs -= run }
+
+    @Synchronized fun setMode(mode: ApprovalMode) {
+        store.setMode(mode)
+        runs.forEach { it.set(mode) }
     }
+
+    @Synchronized fun setAutonomous(on: Boolean) =
+        setMode(if (on) ApprovalMode.Autonomous else ApprovalMode.Ask)
 }
