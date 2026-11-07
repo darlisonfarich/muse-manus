@@ -23,15 +23,4 @@
     <string name="trace_save">このトレースを保存</string>
     <string name="trace_saved">トレースを保存しました</string>
     <string name="trace_failed">トレースのエクスポートに失敗しました</string>
-    <string name="trace_send">OTLP/HTTP で送信</string>
-    <string name="trace_network_hint">このトレースのメタデータだけを送信します。</string>
-    <string name="trace_endpoint">トレースのエンドポイント</string>
-    <string name="trace_endpoint_hint">公開アドレスには HTTPS を使ってください。localhost とローカルネットワークでは HTTP も使えます。</string>
-    <string name="trace_header_name">認証ヘッダー名</string>
-    <string name="trace_header_value">認証ヘッダーの値(省略可)</string>
-    <string name="trace_sent">トレースが受理されました</string>
-    <string name="trace_sent_warning">トレースは受理されましたが、受信側から警告がありました</string>
-    <string name="trace_rejected">受信側が %1$d 個のスパンを拒否しました</string>
-    <string name="trace_http_error">受信側が HTTP %1$d を返しました</string>
-    <string name="trace_send_failed">トレースを送信できませんでした</string>
 </resources>
