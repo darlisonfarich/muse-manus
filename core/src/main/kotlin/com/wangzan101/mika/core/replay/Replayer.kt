@@ -101,6 +101,14 @@ class Replayer(
                         "this run cannot get approval for a payment step", seen,
                         error = "approval_unavailable",
                     )
+                    "payment_requires_takeover" -> return diverged(
+                        "payment requires the user's direct action; replay cannot approve or execute it", seen,
+                        error = "payment_requires_takeover",
+                    )
+                    "password_requires_takeover" -> return diverged(
+                        "password entry requires local user takeover", seen,
+                        error = "password_requires_takeover",
+                    )
                     else -> error("unexpected refusal ${o.code}")
                 }
                 is ActionOutcome.Cancelled -> return diverged("cancelled", seen)
