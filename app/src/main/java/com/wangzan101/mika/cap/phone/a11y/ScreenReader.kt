@@ -297,7 +297,8 @@ internal object ScreenReader {
             for (i in 0 until c.childCount) {
                 val child = c.getChild(i) ?: continue
                 if (!child.isVisibleToUser) continue
-                ownLabel(child)?.let { if (it !in parts) parts += it }
+                // Password descendants must never be included in a clickable parent's label.
+                if (!child.isPassword) ownLabel(child)?.let { if (it !in parts) parts += it }
                 walk(child, depth + 1)
             }
         }
