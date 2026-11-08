@@ -64,6 +64,7 @@ class TaskCenter<R : Any>(
         return if (!sameConversation && running.size < limit().max) {
             store.save(record)
             running += run
+            resources.ger.taskStarted(keyOf(run))
             StartResult.Started(run)
         } else {
             // 容量队列也保留持久排队项，真正 markRunning 时才移除；进程死亡不会留下无法恢复的空档。
@@ -86,13 +87,13 @@ class TaskCenter<R : Any>(
      */
     @Synchronized
     fun reserve(pkg: String, owner: String, stillUsed: () -> Boolean): Boolean {
-        return resources.reserveApp(pkg, owner, { byKey(it) != null }, stillUsed)
+        return resources.reserveApp(pkg, owner, { byKey(it) != null || resources.ger.isActiveOwner(it) }, stillUsed)
     }
 
     /** 任务 [owner] 此刻能不能占 [pkg](只查不占,规则同 [reserve])。 */
     @Synchronized
     fun appFree(pkg: String, owner: String, stillUsed: () -> Boolean): Boolean =
-        resources.appFree(pkg, owner, { byKey(it) != null }, stillUsed)
+        resources.appFree(pkg, owner, { byKey(it) != null || resources.ger.isActiveOwner(it) }, stillUsed)
 
     /**
      * 任务 [owner] 等别的任务放开 [pkg],最多 [timeoutMs](见 [ResourceScheduler.awaitApp]:互相等的不等)。
@@ -118,6 +119,7 @@ class TaskCenter<R : Any>(
     fun onEnded(run: R): List<R> {
         if (queued.removeAll { it === run }) return emptyList()
         running.removeAll { it === run }
+        resources.ger.taskEnded(keyOf(run))
         resources.releaseOwner(keyOf(run))
         val started = mutableListOf<R>()
         while (queued.isNotEmpty() && running.size < limit().max) {
@@ -128,6 +130,7 @@ class TaskCenter<R : Any>(
             if (index < 0) break
             val next = queued.removeAt(index)
             running += next
+            resources.ger.taskStarted(keyOf(next))
             store.get(RunId(keyOf(next)))?.let { store.save(it.copy(phase = RunPhase.Preparing)) }
             started += next
         }
