@@ -57,48 +57,6 @@ class HttpSupportStreamTerminalTest {
         assertEquals(Usage(9, 2), reply.usage)
     }
 
-    @Test fun anthropicMessageStopFinishesWithoutEof() = runBlocking {
-        val server = server(
-            """{"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":0}}}""",
-            """{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}""",
-            """{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"完整"}}""",
-            """{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}""",
-            """{"type":"message_stop"}""",
-        )
-        val model = AnthropicModel(server.baseUrl, "k", "m", caps, http())
-        val reply = complete(model, server)
-        assertEquals(listOf(Part.Text("完整")), reply.parts)
-        assertEquals(StopReason.EndTurn, reply.stopReason)
-        assertEquals(Usage(10, 3), reply.usage)
-    }
-
-    @Test fun responsesCompletedFinishesWithoutEof() = runBlocking {
-        val server = server(
-            """{"type":"response.output_text.delta","delta":"完整"}""",
-            """{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":12,"output_tokens":4,"input_tokens_details":{"cached_tokens":8}}}}""",
-        )
-        val model = ResponsesModel(server.baseUrl, BearerToken.fixed("k"), "m", caps, http())
-        val reply = complete(model, server)
-        assertEquals(listOf(Part.Text("完整")), reply.parts)
-        assertEquals(StopReason.EndTurn, reply.stopReason)
-        assertEquals(Usage(12, 4, 8), reply.usage)
-    }
-
-    @Test fun geminiReadsTrailingUsageBeforeFinishingWithoutEof() = runBlocking {
-        val server = server(
-            """{"candidates":[{"content":{"parts":[{"text":"你"}]}}],"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":1}}""",
-            """{"candidates":[{"content":{"parts":[{"text":"好"}]},"finishReason":"STOP"}]}""",
-            """{"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":4}}""",
-        )
-        val model = GeminiModel(server.baseUrl, "k", "m", caps, http())
-        val updates = Collections.synchronizedList(mutableListOf<String>())
-        val reply = complete(model, server, updates::add)
-        assertEquals(listOf("你", "你好"), updates)
-        assertEquals(listOf(Part.Text("你好")), reply.parts)
-        assertEquals(StopReason.EndTurn, reply.stopReason)
-        assertEquals(Usage(11, 4), reply.usage)
-    }
-
     @Test fun nonTerminalEventDoesNotFinishAndEofIsStillTruncated() = runBlocking {
         supervisorScope {
             val server = server("""{"choices":[{"delta":{"content":"半句"}}]}""")

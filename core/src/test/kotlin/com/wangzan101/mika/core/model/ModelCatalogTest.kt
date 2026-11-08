@@ -44,31 +44,6 @@ class ModelCatalogTest {
         assertNull(server.takeRequest().getHeader("Authorization"))
     }
 
-    @Test fun openAiCompatReadsPerModelProtocolsAndCapabilities() = runTest {
-        server.enqueue(ok(perModelApi))
-        val list = models(catalog.openAiCompat("$base/zen/v1", "k"))
-        assertEquals("/zen/v1/models", server.takeRequest().path)
-        val chat = ModelEndpoint(ModelProtocol.ChatCompletions, "https://gw.test/inference/openai/v1", "reasoning_content")
-        assertEquals(
-            listOf(
-                ListedModel("deepseek-v4.1-flash", "DeepSeek V4.1 Flash", toolCalls = true, vision = true, contextTokens = 1_000_000,
-                    reasoning = true, endpoint = chat, chat = true, reasoningEfforts = listOf("low", "high")),
-                ListedModel("glm-5.3", "GLM-5.3", toolCalls = true, vision = false, contextTokens = 1_000_000, reasoning = true,
-                    endpoint = chat.copy(reasoningField = null)),
-                ListedModel("grok-4.7", "Grok 4.7", toolCalls = true, vision = true, contextTokens = 500_000,
-                    endpoint = ModelEndpoint(ModelProtocol.Responses, "https://gw.test/inference/openai/v1")),
-                ListedModel("claude-haiku-5-5", "Claude Haiku 5.5", toolCalls = true, vision = true, contextTokens = 1_000_000,
-                    reasoning = true, endpoint = ModelEndpoint(ModelProtocol.Messages, "https://gw.test/inference/anthropic/v1")),
-                ListedModel("gemini-4-argon", "Gemini 4 Argon", toolCalls = true, vision = true, contextTokens = 1_048_576,
-                    reasoning = true, endpoint = ModelEndpoint(ModelProtocol.GenerateContent, "https://gw.test/inference/google/v1beta")),
-                // 写了几种协议的,取会说的那一种
-                ListedModel("both", endpoint = ModelEndpoint(ModelProtocol.Messages, "https://gw.test/m/v1")),
-            ),
-            list,
-        )
-        assertEquals(listOf(true, true, true, true, true, true), list.map { it.usable })
-    }
-
     /** 列表写明了不是对话模型的(`type`,或输出里没有文字):记下来,选默认主模型时跳过。 */
     @Test fun openAiCompatReadsWhetherAModelChats() = runTest {
         server.enqueue(ok("""{"data":[

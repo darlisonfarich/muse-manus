@@ -3,14 +3,10 @@ package com.wangzan101.mika.core.agent
 import com.wangzan101.mika.core.assembly.toolDispatcher
 import com.wangzan101.mika.core.cap.sandbox.CommandResult
 import com.wangzan101.mika.core.cap.sandbox.FakeSandbox
-import com.wangzan101.mika.core.model.AnthropicModel
-import com.wangzan101.mika.core.model.BearerToken
 import com.wangzan101.mika.core.model.Capabilities
 import com.wangzan101.mika.core.model.ChatModel
-import com.wangzan101.mika.core.model.GeminiModel
 import com.wangzan101.mika.core.model.OpenAiCompatModel
 import com.wangzan101.mika.core.model.PromptCaching
-import com.wangzan101.mika.core.model.ResponsesModel
 import com.wangzan101.mika.core.testing.Screen
 import com.wangzan101.mika.core.testing.ScriptedScreen
 import com.wangzan101.mika.core.testing.label
@@ -79,75 +75,6 @@ class PrefixStabilityAdaptersTest {
         is JsonObject -> JsonObject(e.filterKeys { it != "cache_control" }.mapValues { strip(it.value) })
         is JsonArray -> JsonArray(e.map(::strip))
         else -> e
-    }
-
-    private val responses = object : Api {
-        override fun model(url: String, vision: Boolean, contextTokens: Int) = ResponsesModel(
-            "$url/v1", BearerToken.fixed("k"), "m", Capabilities(true, vision, contextTokens, true), OkHttpClient(), reasoningEffort = "medium",
-        )
-        override val keys = setOf("instructions", "tools", "input")
-        override val replay = "ENC"
-        override val compactions = listOf(12, 21, 30)
-        override fun zone0(body: JsonObject) = body["instructions"].toString() + body["tools"]
-        override fun messages(body: JsonObject) = body["input"]!!.jsonArray.map { it.toString() }
-        override fun tools(body: JsonObject) = body["tools"]!!.jsonArray.map { it.toString() to it.jsonObject.str("name")!! }
-        override fun call(step: Int, name: String, args: JsonObject, promptTokens: Int): MockResponse {
-            val call = buildJsonObject {
-                put("type", "function_call"); put("id", "fc_$step"); put("call_id", "call_$step"); put("name", name); put("arguments", args.toString())
-            }
-            return sse(
-                """{"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_$step","summary":[],"encrypted_content":"ENC$step"}}""",
-                """{"type":"response.output_item.done","item":$call}""",
-                completed(promptTokens),
-            )
-        }
-        override fun answer(promptTokens: Int) = sse(
-            """{"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"看完了"}]}}""",
-            completed(promptTokens),
-        )
-        private fun completed(promptTokens: Int) =
-            """{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":$promptTokens,"output_tokens":10}}}"""
-    }
-
-    private val anthropic = object : Api {
-        override fun model(url: String, vision: Boolean, contextTokens: Int) =
-            AnthropicModel(url, "k", "m", Capabilities(true, vision, contextTokens, true), OkHttpClient(), reasoningEffort = "medium")
-        override val keys = setOf("system", "tools", "messages")
-        override val replay = "SIG"
-        override val compactions = listOf(12, 21, 30)
-        override fun zone0(body: JsonObject) = strip(body["system"]!!).toString() + strip(body["tools"]!!)
-        override fun messages(body: JsonObject) = body["messages"]!!.jsonArray.map { strip(it).toString() }
-        override fun tools(body: JsonObject) = body["tools"]!!.jsonArray.map { strip(it).toString() to it.jsonObject.str("name")!! }
-        override fun call(step: Int, name: String, args: JsonObject, promptTokens: Int) = json(
-            """{"content":[{"type":"thinking","thinking":"想第${step}步","signature":"SIG$step"},""" +
-                """{"type":"tool_use","id":"tu_$step","name":"$name","input":$args}],""" +
-                """"stop_reason":"tool_use","usage":{"input_tokens":$promptTokens,"output_tokens":10}}""",
-        )
-        override fun answer(promptTokens: Int) = json(
-            """{"content":[{"type":"text","text":"看完了"}],"stop_reason":"end_turn","usage":{"input_tokens":$promptTokens,"output_tokens":10}}""",
-        )
-    }
-
-    private val gemini = object : Api {
-        override fun model(url: String, vision: Boolean, contextTokens: Int) =
-            GeminiModel(url, "k", "m", Capabilities(true, vision, contextTokens, true), OkHttpClient(), reasoningEffort = "medium")
-        override val keys = setOf("systemInstruction", "tools", "contents")
-        override val replay = "TS"
-        // 请求字节比另外三种略少,离触发点只差一点:提示词或工具说明长短一变,越过触发点的那一步就可能和另外三种差一步
-        // (曾经是 13、24);现在和另外三种同一步越过
-        override val compactions = listOf(12, 21, 30)
-        override fun zone0(body: JsonObject) = body["systemInstruction"].toString() + body["tools"]
-        override fun messages(body: JsonObject) = body["contents"]!!.jsonArray.map { it.toString() }
-        override fun tools(body: JsonObject) = body["tools"]!!.jsonArray.flatMap { t ->
-            t.jsonObject["functionDeclarations"]!!.jsonArray.map { it.toString() to it.jsonObject.str("name")!! }
-        }
-        override fun call(step: Int, name: String, args: JsonObject, promptTokens: Int) =
-            reply("""{"functionCall":{"name":"$name","args":$args},"thoughtSignature":"TS$step"}""", promptTokens)
-        override fun answer(promptTokens: Int) = reply("""{"text":"看完了"}""", promptTokens)
-        private fun reply(part: String, promptTokens: Int) = json(
-            """{"candidates":[{"content":{"role":"model","parts":[$part]},"finishReason":"STOP"}],""" +
-                """"usageMetadata":{"promptTokenCount":$promptTokens,"candidatesTokenCount":10}}""",
-        )
     }
 
     /** OpenAI 兼容接口里要标缓存的那种(部分服务商的兼容接口如此):每次把标记挪到最后一条。 */
@@ -310,21 +237,8 @@ class PrefixStabilityAdaptersTest {
         assertTrue("${r.share}", r.share > 0.85)
     }
 
-    @Test fun responsesAppendOnly() = appendOnly(responses, "responses")
-    @Test fun responsesCompaction() = compaction(responses, "responses")
-    @Test fun anthropicAppendOnly() = appendOnly(anthropic, "anthropic")
-    @Test fun anthropicCompaction() = compaction(anthropic, "anthropic")
-    @Test fun geminiAppendOnly() = appendOnly(gemini, "gemini")
-    @Test fun geminiCompaction() = compaction(gemini, "gemini")
     @Test fun explicitCompatAppendOnly() = appendOnly(explicitCompat, "compat explicit")
     @Test fun explicitCompatCompaction() = compaction(explicitCompat, "compat explicit")
-
-    // 系统提示词、最后一个工具、最后一条用户消息各一个;Anthropic 一次请求最多 4 个,多了整次请求被拒(400)
-    @Test fun anthropicCacheMarksStayWithinLimit() {
-        for (body in run(anthropic, contextTokens = 80_000)) {
-            assertEquals("缓存标记个数", 3, CACHE_MARK.findAll(body.toString()).count())
-        }
-    }
 
     private companion object {
         const val STEPS = 30

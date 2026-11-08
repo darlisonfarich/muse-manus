@@ -9,7 +9,6 @@ import com.wangzan101.mika.core.shell.RecoveryCapability
 import com.wangzan101.mika.core.shell.RecoveryConsent
 import com.wangzan101.mika.core.shell.SetupStep
 import com.wangzan101.mika.settings.AccessibilityState
-import com.wangzan101.mika.settings.ChatGptSignInFailureRecord
 import com.wangzan101.mika.settings.SystemStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -65,7 +64,6 @@ class DiagnosticsTest {
             main = DiagnosticsSnapshot.RoleModel("deepseek-chat", "https://api.deepseek.com/v1"),
             vision = null,
             light = DiagnosticsSnapshot.RoleModel("deepseek-chat", "https://api.deepseek.com/v1"),
-            chatGptSignedIn = false,
         ),
         runs = runs,
         update = DiagnosticsSnapshot.Update("Done", "0.1.8", "0.1.8"),
@@ -234,18 +232,6 @@ class DiagnosticsTest {
         )))
         assertTrue(t, t.contains("restored by helper: 3m ago, 2 recently, backed off 1m ago"))
         assertTrue(t, t.contains("accessibility on start: removed 2h ago"))
-    }
-
-    /** 最近一次 ChatGPT 登录失败:写类别、错误代码和说明;说明里像令牌的串遮住。 */
-    @Test
-    fun chatGptSignInFailureShowsCodeWithoutTokens() {
-        val jwt = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEyMzQ1Njc4OTAifQ.c2lnbmF0dXJlLWJ5dGVzLWhlcmUtMTIzNDU2Nzg5MA"
-        val base = snapshot()
-        val failure = ChatGptSignInFailureRecord(now - 5 * 60_000, "CodeExpired", "invalid_grant", "CodeExpired: invalid_grant — bad code token=$jwt")
-        val t = Diagnostics.render(base.copy(models = base.models.copy(chatGptLastFailure = failure)))
-        assertTrue(t, t.contains("ChatGPT last sign-in failure: 5m ago: CodeExpired (code invalid_grant) — CodeExpired: invalid_grant — bad code"))
-        assertFalse(t, t.contains("eyJ"))
-        assertFalse("没有失败就不写这一行", Diagnostics.render(base).contains("last sign-in failure"))
     }
 
     /** 脱敏不误伤:时间、版本号、型号里的数字照写。 */

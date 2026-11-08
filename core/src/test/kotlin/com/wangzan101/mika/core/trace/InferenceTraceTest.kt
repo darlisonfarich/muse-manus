@@ -34,12 +34,6 @@ class InferenceTraceTest {
             val cases = listOf(
                 OpenAiCompatModel(url,key,"chat",caps,http) to
                     """{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":3}}""",
-                ResponsesModel(url,BearerToken.fixed(key),"responses",caps,http) to
-                    """{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":100,"input_tokens_details":{"cached_tokens":0},"output_tokens":3}}""",
-                AnthropicModel(url,key,"anthropic",caps,http) to
-                    """{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":78,"cache_read_input_tokens":20,"cache_creation_input_tokens":2,"output_tokens":3}}""",
-                GeminiModel(url,key,"gemini",caps,http) to
-                    """{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":3,"cachedContentTokenCount":0}}""",
                 OpenAiCompatModel(url,key,"buffered-chat",caps,http) to
                     """data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}
 
@@ -47,7 +41,7 @@ data: {"choices":[],"us\u0061ge":{"prompt_tokens":100,"completion_tokens":3,"pro
 
 """,
             )
-            val expectedCache = listOf(null, 0L, 20L, 0L, 12L)
+            val expectedCache = listOf(null, 12L)
             for ((i, pair) in cases.withIndex()) {
                 val (model, json) = pair
                 val runDir = temp.newFolder()

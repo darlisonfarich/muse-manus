@@ -19,6 +19,7 @@ import com.wangzan101.mika.core.model.ToolSpec
 import com.wangzan101.mika.settings.AesGcmKeyCipher
 import com.wangzan101.mika.settings.ClientSetup
 import com.wangzan101.mika.settings.ProviderConfig
+import com.wangzan101.mika.settings.ProviderConnection
 import com.wangzan101.mika.settings.ProviderPresets
 import com.wangzan101.mika.settings.ProviderStore
 import com.wangzan101.mika.settings.RoleChoice
@@ -552,20 +553,6 @@ class ModelSetupViewModelTest {
         // 换了地址:要重新列,模型名先收起
         vm.setBaseUrl("$url/")
         assertFalse(vm.state.value.form.noList)
-    }
-
-    /** 预设(列表接口照理有)没列出模型、手填的找不到:只说模型不存在。 */
-    @Test fun presetWithoutListReportsTheMissingModel() = runTest {
-        val arkUrl = "https://ark.cn-beijing.volces.com/api/v3"
-        listing[arkUrl] = ModelListResult.Failed(ListFailure.NotSupported)
-        reply = { throw ModelError.ModelNotFound("doubao") }
-        val store = store()
-        val vm = vm(store)
-        vm.selectPreset(ark.label); vm.setBaseUrl(deepseekUrl); vm.setApiKey("k"); vm.testAndSave(); runCurrent()
-        assertTrue(vm.state.value.form.noList)
-        vm.setModel("doubao"); vm.testAndSave(); runCurrent()
-        assertEquals(ListState.Failed("模型「doubao」不存在。要填服务商文档里完整的模型 ID（例如 deepseek-chat）。"), vm.state.value.form.test)
-        assertTrue(store.providers.value.isEmpty())
     }
 
     /** 自定义填了某家的官方地址:建议改用那家的预设;地址就是预设的、接口类型不同时一并说;改用时 Key 留着。 */

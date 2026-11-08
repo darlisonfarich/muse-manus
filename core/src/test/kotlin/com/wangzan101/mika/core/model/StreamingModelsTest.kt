@@ -23,6 +23,19 @@ class StreamingModelsTest {
     private fun stream(vararg data: String) = MockResponse().setHeader("Content-Type", "text/event-stream")
         .setBody(data.joinToString("") { event(it) })
 
+    private fun openAi(): StreamingChatModel = OpenAiCompatModel(
+        server.url("/v1").toString().trimEnd('/'), "k", "m", caps, OkHttpClient(),
+    )
+
+    private suspend fun assertCut(model: StreamingChatModel) {
+        try {
+            model.completeStreaming("s", user, emptyList()) {}
+            throw AssertionError("A truncated event stream must not complete successfully")
+        } catch (e: ModelError.StreamCut) {
+            assertTrue(RetryPolicy.transient(e))
+        }
+    }
+
     @Test fun openAiStreamsTextAndAssemblesSplitToolCall() = runTest {
         server.enqueue(stream(
             """{"choices":[{"delta":{"reasoning_content":"private","content":"先"}}]}""",

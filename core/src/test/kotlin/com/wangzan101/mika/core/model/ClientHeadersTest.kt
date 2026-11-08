@@ -65,49 +65,11 @@ class ClientHeadersTest {
         }
     }
 
-    @Test fun messagesCarriesHeadersAndMaxTokens() = runTest {
-        server.enqueue(ok("""{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}"""))
-        AnthropicModel(base, "ak", "claude-x", caps, OkHttpClient(), maxTokens = 16, headers = headers).complete("s", user, emptyList())
-        val req = server.takeRequest()
-        req.assertCarries()
-        assertEquals("ak", req.getHeader("x-api-key"))
-        assertEquals(16, Json.parseToJsonElement(req.body.readUtf8()).jsonObject["max_tokens"]!!.jsonPrimitive.int)
-    }
-
-    @Test fun generateContentCarriesHeadersAndOptionalMaxTokens() = runTest {
-        val reply = """{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}]}"""
-        server.enqueue(ok(reply))
-        server.enqueue(ok(reply))
-        GeminiModel(base, "gk", "g", caps, OkHttpClient(), headers = headers, maxOutputTokens = 16).complete("s", user, emptyList())
-        GeminiModel(base, "gk", "g", caps, OkHttpClient(), headers = headers).complete("s", user, emptyList())
-        val limited = server.takeRequest()
-        limited.assertCarries()
-        assertEquals("gk", limited.getHeader("x-goog-api-key"))
-        val body = Json.parseToJsonElement(limited.body.readUtf8()).jsonObject
-        assertEquals(16, body["generationConfig"]!!.jsonObject["maxOutputTokens"]!!.jsonPrimitive.int)
-        val plain = server.takeRequest()
-        plain.assertCarries()
-        assertNull(Json.parseToJsonElement(plain.body.readUtf8()).jsonObject["generationConfig"])
-    }
-
-    @Test fun responsesCarriesHeadersAndNoOutputLimit() = runTest {
-        server.enqueue(sse("""{"type":"response.completed","response":{"status":"completed"}}"""))
-        ResponsesModel(base, BearerToken.fixed("rk"), "gpt-x", caps, OkHttpClient(), headers = headers).complete("s", user, emptyList())
-        val req = server.takeRequest()
-        req.assertCarries()
-        assertEquals("Bearer rk", req.getHeader("Authorization"))
-        assertNull(Json.parseToJsonElement(req.body.readUtf8()).jsonObject["max_output_tokens"])
-    }
-
     @Test fun catalogCarriesHeaders() = runTest {
         server.enqueue(ok("""{"data":[{"id":"m"}]}"""))
-        server.enqueue(ok("""{"data":[{"id":"c"}],"has_more":false}"""))
-        server.enqueue(ok("""{"models":[{"name":"models/g"}]}"""))
         val catalog = ModelCatalog(OkHttpClient())
         assertTrue(catalog.openAiCompat(base, "sk", headers) is ModelListResult.Ok)
-        assertTrue(catalog.anthropic(base, "ak", headers) is ModelListResult.Ok)
-        assertTrue(catalog.gemini(base, "gk", headers) is ModelListResult.Ok)
-        repeat(3) { server.takeRequest().assertCarries() }
+        server.takeRequest().assertCarries()
     }
 
     @Test fun withoutHeadersNothingExtraIsSent() = runTest {
