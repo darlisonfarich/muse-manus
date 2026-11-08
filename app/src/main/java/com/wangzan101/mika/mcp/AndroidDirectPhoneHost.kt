@@ -208,9 +208,20 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         return when (outcome) {
             is GerIntentOutcome.Completed -> outcome.result
             is GerIntentOutcome.TimedOut -> buildJsonObject {
-                put("ok", false); put("error", "wait_timeout"); put("cause", outcome.cause); put("executed", false)
+                put("ok", false); put("error", "wait_timeout"); put("cause", outcome.cause)
+                put("executed", progress.index > 0)
+                if (name == "phone_run") {
+                    put("completed", progress.index)
+                    put("results", buildJsonArray { progress.results.forEach { add(it) } })
+                }
             }
-            GerIntentOutcome.Cancelled -> fail("cancelled")
+            GerIntentOutcome.Cancelled -> buildJsonObject {
+                put("ok", false); put("error", "cancelled"); put("executed", progress.index > 0)
+                if (name == "phone_run") {
+                    put("completed", progress.index)
+                    put("results", buildJsonArray { progress.results.forEach { add(it) } })
+                }
+            }
             GerIntentOutcome.Duplicate -> fail("delivery_unknown")
             GerIntentOutcome.QueueFull -> fail("intent_queue_full")
         }
