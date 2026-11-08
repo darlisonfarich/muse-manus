@@ -13,6 +13,8 @@ class ResourceScheduler(
     val tabBudget: TabBudget = TabBudget(),
     val takeoverQueue: TakeoverQueue = TakeoverQueue(),
     val clipboard: ReentrantLock = ReentrantLock(true),
+    /** Single ledger for admitted tasks and the direct MCP screen. */
+    val ger: GlobalExecutionRegistry = GlobalExecutionRegistry(),
 ) {
     /** App(包名,另一份用户的写成「包名@用户」)→ 占着它的任务。 */
     private val apps = HashMap<String, String>()
@@ -33,7 +35,10 @@ class ResourceScheduler(
     @Synchronized
     fun appFree(packageName: String, owner: String, holderActive: (String) -> Boolean, stillUsed: () -> Boolean): Boolean {
         val holder = apps[packageName]
-        return holder == null || holder == owner || !holderActive(holder) || !stillUsed()
+        // A live MCP virtual screen keeps its app until its session is closed.
+        // Ordinary TaskRun reservations retain the previous stale-holder behavior.
+        return holder == null || holder == owner || !holderActive(holder) ||
+            (!ger.isDirectOwner(holder) && !stillUsed())
     }
 
     @Synchronized fun releaseOwner(owner: String) {
