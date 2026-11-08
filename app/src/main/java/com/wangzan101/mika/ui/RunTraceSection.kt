@@ -71,7 +71,6 @@ private fun TraceDetails(archive: TraceArchive, all: List<TraceRow>) {
             val worst = all.maxByOrNull { it.uncached ?: -1 }
             for (row in all.drop(1)) key(row.id) { TraceEntryRow(archive, row, row == worst && row.uncached != null) }
             TraceExportControls(archive)
-            TraceSendRow(archive)
         }
     }
 }

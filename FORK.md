@@ -112,3 +112,29 @@ Mudanças sobre a `main` pós-P0. Preservados `LICENSE`, `NOTICE` e pacotes-font
 **Atenção:** este PR depende da revisão e do CI; não cobre a mitigação P0 dos
 segredos que não sejam nós `secret=true`, nem teste real no POCO. As ressalvas
 do PR anterior permanecem em aberto. Os portões NÃO adotam lista de Apps proibidos.
+
+
+## Remoção 1 — envio OTLP de traces (PR independente)
+
+O Muse Manus mantém a gravação, visualização e exportação **local** de traces,
+mas não oferece mais upload de traces para servidores OTLP/HTTP.
+
+- Removidos `app/record/OtlpSender.kt` (cliente de rede e tipos de resposta)
+  e `app/ui/TraceSendRow.kt` (formulário, credenciais e comando de envio).
+- Removido `TraceSendRow` de `app/ui/RunTraceSection.kt`; preservados
+  `TraceExportControls`, `TraceDetails`, `TraceSettingsRows` e a exportação
+  voluntária para arquivo local.
+- Removidos somente os testes vinculados ao envio de rede:
+  `app/src/test/java/com/wangzan101/mika/record/OtlpSenderTest.kt` e
+  `app/src/androidTest/java/com/wangzan101/mika/ui/OtlpSendDeviceTest.kt`.
+  Os testes de registro/visualização local permanecem.
+- Removidas as onze strings exclusivas do envio OTLP de cada uma das dez
+  traduções `strings_trace.xml`; mantidas as strings da gravação local.
+- `docs/dev/architecture.md`: removidas as instruções e referências à transmissão
+  OTLP, mantendo a descrição da exportação voluntária local.
+- **Preservados:** `core/trace/*`, `app/record/DetailedTraces.kt`, a
+  dependência `traceSchemas(libs.otel.proto)` em `core/build.gradle.kts`,
+  e as demais capacidades do aplicativo. `LICENSE`, `NOTICE` e créditos
+  do Mika continuam intactos.
+
+Esta remoção não altera a ponte do Muse nem o canal genérico de tarefas.

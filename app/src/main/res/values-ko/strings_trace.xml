@@ -23,15 +23,4 @@
     <string name="trace_save">이 트레이스 저장</string>
     <string name="trace_saved">트레이스를 저장했어요</string>
     <string name="trace_failed">트레이스 내보내기에 실패했어요</string>
-    <string name="trace_send">OTLP/HTTP로 보내기</string>
-    <string name="trace_network_hint">이 트레이스의 메타데이터만 보내요.</string>
-    <string name="trace_endpoint">트레이스 엔드포인트</string>
-    <string name="trace_endpoint_hint">공개 주소에는 HTTPS를 쓰세요. localhost와 로컬 네트워크에서는 HTTP도 허용돼요.</string>
-    <string name="trace_header_name">인증 헤더 이름</string>
-    <string name="trace_header_value">인증 헤더 값 (선택)</string>
-    <string name="trace_sent">트레이스가 수락되었어요</string>
-    <string name="trace_sent_warning">수신 측 경고와 함께 트레이스가 수락되었어요</string>
-    <string name="trace_rejected">수신 측에서 스팬 %1$d개를 거부했어요</string>
-    <string name="trace_http_error">수신 측이 HTTP %1$d을(를) 반환했어요</string>
-    <string name="trace_send_failed">트레이스를 보내지 못했어요</string>
 </resources>
