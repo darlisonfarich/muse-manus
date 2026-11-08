@@ -90,7 +90,8 @@ import com.wangzan101.mika.ui.theme.MikaType
 /**
  * 配置模型:用途(主模型、看图模型、轻量模型)和服务商两块。首次上手时 [onboarding] 为真
  * (服务商在前,底部有分页点和「下一步」);设置 › 模型([ModelsScreen])也是这一页,标题和引导语不同,没有底部按钮。
- * 选用途、服务商详情、服务商的全部模型是这一页里的子页面。上手时「下一步」选好主模型才可点,点了调 [onDone]。
+ * 选用途、服务商详情、服务商的全部模型是这一页里的子页面。上手时可配置主模型后继续，
+ * 也可选择无模型的远程控制模式；两种路径都调用 [onDone]，由上手状态记住选择。
  */
 @Composable
 fun ModelSetupScreen(
@@ -164,7 +165,8 @@ fun ModelSetupScreen(
                     setModel = vm::setModel, setManual = vm::setManual, setName = vm::setName,
                     testAndSave = vm::testAndSave, saveUntested = vm::saveWithoutTest,
                     openForm = vm::openForm, closeForm = vm::closeForm,
-                    openProvider = { openProvider = it; allModels = false }, pickRole = { picking = it }, next = onDone, openSpeech = onOpenSpeech,
+                    openProvider = { openProvider = it; allModels = false }, pickRole = { picking = it }, next = onDone,
+                    skipModel = onDone, openSpeech = onOpenSpeech,
                     openUsage = onOpenUsage,
                     setReasoningEffort = vm::setReasoningEffort,
                     setModelContext = vm::setModelContext,
@@ -198,6 +200,8 @@ class ModelSetupActions(
     /** 打开 Token 用量;为 null 时不显示入口(上手流程)。 */
     val openUsage: (() -> Unit)? = null,
     val next: () -> Unit = {},
+    /** Primeiro acesso sem provedor: somente o Muse externo decide; recursos locais de IA continuam sem modelo. */
+    val skipModel: () -> Unit = {},
     val setReasoningEffort: (ModelRole, String?) -> Unit = { _, _ -> },
     val setModelContext: (String, ModelContextSettings) -> Boolean = { _, _ -> false },
 )
@@ -243,7 +247,16 @@ fun ModelSetupContent(ui: ModelSetupUi, onboarding: Boolean, actions: ModelSetup
             if (onboarding && WindowInsets.ime.getBottom(LocalDensity.current) == 0) {
                 Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp)) {
                     ProgressDots(Onboarding.DOTS, Onboarding.dot(OnboardingStep.Model), Modifier.padding(bottom = 14.dp))
-                    MikaButton(ModelSetupCopy.NEXT, actions.next, Modifier.fillMaxWidth().testTag("setup-next"), enabled = ui.canNext)
+                    if (ui.canNext) {
+                        MikaButton(ModelSetupCopy.NEXT, actions.next, Modifier.fillMaxWidth().testTag("setup-next"))
+                    } else {
+                        MikaButton(
+                            ModelSetupCopy.SKIP_MODEL, actions.skipModel,
+                            Modifier.fillMaxWidth().testTag("setup-skip-model"),
+                            kind = ButtonKind.Secondary, size = ButtonSize.Medium,
+                        )
+                        FooterNote(ModelSetupCopy.SKIP_MODEL_NOTE, Modifier.padding(top = 8.dp))
+                    }
                 }
             }
         }
@@ -535,6 +548,8 @@ object ModelSetupCopy {
     val TITLE: String get() = tr(R.string.model_setup_title)
     val LEAD: String get() = tr(R.string.model_setup_lead)
     val ONBOARDING_NOTE: String get() = tr(R.string.model_setup_onboarding_note)
+    val SKIP_MODEL: String get() = tr(R.string.model_setup_skip_model)
+    val SKIP_MODEL_NOTE: String get() = tr(R.string.model_setup_skip_model_note)
     val CANCEL: String get() = tr(R.string.cancel)
     val KIND: String get() = tr(R.string.model_kind)
     val BASE_URL: String get() = tr(R.string.model_base_url)
