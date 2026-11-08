@@ -6,7 +6,6 @@ import android.os.PowerManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.hardware.display.DisplayManager
-import android.view.Display
 import com.wangzan101.mika.MikaApp
 import com.wangzan101.mika.task.GerIntentAttempt
 import com.wangzan101.mika.task.GerIntentOutcome
@@ -230,18 +229,38 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         }
     }
 
-    /** Physical/default display belongs to the user. A living second display belongs to another executor. */
+    /**
+     * Pure pre-action check, not a launch or a reservation. ShellService's
+     * displayOfPackage() ONLY searches our virtual displays, never display 0:
+     * we must independently query the physical screen via the existing Binder
+     * visibleOnMainScreen(), which matches startApp's actual ownership gate.
+     */
     private fun launchBlocker(s: Session, name: String, args: JsonObject): String? {
         if (name != "phone_launch_app") return null
         val pkg = (args["package"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: return null
+        val shell = s.binding.shell.value ?: return "app_presence_unknown"
+        val userId = android.os.Process.myUid() / 100_000
+        val userVisible = runCatching { shell.visibleOnMainScreen(pkg, userId) }.getOrNull()
+        if (userVisible != false) {
+            return DirectPhoneLaunchPreflight.blockedCause(
+                userVisible = userVisible,
+                reservedByOther = false,
+                agentDisplay = -1,
+                ourDisplay = s.display.current?.displayId,
+            )
+        }
         val scheduler = app.resources
         val owner = directOwner(s.owner)
-        if (!scheduler.appFree(pkg, owner, scheduler.ger::isActiveOwner, { true })) return "app_busy"
-        val shell = s.binding.shell.value ?: return null // ready() will reject if disconnected.
-        val existingDisplay = runCatching { shell.displayOfPackage(pkg) }.getOrNull() ?: return null
-        if (existingDisplay >= 0 && existingDisplay != (s.display.current?.displayId ?: -1))
-            return if (existingDisplay == Display.DEFAULT_DISPLAY) "app_in_use_by_user" else "app_busy"
-        return null
+        val reserved = !scheduler.appFree(pkg, owner, scheduler.ger::isActiveOwner, { true })
+        if (reserved) return "app_busy"
+        val display = runCatching { shell.displayOfPackage(pkg) }.getOrNull()
+            ?: return "app_presence_unknown"
+        return DirectPhoneLaunchPreflight.blockedCause(
+            userVisible = false,
+            reservedByOther = false,
+            agentDisplay = display,
+            ourDisplay = s.display.current?.displayId,
+        )
     }
 
     private fun busy(): Boolean =
@@ -432,6 +451,11 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         if (!ready(s) || sensitive(s)) return GerIntentAttempt.Done(fail("needs_user"))
         val request = requestId(args) ?: return GerIntentAttempt.Done(fail("request_id_required"))
         val clean = JsonObject(args.filterKeys { it != "request_id" })
+        // Recheck physical app ownership at the LAST pre-PENDING boundary.
+        // Previously displayOfPackage() always missed the user's display 0,
+        // then startApp returned app_in_use_by_user AFTER markOnce had already
+        // committed this ID, leaving the queue unable to retry it.
+        launchBlocker(s, external, args)?.let { return GerIntentAttempt.Blocked(it) }
         val key = digest(s.owner + "|" + request)
         if (!markOnce(key, external, clean.keys.sorted().joinToString(",")))
             return GerIntentAttempt.Done(fail("delivery_unknown"))
