@@ -49,7 +49,11 @@ class LegacyPhoneDeviceTest {
             assertEquals("legacy display must be public", 0, shown.flags and Display.FLAG_PRIVATE)
             val testPackage = instrumentation.context.packageName
             assertEquals("launch test app", ShellService.START_OK, shell.startApp(display.displayId, testPackage))
-            assertNotNull("rendered frame", DeviceSupport.pollUntil(5_000) { display.latestFramePng() })
+            assertNotNull("rendered frame", DeviceSupport.pollUntil(5_000) {
+                display.latestFrameBitmap()?.let { bitmap ->
+                    try { bitmap.width.takeIf { it > 0 } } finally { bitmap.recycle() }
+                }
+            })
             val service = withTimeoutOrNull(15_000) { ScreenAccessibility.instance.filterNotNull().first() }
                 ?: error("Helper/display work but accessibility service is not connected")
             val screen = AndroidScreen(service, shell, DeviceSupport.ready(display))

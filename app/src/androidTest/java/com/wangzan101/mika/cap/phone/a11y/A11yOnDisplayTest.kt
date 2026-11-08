@@ -10,6 +10,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.wangzan101.mika.cap.phone.display.AgentDisplay
+import com.wangzan101.mika.cap.phone.display.frameFingerprint
 import com.wangzan101.mika.shell.IMikaShell
 import com.wangzan101.mika.cap.phone.PhoneServices
 import com.wangzan101.mika.cap.phone.shell.BuiltinShellConnection
@@ -143,7 +144,7 @@ class A11yOnDisplayTest {
         val path = Path().apply { moveTo(item!!.first.toFloat(), item.second.toFloat()) }
         assertTrue("gesture was cancelled", a11y.gesture(d.displayId, path, 50))
 
-        val changed = pollUntil(3_000) { d.latestFramePng()?.takeIf { !it.contentEquals(before) } }
+        val changed = pollUntil(3_000) { d.frameFingerprint()?.takeIf { it != before } }
         assertNotNull("tap had no visible effect on the virtual display", changed)
         val events: List<AccessibilityEvent> = eventDisplays.await()
         assertTrue("no accessibility event for display ${d.displayId}", events.isNotEmpty())
@@ -175,12 +176,12 @@ class A11yOnDisplayTest {
         return null
     }
 
-    private fun stableFrame(d: AgentDisplay): ByteArray {
-        var last = pollUntil(2_000) { d.latestFramePng() }!!
+    private fun stableFrame(d: AgentDisplay): Long {
+        var last = pollUntil(2_000) { d.frameFingerprint() }!!
         repeat(10) {
             Thread.sleep(500)
-            val now = d.latestFramePng()!!
-            if (now.contentEquals(last)) return now
+            val now = d.frameFingerprint()!!
+            if (now == last) return now
             last = now
         }
         return last

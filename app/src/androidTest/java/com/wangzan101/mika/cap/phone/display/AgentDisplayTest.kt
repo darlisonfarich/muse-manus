@@ -119,11 +119,14 @@ class AgentDisplayTest {
     fun frameArrives() {
         val d = newDisplay()
         shell.startApp(d.displayId, SETTINGS)
-        val png = pollUntil(2_000) { d.latestFramePng() }
-        assertNotNull(png)
-        // PNG 文件头
-        assertEquals(0x89.toByte(), png!![0])
-        assertEquals('P'.code.toByte(), png[1])
+        val frame = pollUntil(2_000) { d.latestFrameBitmap() }
+        assertNotNull(frame)
+        try {
+            assertEquals(720, frame!!.width)
+            assertEquals(1600, frame.height)
+        } finally {
+            frame?.recycle()
+        }
     }
 
     @Test
@@ -164,9 +167,8 @@ class AgentDisplayTest {
         // 先留一张带四个明确色块的旧帧,再通过生产入口冷启动另一个 App。
         shellCommand("am start -W --display ${d.displayId} -n $testPackage/${RotationTestActivity::class.java.name} --ei orientation ${ActivityInfo.SCREEN_ORIENTATION_PORTRAIT}")
         val previous = pollUntil(5_000) {
-            d.latestFramePng()?.takeIf { png ->
-                val image = BitmapFactory.decodeByteArray(png, 0, png.size)
-                try { uprightCorners(image) } finally { image.recycle() }
+            d.latestFrameBitmap()?.let { image ->
+                try { true.takeIf { uprightCorners(image) } } finally { image.recycle() }
             }
         }
         assertNotNull("the previous app's frame never arrived", previous)
@@ -227,12 +229,11 @@ class AgentDisplayTest {
             val snapshot = screen.snapshot()
             assertEquals(width, snapshot.width)
             assertEquals(height, snapshot.height)
-            val png = d.latestFramePng()!!
-            val image = BitmapFactory.decodeByteArray(png, 0, png.size)
+            val image = d.latestFrameBitmap()!!
             try {
                 assertEquals(width, image.width)
                 assertEquals(height, image.height)
-                assertTrue("PNG corners for orientation $orientation", uprightCorners(image))
+                assertTrue("frame corners for orientation $orientation", uprightCorners(image))
             } finally { image.recycle() }
             assertTrue(shell.injectTap(d.displayId, width * 3 / 4, height * 3 / 4))
             assertNotNull("logical tap missed the bottom-right quadrant", pollUntil(3_000) {
@@ -302,12 +303,12 @@ class AgentDisplayTest {
         val home = stableFrame(d)
 
         assertTrue(shell.injectTap(d.displayId, 360, 800))
-        val afterTap = pollUntil(3_000) { d.latestFramePng()?.takeIf { !it.contentEquals(home) } }
+        val afterTap = pollUntil(3_000) { d.frameFingerprint()?.takeIf { it != home } }
         assertNotNull("tap had no visible effect on the virtual display", afterTap)
         val subPage = stableFrame(d)
 
         assertTrue(shell.injectKey(d.displayId, KeyEvent.KEYCODE_BACK))
-        val afterBack = pollUntil(3_000) { d.latestFramePng()?.takeIf { !it.contentEquals(subPage) } }
+        val afterBack = pollUntil(3_000) { d.frameFingerprint()?.takeIf { it != subPage } }
         assertNotNull("BACK had no visible effect on the virtual display", afterBack)
 
         assertEquals("main screen top task changed", mainTop, shell.topTaskId(Display.DEFAULT_DISPLAY))
@@ -409,12 +410,12 @@ class AgentDisplayTest {
     }
 
     /** 等画面静止(相隔 500ms 的两帧一样),返回该帧。 */
-    private fun stableFrame(d: AgentDisplay): ByteArray {
-        var last = pollUntil(2_000) { d.latestFramePng() }!!
+    private fun stableFrame(d: AgentDisplay): Long {
+        var last = pollUntil(2_000) { d.frameFingerprint() }!!
         repeat(10) {
             Thread.sleep(500)
-            val now = d.latestFramePng()!!
-            if (now.contentEquals(last)) return now
+            val now = d.frameFingerprint()!!
+            if (now == last) return now
             last = now
         }
         return last
