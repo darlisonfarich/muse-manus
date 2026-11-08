@@ -11,7 +11,6 @@ import com.wangzan101.mika.MikaApp
 import com.wangzan101.mika.cap.sandbox.RuntimePreparer
 import com.wangzan101.mika.mcp.McpService
 import com.wangzan101.mika.sandbox.SandboxService
-import com.wangzan101.mika.settings.ChatGptSignInService
 import com.wangzan101.mika.settings.FeatureFlags
 import com.wangzan101.mika.task.TaskService
 import com.wangzan101.mika.task.TriggerRuntime
@@ -41,11 +40,9 @@ object MikaQuit {
         runCatching { TriggerRuntime.suspendAlarms(app) }
         runCatching { RuntimePreparer.stop(app) }
         runCatching { app.mcp.stopServer() }
-        runCatching { app.chatGptSignIn.cancel() }
         runCatching { app.stopService(Intent(app, TaskService::class.java)) }
         runCatching { app.stopService(Intent(app, McpService::class.java)) }
         runCatching { app.stopService(Intent(app, SandboxService::class.java)) }
-        runCatching { app.stopService(Intent(app, ChatGptSignInService::class.java)) }
         (context as? Activity)?.finishAndRemoveTask()
         runCatching { app.getSystemService(NotificationManager::class.java)?.cancelAll() }
         scheduleExit(app)
