@@ -198,7 +198,14 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                             val reason = launchBlocker(s, name, args)
                             if (reason != null) GerIntentAttempt.Blocked(reason)
                             else if (busy()) GerIntentAttempt.Blocked("task_running")
-                            else GerIntentAttempt.Done(action(s, name, args))
+                            else {
+                                val result = action(s, name, args)
+                                // action() reports session_conflict before the journal
+                                // is touched; this race is safe to queue and retry.
+                                if (result["error"] == JsonPrimitive("session_conflict"))
+                                    GerIntentAttempt.Blocked("task_running")
+                                else GerIntentAttempt.Done(result)
+                            }
                         }
                     }
                 } catch (e: CancellationException) { throw e }
