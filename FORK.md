@@ -218,14 +218,10 @@ ponte do Muse e é independente da remoção OTLP.
 **PR em rascunho: revisão Muse obrigatória, CI 4/4 verde, sem merge.**
 
 
-## Fase 2 / PR-B — controle direto do telefone pelo Muse (MCP)
+## Fase 2 / PR-A — proteção de OTP em observações ao vivo
 
-- A API `/mcp` mantém o funil **inalterado** de `RemoteAccess` (Bearer, anti-Origin, rate-limit e IPs privados) e só registra ferramentas `phone_*` quando o pedido já está vinculado a um proprietário autenticado. Não há provider de modelo nesta rota; `McpPhoneTools` envia chamadas para `AndroidDirectPhoneHost`.
-- `phone_status`, `phone_observe`, `phone_screenshot`, `phone_list_apps` são leitura; `phone_tap`, `phone_type`, `phone_scroll`, `phone_swipe`, `phone_gesture`, `phone_key`, `phone_back`, `phone_launch_app`, `phone_run` são ações; `phone_cancel` encerra a sessão do dono. `phone_run` limita a 30 ações conhecidas, verificadas individualmente.
-- A tela virtual e o dispatcher ficam associados ao proprietário da conexão, com TTL de 15 minutos de inatividade e apenas uma sessão de controle por vez; conflito com tarefa em execução retorna `session_conflict`. Ref/snapshot do dispatcher são preservados entre chamadas.
-- **Não é um caminho para executar comandos de sistema**: cada ação passa por `ActionExecutor.run(..., Origin.McpTool)`, `OperationGuards`, `ApprovalSettings.STRICT` e `AppAccessScreenPort`. Ações de risco externo/irreversíveis não herdam aprovação ou modo autônomo do app. No momento, essas ações retornam recusa e precisam ser concluídas/confirmadas pelo usuário no próprio aparelho; não existe uma ferramenta remota de aprovação.
-- **Tela de senha:** leitura, screenshot e escrita por `phone_*` retornam `needs_user` ao detectar elemento/árvore com campo secreto, tela protegida ou falha de captura. Enquanto o PR-A estiver separado, não há sequer leitura remota desse contexto.
-- **Kill switch:** `Configurações › Avançado › Acesso pelo computador (MCP) › Permitir controle direto pelo Muse`. Padrão **desligado** inclusive para instalações antigas. Desligar revoga as próximas ações; o MCP ainda responde às consultas permitidas.
-- **Idempotência:** cada ação exige `request_id` estável. O host registra em arquivo privado de auditoria a marca PENDING com `fsync` **antes** da tentativa; uma ID já vista não é executada novamente, mesmo após reinício (`delivery_unknown`: observar o estado antes de prosseguir). `phone_run` deriva uma ID única por passo. Auditoria não grava textos digitados, capturas ou conteúdo de telas.
-- **Limite importante:** as teclas HOME, Recentes, Volume e Power continuam bloqueadas pela allowlist existente do executor e do shell, pois afetam a tela principal/aparelho inteiro; ampliar isso sem um gate específico seria afrouxar uma proteção existente. O controle nesta fase é de aplicativos executados no display virtual.
-- **Sem alteração** do relay/gateway, dos providers, de `RemoteAccess` ou da API de tarefas existente. PR em **rascunho**, sem merge. Necessário CI 4/4 verde, revisão Muse e teste ponta a ponta no POCO antes da integração.
+- Quando uma tela contiver qualquer campo de senha (também em nós aninhados da árvore), sequências **isoladas de 4 a 8 dígitos** são substituídas por `[OTP REDACTED]` nos nomes dos elementos e nos textos, descrições, dicas e títulos das janelas.
+- O mascaramento ocorre **antes** da estabilização de referências, diffs, observações, histórico e serialização MCP. Linhas do OCR passam pelo mesmo filtro após a proteção de regiões secretas.
+- A geometria, as referências, o indicador `secret` e os identificadores de captura são preservados. Texto normal sem campo de senha **não** é alterado. Números embutidos em identificadores alfanuméricos ou com mais de oito dígitos não são classificados como OTP isolado.
+- Este PR **não habilita** captura de screenshots sensíveis, digitação em senha, execução remota nem qualquer nova permissão. O PR-B deve recusar leitura de imagem de telas com senha e aplicar os gates existentes antes de agir.
+- Testes JVM: mascaramento em árvore (inclusive aninhada), elemento, OCR, código em texto corrido, ausência de senha e observação `phone_observe`.
