@@ -2,7 +2,7 @@
 <resources>
     <string name="welcome_title">Hai, saya Mika</string>
     <string name="welcome_lead">Asisten pribadi di ponsel Anda.\nBilang saja apa yang harus dikerjakan, dan saya selesaikan di latar belakang.</string>
-    <string name="welcome_note">Sebelum mulai: atur model dan aktifkan kontrol ponsel. Sekitar 3 menit.</string>
+    <string name="welcome_note">Jika Muse akan mengendalikan ponsel dari jarak jauh, lanjutkan tanpa model atau atur AI sendiri. Lalu aktifkan kendali ponsel.</string>
     <string name="welcome_start">Mulai</string>
     <string name="welcome_apps">Pakai aplikasi</string>
     <string name="welcome_apps_body">Mengetuk, mengetik, dan menggulir di layar latar belakang, sehingga layar Anda tetap bebas</string>
@@ -16,8 +16,10 @@
     <string name="hide">Sembunyikan</string>
     <string name="show">Tampilkan</string>
     <string name="model_setup_title">Atur model</string>
-    <string name="model_setup_lead">Mika berpikir dengan layanan model Anda sendiri. Hubungkan penyedia dulu, lalu pilih model untuk setiap tugas.</string>
-    <string name="model_setup_onboarding_note">Hanya model utama yang wajib; dua lainnya bisa menyusul.</string>
+    <string name="model_setup_lead">Tugas AI di aplikasi memerlukan penyedia model. Jika Muse akan mengendalikan ponsel dari jarak jauh, Anda dapat melanjutkan tanpa model.</string>
+    <string name="model_setup_onboarding_note">Model utama hanya diperlukan untuk tugas AI di aplikasi. Akses jarak jauh diatur secara terpisah.</string>
+    <string name="model_setup_skip_model">Lanjutkan tanpa model</string>
+    <string name="model_setup_skip_model_note">Agar Muse mengendalikan ponsel, buka Pengaturan › Lanjutan › Akses komputer (MCP) setelah penyiapan. Chat dan tugas AI di aplikasi memerlukan model.</string>
     <string name="model_kind">Jenis API</string>
     <string name="model_base_url">URL dasar</string>
     <string name="model_provider_name">Nama</string>

@@ -2,7 +2,7 @@
 <resources>
     <string name="welcome_title">مرحبًا، أنا Mika</string>
     <string name="welcome_lead">مساعدك الشخصي على هاتفك.\nأخبرني بما تريد وسأنجزه في الخلفية.</string>
-    <string name="welcome_note">قبل البدء: أعد إعداد نموذج وفعّل التحكم بالهاتف. يستغرق ذلك نحو 3 دقائق.</string>
+    <string name="welcome_note">إذا كان Muse سيتحكم في هاتفك عن بُعد، فيمكنك المتابعة دون إعداد نموذج. أو يمكنك إعداد نموذج ذكاء اصطناعي خاص بك ثم تفعيل التحكم بالهاتف.</string>
     <string name="welcome_start">ابدأ</string>
     <string name="welcome_apps">استخدام التطبيقات</string>
     <string name="welcome_apps_body">ينقر ويكتب ويمرر على شاشة تعمل في الخلفية، تاركًا شاشتك متاحة لك</string>
@@ -16,8 +16,10 @@
     <string name="hide">إخفاء</string>
     <string name="show">إظهار</string>
     <string name="model_setup_title">إعداد نموذج</string>
-    <string name="model_setup_lead">Mika thinks with your own model service. Connect a provider first, then pick a model for each job.</string>
-    <string name="model_setup_onboarding_note">Only the main model is required; the other two can wait.</string>
+    <string name="model_setup_lead">تتطلب مهام الذكاء الاصطناعي داخل التطبيق موفّر نماذج. إذا كان Muse سيتحكم في هاتفك عن بُعد، يمكنك المتابعة دون نموذج.</string>
+    <string name="model_setup_onboarding_note">النموذج الرئيسي مطلوب فقط لمهام الذكاء الاصطناعي داخل التطبيق. يمكن إعداد الوصول عن بُعد بشكل مستقل.</string>
+    <string name="model_setup_skip_model">المتابعة دون نموذج</string>
+    <string name="model_setup_skip_model_note">ليتحكم Muse في الهاتف، افتح الإعدادات ← متقدم ← الوصول من الكمبيوتر (MCP) بعد الإعداد. لن تعمل المحادثات والمهام الذكية داخل التطبيق حتى تضيف نموذجاً.</string>
     <string name="model_kind">API type</string>
     <string name="model_base_url">Base URL</string>
     <string name="model_provider_name">Name</string>

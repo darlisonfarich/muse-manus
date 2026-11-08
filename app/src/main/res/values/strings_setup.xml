@@ -2,7 +2,7 @@
 <resources>
     <string name="welcome_title">Hi, I’m Mika</string>
     <string name="welcome_lead">Your personal assistant on your phone.\nTell me what to do and I’ll get it done in the background.</string>
-    <string name="welcome_note">Before you start: set up a model and turn on phone control. About 3 minutes.</string>
+    <string name="welcome_note">Choose Muse remote control without a model, or configure your own AI. Then set up phone control.</string>
     <string name="welcome_start">Get started</string>
     <string name="welcome_apps">Use apps</string>
     <string name="welcome_apps_body">Taps, types and scrolls on a background screen, leaving yours free</string>
@@ -16,8 +16,10 @@
     <string name="hide">Hide</string>
     <string name="show">Show</string>
     <string name="model_setup_title">Set up a model</string>
-    <string name="model_setup_lead">Mika thinks with your own model service. Connect a provider first, then pick a model for each job.</string>
-    <string name="model_setup_onboarding_note">Only the main model is required; the other two can wait.</string>
+    <string name="model_setup_lead">For local AI tasks, connect a model provider. If Muse will control this phone remotely, you can continue without a model.</string>
+    <string name="model_setup_onboarding_note">A main model is needed only for Mika’s local AI tasks. Remote access can be configured separately.</string>
+    <string name="model_setup_skip_model">Continue without a model</string>
+    <string name="model_setup_skip_model_note">For Muse remote control, open Settings › Advanced › Computer access (MCP) after setup. Local AI chat and tasks remain unavailable until you add a model.</string>
     <string name="model_kind">API type</string>
     <string name="model_base_url">Base URL</string>
     <string name="model_provider_name">Name</string>

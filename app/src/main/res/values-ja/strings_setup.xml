@@ -2,7 +2,7 @@
 <resources>
     <string name="welcome_title">こんにちは、Mika です</string>
     <string name="welcome_lead">スマホの中のあなた専用アシスタントです。\nやってほしいことを伝えてください。バックグラウンドで片付けます。</string>
-    <string name="welcome_note">はじめる前に: モデルを設定して、スマホの操作をオンにします。約 3 分かかります。</string>
+    <string name="welcome_note">Muse がスマートフォンを遠隔操作する場合、モデルを設定せずに続行できます。独自の AI を設定することもできます。その後、スマートフォンの操作を有効にしてください。</string>
     <string name="welcome_start">はじめる</string>
     <string name="welcome_apps">アプリを使う</string>
     <string name="welcome_apps_body">バックグラウンドの画面でタップ、入力、スクロールをするので、あなたの画面は空いたままです</string>
@@ -16,8 +16,10 @@
     <string name="hide">非表示</string>
     <string name="show">表示</string>
     <string name="model_setup_title">モデルを設定</string>
-    <string name="model_setup_lead">Mika は、あなたが用意したモデルのサービスで考えます。まずプロバイダーを接続してから、仕事ごとにモデルを選びます。</string>
-    <string name="model_setup_onboarding_note">必須なのはメインモデルだけです。ほかの 2 つはあとで大丈夫です。</string>
+    <string name="model_setup_lead">アプリ内の AI タスクにはモデルプロバイダーが必要です。Muse がスマートフォンを遠隔操作する場合は、モデルなしで続行できます。</string>
+    <string name="model_setup_onboarding_note">メインモデルが必要なのはアプリ内の AI タスクだけです。リモートアクセスは別途設定できます。</string>
+    <string name="model_setup_skip_model">モデルなしで続行</string>
+    <string name="model_setup_skip_model_note">Muse からスマートフォンを操作するには、設定後に［設定 › 詳細設定 › コンピューターアクセス (MCP)］を開いてください。モデルを追加するまでアプリ内の AI チャットとタスクは利用できません。</string>
     <string name="model_kind">API の種類</string>
     <string name="model_base_url">ベース URL</string>
     <string name="model_provider_name">名前</string>

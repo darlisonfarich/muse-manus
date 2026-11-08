@@ -22,6 +22,14 @@ class OnboardingTest {
         assertNull(Onboarding.start(inputs(hasMain = true, phoneNeeded = false)))
     }
 
+    @Test fun modelFreeRemoteControlCanFinishOnboardingAndDoesNotReopenProviderSetup() {
+        val initial = inputs(hasMain = false, modelDone = false)
+        assertEquals(OnboardingStep.Model, Onboarding.next(OnboardingStep.Welcome, initial))
+        val skipped = initial.copy(modelSetupDone = true)
+        assertEquals(OnboardingStep.Phone, Onboarding.start(skipped))
+        assertNull(Onboarding.start(skipped.copy(phoneGuideSeen = true)))
+    }
+
     @Test fun modelSetupDoneOnceIsNotRepeatedEvenIfModelsWereRemoved() {
         assertEquals(OnboardingStep.Phone, Onboarding.start(inputs(modelDone = true)))
         assertNull(Onboarding.start(inputs(modelDone = true, phoneSeen = true)))

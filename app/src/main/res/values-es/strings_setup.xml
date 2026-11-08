@@ -2,7 +2,7 @@
 <resources>
     <string name="welcome_title">Hola, soy Mika</string>
     <string name="welcome_lead">Tu asistente personal en el teléfono.\nDime qué hacer y lo resuelvo en segundo plano.</string>
-    <string name="welcome_note">Antes de empezar: configura un modelo y activa el control del teléfono. Unos 3 minutos.</string>
+    <string name="welcome_note">Si Muse controlará tu teléfono de forma remota, puedes continuar sin un modelo o configurar tu propia IA. Después, activa el control del teléfono.</string>
     <string name="welcome_start">Empezar</string>
     <string name="welcome_apps">Usar apps</string>
     <string name="welcome_apps_body">Toca, escribe y se desplaza en una pantalla en segundo plano, dejando libre la tuya</string>
@@ -16,8 +16,10 @@
     <string name="hide">Ocultar</string>
     <string name="show">Mostrar</string>
     <string name="model_setup_title">Configurar un modelo</string>
-    <string name="model_setup_lead">Mika piensa con tu propio servicio de modelos. Conecta primero un proveedor y luego elige un modelo para cada tarea.</string>
-    <string name="model_setup_onboarding_note">Solo el modelo principal es obligatorio; los otros dos pueden esperar.</string>
+    <string name="model_setup_lead">Las tareas de IA del propio dispositivo requieren un proveedor de modelos. Si Muse controlará el teléfono de forma remota, puedes continuar sin configurar ninguno.</string>
+    <string name="model_setup_onboarding_note">El modelo principal solo es necesario para las tareas de IA de la aplicación. El acceso remoto se configura por separado.</string>
+    <string name="model_setup_skip_model">Continuar sin un modelo</string>
+    <string name="model_setup_skip_model_note">Para que Muse controle el teléfono, abre Ajustes › Avanzado › Acceso desde ordenador (MCP) después de la configuración. El chat y las tareas de IA de la aplicación requieren un modelo.</string>
     <string name="model_kind">Tipo de API</string>
     <string name="model_base_url">URL base</string>
     <string name="model_provider_name">Nombre</string>
