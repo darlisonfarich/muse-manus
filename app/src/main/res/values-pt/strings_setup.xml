@@ -80,4 +80,6 @@
     <string name="model_probe_tried">Tentou %1$s; nenhum deles passou no teste.</string>
     <string name="model_probe_fallback">%1$s, testado primeiro, não passou no teste: %2$s. O modelo principal é “%3$s”, que passou.</string>
     <string name="model_pick_main">Escolher modelo principal</string>
+    <string name="mcp_direct_writes_title">Permitir controle direto pelo Muse</string>
+    <string name="mcp_direct_writes_detail">Quando ativado, clientes MCP autenticados podem executar ações reversíveis no celular. Desative para permitir apenas observação. Senhas, compras e ações consequenciais continuam bloqueadas.</string>
 </resources>
