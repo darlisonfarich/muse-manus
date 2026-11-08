@@ -16,8 +16,10 @@
     <string name="hide">Ocultar</string>
     <string name="show">Mostrar</string>
     <string name="model_setup_title">Configurar um modelo</string>
-    <string name="model_setup_lead">O Mika pensa com o seu próprio serviço de modelos. Conecte primeiro um provedor e depois escolha um modelo para cada função.</string>
-    <string name="model_setup_onboarding_note">Só o modelo principal é obrigatório; os outros dois podem esperar.</string>
+    <string name="model_setup_lead">Para tarefas de IA do aplicativo, configure um provedor de modelos. Se o Muse vai controlar seu celular remotamente, você pode continuar sem modelo.</string>
+    <string name="model_setup_onboarding_note">O modelo principal só é necessário para as tarefas da IA interna. O acesso remoto é configurado separadamente.</string>
+    <string name="model_setup_skip_model">Continuar sem modelo</string>
+    <string name="model_setup_skip_model_note">Para o Muse controlar o celular, depois abra Configurações › Avançado › Acesso pelo computador (MCP). O chat e as tarefas de IA do aplicativo precisam de um modelo.</string>
     <string name="model_kind">Tipo de API</string>
     <string name="model_base_url">URL base</string>
     <string name="model_provider_name">Nome</string>
