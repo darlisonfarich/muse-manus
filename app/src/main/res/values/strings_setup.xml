@@ -2,7 +2,7 @@
 <resources>
     <string name="welcome_title">Hi, I’m Mika</string>
     <string name="welcome_lead">Your personal assistant on your phone.\nTell me what to do and I’ll get it done in the background.</string>
-    <string name="welcome_note">Before you start: set up a model and turn on phone control. About 3 minutes.</string>
+    <string name="welcome_note">Choose Muse remote control without a model, or configure your own AI. Then set up phone control.</string>
     <string name="welcome_start">Get started</string>
     <string name="welcome_apps">Use apps</string>
     <string name="welcome_apps_body">Taps, types and scrolls on a background screen, leaving yours free</string>
