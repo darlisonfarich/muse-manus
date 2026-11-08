@@ -86,6 +86,33 @@ class TaskRegistryTest {
         assertTrue(registry.reserve("settings", a.key) { true })
     }
 
+    @Test fun gerTracksOnlyAdmittedTasksAndQueuedHandoff() {
+        limit = ParallelLimit(1, null)
+        val first = (registry.tryStart("a", "one") as StartResult.Started).run
+        val second = (registry.tryStart("b", "two") as StartResult.Queued).run
+        assertEquals(1, registry.resources.ger.snapshot().admittedTasks)
+        assertFalse(registry.resources.ger.claimDirect("mcp:one"))
+        assertEquals(listOf(second), registry.onEnded(first))
+        assertEquals(1, registry.resources.ger.snapshot().admittedTasks)
+        registry.onEnded(second)
+        assertEquals(0, registry.resources.ger.snapshot().admittedTasks)
+        assertTrue(registry.resources.ger.claimDirect("mcp:one"))
+    }
+
+    @Test fun directHostReservationCannotBeStolenByTaskWhileSessionIsLive() {
+        val resources = registry.resources
+        assertTrue(resources.ger.claimDirect("mcp:owner"))
+        assertTrue(resources.reserveApp("com.chat", "mcp:owner", resources.ger::isActiveOwner) { true })
+        val run = (registry.tryStart("a", "open app") as StartResult.Started).run
+        // TaskCenter's legacy stillUsed=false must not evict a live MCP screen.
+        assertFalse(registry.reserve("com.chat", run.key) { false })
+        assertFalse(resources.ger.canUseDirect("mcp:owner"))
+        resources.releaseOwner("mcp:owner")
+        resources.ger.releaseDirect("mcp:owner")
+        assertTrue(registry.reserve("com.chat", run.key) { true })
+        registry.onEnded(run)
+    }
+
     @Test fun centerUsesItsResourceSchedulerForMainScreenAndClipboard() {
         assertSame(registry.resources.takeoverQueue, registry.takeoverQueue)
         assertSame(registry.resources.clipboard, registry.clipLock)

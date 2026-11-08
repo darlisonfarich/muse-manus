@@ -86,7 +86,20 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
 
     suspend fun close() = lock.withLock { closeActive() }
 
-    private fun closeActive() { current?.close(); current = null }
+    private fun directOwner(owner: String): String = "mcp:" + digest(owner)
+
+    private fun closeActive() {
+        val session = current ?: return
+        current = null
+        val key = directOwner(session.owner)
+        try {
+            session.close()
+        } finally {
+            // Release every package held by this screen before revoking its GER lease.
+            app.resources.releaseOwner(key)
+            app.resources.ger.releaseDirect(key)
+        }
+    }
 
     override suspend fun call(owner: String, name: String, args: JsonObject): JsonObject = lock.withLock {
         if (owner.isBlank()) return@withLock fail("unauthenticated")
@@ -104,8 +117,16 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         }
         if (!settings.enabled.value) return@withLock fail("remote_access_disabled")
         if (busy() || current != null && current!!.owner != owner) return@withLock fail("session_conflict")
+        // GER is process-wide: share the admission decision with TaskCenter.
+        val key = directOwner(owner)
+        if (!app.resources.ger.claimDirect(key)) return@withLock fail("session_conflict")
         val s = try { current ?: create(owner, now).also { current = it } }
-            catch (_: Exception) { return@withLock fail("phone_unavailable") }
+            catch (_: Exception) {
+                if (current == null) app.resources.ger.releaseDirect(key)
+                return@withLock fail("phone_unavailable")
+            }
+        // A task may have been admitted while the virtual screen was being created.
+        if (!app.resources.ger.canUseDirect(key)) return@withLock fail("session_conflict")
         s.lastUsed = now
         try {
             when (name) {
@@ -125,7 +146,8 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         catch (_: Exception) { fail("phone_unavailable") }
     }
 
-    private fun busy(): Boolean = app.taskState.busy.value || app.taskState.runs.value.isNotEmpty()
+    private fun busy(): Boolean =
+        app.resources.ger.hasRunningTasks() || app.taskState.busy.value || app.taskState.runs.value.isNotEmpty()
 
     /** A remote tool must not wake, unlock or take back a screen without user action. */
     private fun ready(s: Session): Boolean {
@@ -133,7 +155,8 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         val power = context.getSystemService(PowerManager::class.java)
         return lock?.isDeviceLocked != true && lock?.isKeyguardLocked != true &&
             power?.isInteractive != false && s.binding.shell.value != null &&
-            ScreenAccessibility.instance.value != null
+            ScreenAccessibility.instance.value != null &&
+            app.resources.ger.canUseDirect(directOwner(s.owner))
     }
 
     private fun readyForGate(binding: ShellBinding): Boolean {
@@ -153,6 +176,9 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             val a11y = withTimeoutOrNull(12_000L) { ScreenAccessibility.instance.filterNotNull().first() }
                 ?: throw IllegalStateException("accessibility unavailable")
             val metrics = context.resources.displayMetrics
+            val scheduler = app.resources
+            val sessionOwner = directOwner(owner)
+            fun claimKey(pkg: String, user: Int?) = if (user == null) pkg else "$pkg@$user"
             val display = LazyAgentDisplay(metrics.widthPixels, metrics.heightPixels) {
                 AgentDisplay(shell, metrics.widthPixels, metrics.heightPixels, metrics.densityDpi,
                     context.getSystemService(DisplayManager::class.java))
@@ -163,8 +189,18 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             ) {
                 AndroidScreen(a11y, shell, display,
                     checkOtherTasks = true,
-                    reserve = { !busy() },
-                    appFree = { _, _ -> !busy() },
+                    reserve = { pkg ->
+                        !busy() && scheduler.ger.canUseDirect(sessionOwner) &&
+                            scheduler.reserveApp(pkg, sessionOwner, scheduler.ger::isActiveOwner, { true })
+                    },
+                    reserveCopy = { pkg, user ->
+                        !busy() && scheduler.ger.canUseDirect(sessionOwner) &&
+                            scheduler.reserveApp(claimKey(pkg, user), sessionOwner, scheduler.ger::isActiveOwner, { true })
+                    },
+                    appFree = { pkg, user ->
+                        !busy() && scheduler.ger.canUseDirect(sessionOwner) &&
+                            scheduler.appFree(claimKey(pkg, user), sessionOwner, scheduler.ger::isActiveOwner, { true })
+                    },
                     appAccess = app.appAccess,
                 ).also { physical = it }
             }
@@ -183,7 +219,8 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             }
             val executor = ActionExecutor(
                 tools, OperationGuards(400), confirmations = null,
-                gate = { check(settings.directWritesEnabled.value && settings.enabled.value && !busy() && readyForGate(binding)) },
+                gate = { check(settings.directWritesEnabled.value && settings.enabled.value && !busy() &&
+                    scheduler.ger.canUseDirect(sessionOwner) && readyForGate(binding)) },
                 recorder = ActionRecorder(sink), approvals = ApprovalSettings.STRICT,
                 // Bridge origin is STRICT in ApprovalPolicy; generic Mcp runs only use ASK.
                 // Origin.McpTool never consumes a remote approval/grant.
