@@ -36,6 +36,18 @@ class McpSettingsTest {
         assertFalse(settings().enabled.value)
     }
 
+    @Test fun directIntentionWaitDefaultsTo120SecondsAndPersistsWithinSafeBounds() {
+        val s = settings()
+        assertEquals(120_000L, s.directWaitTimeoutMs)
+        s.setDirectWaitTimeoutMs(30_000L)
+        assertEquals(30_000L, settings().directWaitTimeoutMs)
+        try {
+            s.setDirectWaitTimeoutMs(999L)
+            throw AssertionError("Expected invalid wait timeout to be rejected")
+        } catch (_: IllegalArgumentException) { }
+        assertEquals(30_000L, settings().directWaitTimeoutMs)
+    }
+
     @Test fun directPhoneWritesDefaultOffAndCanBeRevokedImmediately() {
         val first = settings()
         assertFalse(first.directWritesEnabled.value)
