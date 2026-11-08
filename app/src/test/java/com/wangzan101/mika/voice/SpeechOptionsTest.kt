@@ -19,11 +19,12 @@ class SpeechOptionsTest {
         "p1", "OpenAI", ProviderConfig.Kind.OpenAiCompat, "https://api.openai.com/v1",
         listOf(ListedModel("gpt-4o"), ListedModel("whisper-1"), ListedModel("gpt-4o-mini")),
     )
-    private val anthropic = Provider("p2", "Claude", ProviderConfig.Kind.Anthropic, "https://api.anthropic.com", listOf(ListedModel("claude-x")))
+    private val legacyOAuth = Provider("p2", "Legacy OAuth", ProviderConfig.Kind.OpenAiCompat,
+        "https://legacy.example/v1", listOf(ListedModel("legacy-model")), signIn = "chatgpt")
     private val noList = Provider("p3", "中转站", ProviderConfig.Kind.OpenAiCompat, "https://relay.example/v1", emptyList())
 
-    @Test fun anthropicIsNotOffered() {
-        val groups = SpeechOptions.groups(listOf(openAi, anthropic, noList))
+    @Test fun legacyOAuthIsNotOffered() {
+        val groups = SpeechOptions.groups(listOf(openAi, legacyOAuth, noList))
         assertEquals(listOf("p1", "p3"), groups.map { it.provider.id })
     }
 

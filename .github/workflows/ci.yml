@@ -30,6 +30,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
+      - name: CI Gradle distribution (official SHA-256 pinned)
+        run: |
+          sed -i 's#^distributionUrl=.*#distributionUrl=https\\://mirrors.aliyun.com/gradle/distributions/v8.11.1/gradle-8.11.1-bin.zip#' gradle/wrapper/gradle-wrapper.properties
+      - name: Bootstrap checksum-verified Kotlin compiler
+        run: bash tools/ci/bootstrap-kotlin-compiler.sh
       - name: Unit tests
         run: ./gradlew :core:test --stacktrace
       - name: Upload test reports
@@ -59,6 +64,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
+      - name: CI Gradle distribution (official SHA-256 pinned)
+        run: |
+          sed -i 's#^distributionUrl=.*#distributionUrl=https\\://mirrors.aliyun.com/gradle/distributions/v8.11.1/gradle-8.11.1-bin.zip#' gradle/wrapper/gradle-wrapper.properties
+      - name: Bootstrap checksum-verified Kotlin compiler
+        run: bash tools/ci/bootstrap-kotlin-compiler.sh
       # cliTest 先跑 cliContractTest（经真实子进程调 Python CLI），再跑 tools/mika/tests 下的 unittest。
       - name: CLI tests
         run: ./gradlew :core:cliTest -PmikaPython=python3 --stacktrace
@@ -94,9 +104,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
-      # assembleDebug 验证单测碰不到的打包路径：31MB 的 rootfs、jniLibs 旧式解压、AIDL、Compose。
+      - name: CI Gradle distribution (official SHA-256 pinned)
+        run: |
+          sed -i 's#^distributionUrl=.*#distributionUrl=https\\://mirrors.aliyun.com/gradle/distributions/v8.11.1/gradle-8.11.1-bin.zip#' gradle/wrapper/gradle-wrapper.properties
+      - name: Bootstrap checksum-verified Kotlin compiler
+        run: bash tools/ci/bootstrap-kotlin-compiler.sh
+      # assembleDebug validates packaging; assembleDebugAndroidTest compiles instrumented tests, catching removed adapters.
       - name: Unit tests and debug build
-        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug --stacktrace
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v7
@@ -134,6 +149,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
+      - name: CI Gradle distribution (official SHA-256 pinned)
+        run: |
+          sed -i 's#^distributionUrl=.*#distributionUrl=https\\://mirrors.aliyun.com/gradle/distributions/v8.11.1/gradle-8.11.1-bin.zip#' gradle/wrapper/gradle-wrapper.properties
+      - name: Bootstrap checksum-verified Kotlin compiler
+        run: bash tools/ci/bootstrap-kotlin-compiler.sh
       # relayTest 会先 go build 出真实网关，再在回环上跑 Kotlin→网关→隧道全链路。
       - name: Relay integration test
         run: ./gradlew :core:relayTest --stacktrace

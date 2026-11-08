@@ -159,13 +159,6 @@ class MikaApp : Application(), WebOwner, SandboxOwner, TaskEnvironment.Owner, Ph
     /** 语音输入的入口,输入框和悬浮胶囊共用。 */
     val voice: com.wangzan101.mika.voice.VoiceInput by lazy { com.wangzan101.mika.voice.VoiceInput(this, speech, providers) }
 
-    /** 用 ChatGPT 登录:跑在 App 的作用域里,期间开前台服务撑住进程(见 [com.wangzan101.mika.settings.ChatGptSignIns])。 */
-    val chatGptSignIn by lazy {
-        com.wangzan101.mika.settings.ChatGptSignIns(scope,
-            keepAlive = { com.wangzan101.mika.settings.ChatGptSignInService.start(this) },
-            log = { msg, e -> Log.w("MikaChatGpt", msg, e) })
-    }
-
     /** 经验路线。 */
     override val routes: FileRouteStore by lazy { FileRouteStore.create(this) }
 

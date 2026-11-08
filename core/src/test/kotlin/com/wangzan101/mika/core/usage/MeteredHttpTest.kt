@@ -1,15 +1,11 @@
 package com.wangzan101.mika.core.usage
 
-import com.wangzan101.mika.core.model.AnthropicModel
 import com.wangzan101.mika.core.model.Author
-import com.wangzan101.mika.core.model.BearerToken
 import com.wangzan101.mika.core.model.Capabilities
 import com.wangzan101.mika.core.model.Message
 import com.wangzan101.mika.core.model.OpenAiCompatModel
 import com.wangzan101.mika.core.model.Part
-import com.wangzan101.mika.core.model.ResponsesModel
 import com.wangzan101.mika.core.model.Role
-import com.wangzan101.mika.core.model.SignedThinking
 import com.wangzan101.mika.core.model.StreamingChatModel
 import com.wangzan101.mika.core.model.Usage
 import kotlinx.coroutines.Dispatchers
@@ -49,9 +45,6 @@ class MeteredHttpTest {
     @After fun tearDown() { server.shutdown() }
 
     private fun openAi() = OpenAiCompatModel(server.url("/v1").toString().trimEnd('/'), "k", "m", caps, OkHttpClient())
-    private fun responses(token: BearerToken = BearerToken.fixed("k")) =
-        ResponsesModel(server.url("/v1").toString().trimEnd('/'), token, "m", caps, OkHttpClient())
-
     private fun stream(vararg data: String) = MockResponse().setHeader("Content-Type", "text/event-stream")
         .setBody(data.joinToString("") { "data: $it\n\n" })
 
@@ -63,10 +56,6 @@ class MeteredHttpTest {
 
     private fun openAiBody() = MockResponse().setHeader("Content-Type", "application/json").setBody(
         """{"choices":[{"message":{"content":"好"},"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":2}}""",
-    )
-
-    private fun responsesStream() = stream(
-        """{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":12,"output_tokens":4}}}""",
     )
 
     private fun assertOneCall(
@@ -106,61 +95,6 @@ class MeteredHttpTest {
 
         assertOneCall(sink, tally, attempts = 2, unreported = 1, Usage(8, 2))
         assertEquals(2, server.requestCount)
-    }
-
-    @Test fun tokenRefreshRetryCountsBothRequests() = runTest {
-        val token = object : BearerToken {
-            override val refreshable = true
-            override suspend fun get(fresh: Boolean): String = if (fresh) "new" else "old"
-        }
-        server.enqueue(MockResponse().setResponseCode(401).setBody("{}"))
-        server.enqueue(responsesStream())
-        val sink = RecordingSink()
-        val tally = RunUsageTally()
-        val model = responses(token).metered(source, sink)
-
-        withContext(tally) { model.complete("s", user, emptyList()) }
-
-        assertOneCall(sink, tally, attempts = 2, unreported = 1, Usage(12, 4))
-        assertEquals("Bearer old", server.takeRequest().getHeader("Authorization"))
-        assertEquals("Bearer new", server.takeRequest().getHeader("Authorization"))
-    }
-
-    @Test fun reasoningCompatibilityRetryCountsBothRequests() = runTest {
-        server.enqueue(MockResponse().setResponseCode(400).setBody(
-            """{"error":{"code":"unsupported_parameter","param":"include","message":"no"}}""",
-        ))
-        server.enqueue(responsesStream())
-        val sink = RecordingSink()
-        val tally = RunUsageTally()
-        val model = responses().metered(source, sink)
-
-        withContext(tally) { model.complete("s", user, emptyList()) }
-
-        assertOneCall(sink, tally, attempts = 2, unreported = 1, Usage(12, 4))
-    }
-
-    @Test fun rejectedThinkingRetryCountsBothRequests() = runTest {
-        val base = server.url("/").toString().trimEnd('/')
-        val endpoint = "$base/v1/messages"
-        val history = listOf(
-            Message(Role.User, listOf(Part.Text("go")), Author.Mika),
-            Message(Role.Assistant, listOf(
-                Part.Thinking("想", SignedThinking.signed(endpoint, "sig")), Part.ToolCall("t1", "phone_tap", "{}"),
-            ), Author.Mika),
-            Message(Role.Tool, listOf(Part.ToolResult("t1", "done", false)), Author.Mika),
-        )
-        server.enqueue(MockResponse().setResponseCode(400).setBody("bound to a different conversation"))
-        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(
-            """{"content":[{"type":"text","text":"好"}],"stop_reason":"end_turn","usage":{"input_tokens":9,"output_tokens":3}}""",
-        ))
-        val sink = RecordingSink()
-        val tally = RunUsageTally()
-        val model = AnthropicModel(base, "k", "m", caps, OkHttpClient()).metered(source, sink)
-
-        withContext(tally) { model.complete("s", history, emptyList()) }
-
-        assertOneCall(sink, tally, attempts = 2, unreported = 1, Usage(9, 3))
     }
 
     @Test fun separateOuterRetriesAreNotDoubleCounted() = runTest {

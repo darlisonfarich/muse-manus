@@ -5,9 +5,8 @@ import com.wangzan101.mika.core.agent.TaskState
 import com.wangzan101.mika.core.agent.Turn
 import com.wangzan101.mika.core.agent.AgentLoop
 import com.wangzan101.mika.core.assembly.toolDispatcher
-import com.wangzan101.mika.core.model.BearerToken
+import com.wangzan101.mika.core.model.OpenAiCompatModel
 import com.wangzan101.mika.core.model.Capabilities
-import com.wangzan101.mika.core.model.ResponsesModel
 import com.wangzan101.mika.cap.phone.a11y.LazyPhoneScreen
 import com.wangzan101.mika.core.record.RunEvent
 import com.wangzan101.mika.core.remote.RemoteTask
@@ -78,9 +77,9 @@ class PhoneHistoryTest {
 
     @Test fun recordedModelAttemptAndPagedBodyReachHistoryWithoutInventingUsage() = runBlocking {
         MockWebServer().use { server ->
-            server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Recorded answer"}]}],"usage":{"input_tokens":1000,"input_tokens_details":{"cached_tokens":0},"output_tokens":2}}"""))
+            server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"choices":[{"message":{"content":"Recorded answer"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens":2}}"""))
             server.start()
-            val model = ResponsesModel(server.url("/v1").toString(), BearerToken.fixed("private-test-header"),
+            val model = OpenAiCompatModel(server.url("/v1").toString(), "private-test-header",
                 "test-model", Capabilities(true, false, 128000, false), OkHttpClient())
             val record = runs().open("Read the saved source")
             val store = traces()

@@ -72,6 +72,7 @@ object ReadmeSections {
     /** 一句话:有哪些预设(地址为空的「自定义」不算),自定义能接哪几类接口(见 [customKinds])。 */
     fun providers(presets: List<Preset>): String {
         val names = presets.filter { it.baseUrl.isNotEmpty() }.joinToString("、") { it.label }
+        if (names.isEmpty()) return listOf(NOTE, "仅提供「自定义」OpenAI 兼容接口，未预设外部模型服务商。").joinToString("\n")
         val kinds = customKinds(presets).joinToString("、") { kindName(it) }
         return listOf(NOTE, "内置 $names 等服务商预设；其他服务商选「自定义」，$kinds 接口都能接。").joinToString("\n")
     }
@@ -79,6 +80,7 @@ object ReadmeSections {
     /** [providers] 的英文版;「自定义」那一条的名字照源码写在括号里,对得上中文界面。 */
     fun providersEn(presets: List<Preset>): String {
         val names = presets.filter { it.baseUrl.isNotEmpty() }.joinToString(", ") { it.label }
+        if (names.isEmpty()) return listOf(NOTE_EN, "Only Custom (自定义) OpenAI-compatible endpoints are supported; no external model provider presets are included.").joinToString("\n")
         val custom = presets.firstOrNull { it.baseUrl.isEmpty() }?.label
         val kinds = orList(customKinds(presets).map { kindNameEn(it) })
         val pick = if (custom == null) "Custom" else "Custom ($custom)"

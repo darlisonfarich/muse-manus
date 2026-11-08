@@ -202,16 +202,6 @@
                 android:value="Keeps user-enabled computer access available through a private-network or USB endpoint, or an outbound connection to the user's remote gateway, so authorized clients can hand tasks to the app" />
         </service>
 
-        <!-- 用 ChatGPT 登录期间:用户在浏览器里登录时撑住进程,本机回调才有人接;登录一结束就停 -->
-        <service
-            android:name=".settings.ChatGptSignInService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Keeps sign-in alive while the user finishes account login in the external browser, for a loopback callback or device-code polling" />
-        </service>
-
         <!-- 后台准备运行环境(解出随 APK 自带的根文件系统),只在准备期间运行 -->
         <service
             android:name=".sandbox.SandboxService"

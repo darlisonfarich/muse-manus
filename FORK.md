@@ -197,3 +197,22 @@ ponte do Muse e é independente da remoção OTLP.
 - Teste `AgentDisplayApiSafetyTest` verifica a ausência do acesso PNG bruto e
   a preservação do método interno de bitmap. Nenhuma alteração em
   `ChatModel.kt` ou `OpenAiCompatModel.kt`.
+
+## Remoção final — somente Custom OpenAI-compatible (PR de rascunho)
+
+- Removidos OAuth de modelos ChatGPT/xAI/OpenRouter, clientes de assinatura e
+  painéis de login, além das implementações de modelo Anthropic/Gemini/Responses.
+- Mantidos **intactos** `core/model/ChatModel.kt` e
+  `core/model/OpenAiCompatModel.kt`, usados pelo transporte Custom/MUSE.
+- Lista de presets reduzida a Custom. O runtime de `ProviderStore` rejeita
+  métodos fora de Chat Completions, fixa a Base URL do usuário e migra JSON
+  antigo em modo fail-closed, excluindo serviços OAuth, configurações e Key
+  órfãos sem reenquadrar contas antigas como Custom.
+- `core/cap/mcp/McpOAuth.kt` continua suportado: `core/oauth/Pkce.kt`
+  e `core/oauth/LoopbackCallback.kt` são **preservados** porque
+  oferecem autenticação ao MCP, não login de modelo.
+- Testes da conexão Custom, migração e isolamento de origem reforçados; testes
+  exclusivos dos adaptadores removidos foram retirados. README e documentação
+  de modelos atualizados. Sem alterações em MCP, `LICENSE` e `NOTICE`.
+
+**PR em rascunho: revisão Muse obrigatória, CI 4/4 verde, sem merge.**

@@ -62,4 +62,10 @@ class ReadmeSectionsTest {
         assertTrue(ReadmeSections.providers(presets).endsWith("内置 甲、乙、丙 等服务商预设；其他服务商选「自定义」，OpenAI 兼容、Gemini、OpenAI Responses 接口都能接。"))
         assertTrue(ReadmeSections.providersEn(presets).endsWith("which takes any OpenAI-compatible, Gemini or OpenAI Responses endpoint."))
     }
+    @Test fun customOnlyReadmeDoesNotClaimExternalPresets() {
+        val presets = listOf(ReadmeSections.Preset("自定义", "OpenAiCompat", ""))
+        assertTrue(ReadmeSections.providers(presets).contains("仅提供「自定义」OpenAI 兼容"))
+        assertTrue(ReadmeSections.providersEn(presets).contains("Only Custom (自定义) OpenAI-compatible"))
+    }
+
 }

@@ -6,11 +6,8 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import com.wangzan101.mika.R
-import com.wangzan101.mika.core.chatgpt.ChatGptAuth
-import com.wangzan101.mika.core.oauth.OpenRouterAuth
 import com.wangzan101.mika.MikaApp
 import com.wangzan101.mika.voice.SystemSpeech
-import com.wangzan101.mika.settings.ChatGptSignIns
 import com.wangzan101.mika.i18n.tr
 import androidx.compose.ui.res.stringResource
 import androidx.activity.compose.BackHandler
@@ -106,9 +103,8 @@ fun ModelSetupScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val vm = remember {
-        val signIns = (context.applicationContext as? MikaApp)?.chatGptSignIn ?: ChatGptSignIns(scope)
         ModelSetupViewModel(
-            store, scope, browser = AndroidSignInBrowser(context.applicationContext), signIns = signIns,
+            store, scope,
             speech = (context.applicationContext as? MikaApp)?.speech,
             systemSpeech = {
                 val silent = (context.applicationContext as? MikaApp)?.speech?.systemSilent?.value ?: false
@@ -120,33 +116,11 @@ fun ModelSetupScreen(
     var picking by rememberSaveable { mutableStateOf<ModelRole?>(null) }
     var openProvider by rememberSaveable { mutableStateOf<String?>(null) }
     var allModels by rememberSaveable { mutableStateOf(false) }
-    // 账号登录的面板:在添加表单和服务商详情里都能打开,登录中关掉也不打断登录
-    var signInSheet by rememberSaveable { mutableStateOf<SignInKind?>(null) }
-
-    // 用账号登录成功:收起面板,打开这一家的详情(看账号和模型、设主模型)
-    LaunchedEffect(ui.signedInProvider) {
-        val id = ui.signedInProvider ?: return@LaunchedEffect
-        signInSheet = null
-        picking = null
-        openProvider = id
-        allModels = false
-        vm.signedInShown()
-    }
-    // ChatGPT 登录成功照旧留在这一页(第一次会说明在用套餐额度),面板收起
-    LaunchedEffect(ui.chatGptAccount?.signedIn, ui.chatGptSignIn) {
-        if (signInSheet == SignInKind.ChatGpt && ui.chatGptAccount?.signedIn == true && ui.chatGptSignIn == ListState.Idle) signInSheet = null
-    }
-
     val provider = openProvider?.let { id -> ui.providers.firstOrNull { it.id == id } }
     val role = picking
     when {
         provider != null -> {
             LaunchedEffect(provider.id) { vm.ensureListed() }
-            val accountKind = when {
-                provider.kind == ProviderConfig.Kind.Xai -> SignInKind.Xai
-                provider.signIn == ProviderStore.OPENROUTER_SIGN_IN -> SignInKind.OpenRouter
-                else -> null
-            }
             val actions = ProviderDetailActions(
                 refresh = { vm.refresh(provider.id) }, changeKey = { vm.changeKey(provider.id, it) },
                 remove = { vm.removeProvider(provider.id); openProvider = null; allModels = false },
@@ -154,17 +128,6 @@ fun ModelSetupScreen(
                 setVision = { model, sees -> vm.setModelVision(provider.id, model, sees) },
                 showAll = { allModels = true },
                 retest = { vm.retest(provider.id) },
-                // ChatGPT 照旧直接去浏览器登录;xAI、OpenRouter 先打开说明面板
-                signIn = { if (accountKind != null) signInSheet = accountKind else vm.signInWithChatGpt() },
-                signOut = { if (accountKind != null) vm.signOutAccount(provider.id) else vm.signOutChatGpt(provider.id) },
-                manageUsage = {
-                    openInBrowser(context, when (accountKind) {
-                        SignInKind.Xai -> ModelsCopy.ACCOUNT_MANAGE_URL
-                        SignInKind.OpenRouter -> OpenRouterAuth.KEYS_PAGE
-                        else -> ChatGptAuth.USAGE_URL
-                    })
-                },
-                useAsMain = { vm.useAsMain(provider.id) },
             )
             if (allModels) {
                 BackHandler { allModels = false }
@@ -193,7 +156,6 @@ fun ModelSetupScreen(
             )
         }
         else -> {
-            if (ui.chatGptWelcome) ChatGptWelcome(vm::dismissChatGptWelcome)
             BackHandler(onBack = onBack)
             ModelSetupContent(
                 ui, onboarding,
@@ -204,7 +166,6 @@ fun ModelSetupScreen(
                     openForm = vm::openForm, closeForm = vm::closeForm,
                     openProvider = { openProvider = it; allModels = false }, pickRole = { picking = it }, next = onDone, openSpeech = onOpenSpeech,
                     openUsage = onOpenUsage,
-                    openSignIn = { signInSheet = it },
                     setReasoningEffort = vm::setReasoningEffort,
                     setModelContext = vm::setModelContext,
                 ),
@@ -213,27 +174,6 @@ fun ModelSetupScreen(
         }
     }
 
-    signInSheet?.let { kind ->
-        SignInSheet(
-            ui, kind,
-            SignInSheetActions(
-                start = { k -> k.account?.let(vm::signInWithAccount) ?: vm.signInWithChatGpt() },
-                cancel = { k -> if (k.account != null) vm.cancelAccountSignIn() else vm.cancelChatGptSignIn() },
-                useApiKey = { k ->
-                    signInSheet = null
-                    openProvider = null
-                    picking = null
-                    vm.openForm()
-                    k.keyPreset?.let(vm::selectPreset)
-                },
-                dismiss = {
-                    signInSheet = null
-                    // 失败的原因看过了;还在登录的不打断
-                    if (!ui.accountSignIn.running) vm.dismissAccountFailure()
-                },
-            ),
-        )
-    }
 }
 
 /** 主页面上的全部动作。 */
@@ -258,8 +198,6 @@ class ModelSetupActions(
     /** 打开 Token 用量;为 null 时不显示入口(上手流程)。 */
     val openUsage: (() -> Unit)? = null,
     val next: () -> Unit = {},
-    /** 打开一家账号登录的说明面板。 */
-    val openSignIn: (SignInKind) -> Unit = {},
     val setReasoningEffort: (ModelRole, String?) -> Unit = { _, _ -> },
     val setModelContext: (String, ModelContextSettings) -> Boolean = { _, _ -> false },
 )
@@ -320,7 +258,7 @@ private fun ProvidersSection(ui: ModelSetupUi, actions: ModelSetupActions) {
         GroupLabel(ModelsCopy.PROVIDERS)
         GroupCard {
             ui.providers.forEachIndexed { i, p ->
-                val line = if (ui.signedOut(p)) ModelsCopy.CHATGPT_SIGNED_OUT else ModelsCopy.providerLine(p, ui.listing[p.id], ui.rolesOf(p))
+                val line = ModelsCopy.providerLine(p, ui.listing[p.id], ui.rolesOf(p))
                 // 有用着却没试通过的模型、或跳过测试存下且已经在用:这一行就提醒「没测试通过」
                 val warning = ModelsCopy.UNVERIFIED.takeIf {
                     ui.unverified(p).isNotEmpty() || (ui.untested(p) && ui.rolesOf(p).isNotEmpty())
@@ -365,7 +303,6 @@ private fun AddProviderForm(ui: ModelSetupUi, actions: ModelSetupActions) {
             )
         }
     }
-    AccountSignInGroup(ui, actions.openSignIn, actions.openProvider)
     GroupLabel(ModelsCopy.KEY_GROUP)
     FlowRow(
         Modifier.fillMaxWidth().padding(bottom = 12.dp),
@@ -475,58 +412,6 @@ private fun PresetSuggestion(f: AddForm, label: String, onUse: () -> Unit) {
         Modifier.padding(start = 16.dp, bottom = 12.dp).clickable(onClick = onUse).testTag("setup-use-preset").padding(vertical = 4.dp),
         fontSize = 13.sp, fontWeight = FontWeight.Medium, color = c.accent,
     )
-}
-
-/** 第一次用 ChatGPT 登录成功后说明一次:Mika 里的用量走你的 ChatGPT 套餐。 */
-@Composable
-private fun ChatGptWelcome(onDismiss: () -> Unit) {
-    MikaDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(ModelsCopy.CHATGPT_WELCOME_TITLE) },
-        text = { Text(ModelsCopy.CHATGPT_WELCOME_BODY) },
-        confirmButton = { TextButton(onDismiss) { Text(ModelsCopy.CHATGPT_GOT_IT) } },
-    )
-}
-
-/**
- * 登录要用的系统能力:授权页用系统浏览器打开;回调页(换完令牌之后才给出)写成功或失败的原因,再放一个回到 Mika 的链接(intent 链接,点了由浏览器打开 Mika);
- * 登录完(成功或失败)把 Mika 带回前台。安卓限制后台打开界面,带不回来时用户点回调页的链接或从最近任务回来。
- */
-private class AndroidSignInBrowser(private val context: Context) : SignInBrowser {
-    override fun open(url: String) {
-        try {
-            context.startActivity(
-                Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            )
-        } catch (e: ActivityNotFoundException) {
-            Toast.makeText(context, tr(R.string.chatgpt_no_browser), Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    override fun returnToApp() {
-        runCatching {
-            context.startActivity(
-                Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
-            )
-        }
-    }
-
-    override fun page(failure: String?): String {
-        val text = failure ?: tr(R.string.chatgpt_page_done)
-        val back = "intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${context.packageName};end"
-        return SignInPage.html(tr(R.string.chatgpt_page_title), text, tr(R.string.chatgpt_page_back), back)
-    }
-}
-
-/** 回调后浏览器里那一页:一句话加一个回到 App 的按钮。文字转义后放进去。 */
-internal object SignInPage {
-    fun html(title: String, text: String, back: String, backUrl: String): String {
-        fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
-        return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">""" +
-            """<title>${esc(title)}</title><style>body{font-family:sans-serif;margin:0;padding:48px 24px;text-align:center;color:#1d1d1f;background:#fff}""" +
-            """p{font-size:17px;line-height:1.5}a{display:inline-block;margin-top:16px;padding:12px 28px;border-radius:999px;background:#1d1d1f;""" +
-            """color:#fff;text-decoration:none;font-size:16px}</style></head><body><p>${esc(text)}</p><a href="${esc(backUrl)}">${esc(back)}</a></body></html>"""
-    }
 }
 
 /** 用途:主模型、看图模型、轻量模型各一张卡,点开是选择页。 */
@@ -675,15 +560,7 @@ object ModelSetupCopy {
     val SAVE_UNTESTED_CONFIRM: String get() = tr(R.string.model_save_untested_confirm)
 
     /** 手填模型名时举的例子,按接口类型(各家模型名的样子不同)。 */
-    fun modelExample(kind: ProviderConfig.Kind): String = tr(
-        when (kind) {
-            ProviderConfig.Kind.Gemini -> R.string.model_example_gemini
-            ProviderConfig.Kind.Anthropic -> R.string.model_example_anthropic
-            ProviderConfig.Kind.OpenAiResponses, ProviderConfig.Kind.ChatGpt -> R.string.model_example_openai
-            ProviderConfig.Kind.Xai -> R.string.model_example_grok
-            ProviderConfig.Kind.OpenAiCompat -> R.string.model_example_compat
-        },
-    )
+    fun modelExample(kind: ProviderConfig.Kind): String = tr(R.string.model_example_compat)
 
     /** 自定义地址是某家官方地址时的建议;接口类型和那家对不上时补一句。 */
     fun presetSuggestion(f: AddForm): String {

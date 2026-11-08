@@ -161,41 +161,6 @@ class ModelCatalog(private val http: OkHttpClient) {
         ModelListResult.Ok(data.mapNotNull { (it as? JsonObject)?.let(::openAiModel) }.distinctBy { it.id })
     }
 
-    suspend fun anthropic(baseUrl: String, apiKey: String, headers: Map<String, String> = emptyMap()): ModelListResult = run {
-        val base = endpoint(baseUrl, "/v1/models") ?: return@run badUrl()
-        val all = mutableListOf<ListedModel>()
-        var after: String? = null
-        repeat(MAX_PAGES) {
-            val url = base.newBuilder().addQueryParameter("limit", "1000")
-                .apply { if (after != null) addQueryParameter("after_id", after) }.build()
-            val req = Request.Builder().url(url).get().withHeaders(headers)
-                .header("x-api-key", apiKey).header("anthropic-version", "2023-06-01").build()
-            val root = fetch(req).getOrElse { return@run it.asFailure() }
-            val data = root["data"] as? JsonArray ?: return@run ModelListResult.Failed(ListFailure.BadResponse)
-            all += data.mapNotNull { (it as? JsonObject)?.let(::anthropicModel) }
-            after = root.str("last_id")
-            if (root.bool("has_more") != true || after == null) return@run ModelListResult.Ok(all.distinctBy { it.id })
-        }
-        ModelListResult.Ok(all.distinctBy { it.id })
-    }
-
-    suspend fun gemini(baseUrl: String, apiKey: String, headers: Map<String, String> = emptyMap()): ModelListResult = run {
-        val base = endpoint(baseUrl, "/v1beta/models") ?: return@run badUrl()
-        val all = mutableListOf<ListedModel>()
-        var token: String? = null
-        repeat(MAX_PAGES) {
-            val url = base.newBuilder().addQueryParameter("pageSize", "1000")
-                .apply { if (token != null) addQueryParameter("pageToken", token) }.build()
-            val req = Request.Builder().url(url).get().withHeaders(headers).header("x-goog-api-key", apiKey).build()
-            val root = fetch(req).getOrElse { return@run it.asFailure() }
-            val data = root["models"] as? JsonArray ?: JsonArray(emptyList())
-            all += data.mapNotNull { (it as? JsonObject)?.let(::geminiModel) }
-            token = root.str("nextPageToken")?.takeIf { it.isNotEmpty() }
-            if (token == null) return@run ModelListResult.Ok(all.distinctBy { it.id })
-        }
-        ModelListResult.Ok(all.distinctBy { it.id })
-    }
-
     private fun openAiModel(o: JsonObject): ListedModel? {
         // 用 ChatGPT 账号列模型时(`models` 表)名字在 `slug`、显示名在 `display_name`,只留 `visibility` 为 list 的
         o.str("visibility")?.let { if (it != "list") return null }
@@ -250,49 +215,6 @@ class ModelCatalog(private val http: OkHttpClient) {
                 // 只出图、出声音的不是对话模型;出文字的不另记
                 else -> outputs?.takeIf { "text" !in it }?.let { false }
             },
-        )
-    }
-
-    private fun anthropicModel(o: JsonObject): ListedModel? {
-        val id = o.str("id")?.takeIf { it.isNotBlank() } ?: return null
-        val caps = o["capabilities"] as? JsonObject
-        val thinking = caps?.obj("thinking")
-        val types = thinking?.obj("types")?.supportedKeys()
-        return ListedModel(
-            id = id,
-            displayName = o.str("display_name").orEmpty(),
-            vision = (caps?.get("image_input") as? JsonObject)?.bool("supported"),
-            contextTokens = o.int("max_input_tokens"),
-            reasoning = thinking?.bool("supported"),
-            reasoningEfforts = types?.let { anthropicEfforts(caps?.obj("effort"), it) },
-            thinkingTypes = types,
-        )
-    }
-
-    /**
-     * Anthropic 模型可选的思考档位:只在它接受自适应思考(`adaptive`,档位放 `output_config.effort`)时给,
-     * 档位是 `capabilities.effort` 里标了支持的那几级;也接受关掉思考(`disabled`)的,前面加一档 `none`。
-     * 只接受按预算思考(`enabled` + `budget_tokens`)或不分档位的,没有可选档位。
-     */
-    private fun anthropicEfforts(effort: JsonObject?, types: List<String>): List<String> {
-        val levels = effort?.takeIf { it.bool("supported") == true }?.supportedKeys().orEmpty()
-            .sortedBy { EFFORT_ORDER.indexOf(it).takeIf { i -> i >= 0 } ?: EFFORT_ORDER.size }
-        if ("adaptive" !in types || levels.isEmpty()) return emptyList()
-        return listOfNotNull("none".takeIf { "disabled" in types }) + levels
-    }
-
-    /** `{"a":{"supported":true},"b":{"supported":false},"supported":true}` 里标了支持的子项:`[a]`。 */
-    private fun JsonObject.supportedKeys(): List<String> = keys.filter { (this[it] as? JsonObject)?.bool("supported") == true }
-
-    private fun geminiModel(o: JsonObject): ListedModel? {
-        val id = o.str("name")?.removePrefix("models/")?.takeIf { it.isNotBlank() } ?: return null
-        val methods = (o["supportedGenerationMethods"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-        if (methods != null && "generateContent" !in methods) return null
-        return ListedModel(
-            id = id,
-            displayName = o.str("displayName").orEmpty(),
-            contextTokens = o.int("inputTokenLimit"),
-            reasoning = o.bool("thinking"),
         )
     }
 

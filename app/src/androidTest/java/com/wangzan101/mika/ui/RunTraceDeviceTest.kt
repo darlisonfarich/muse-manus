@@ -9,9 +9,8 @@ import com.wangzan101.mika.MikaApp
 import com.wangzan101.mika.core.model.ChatModel
 import com.wangzan101.mika.core.model.Message
 import com.wangzan101.mika.core.model.ToolSpec
-import com.wangzan101.mika.core.model.BearerToken
 import com.wangzan101.mika.core.model.Capabilities
-import com.wangzan101.mika.core.model.ResponsesModel
+import com.wangzan101.mika.core.model.OpenAiCompatModel
 import com.wangzan101.mika.settings.Prerequisites
 import com.wangzan101.mika.task.TaskEnvironment
 import com.wangzan101.mika.task.testTasks
@@ -26,7 +25,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** Exercise the installed app's settings, TaskRun, recording and timeline with a local Responses endpoint. */
+/** Exercise the installed app's settings, TaskRun, recording and timeline with a local Custom Chat Completions endpoint. */
 @RunWith(AndroidJUnit4::class)
 class RunTraceDeviceTest {
     @get:Rule(order = Int.MIN_VALUE) val chinese = ChineseUi()
@@ -55,11 +54,11 @@ class RunTraceDeviceTest {
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     return MockResponse().setHeader("Content-Type", "application/json")
-                    .setBody("""{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"完成"}]}],"usage":{"input_tokens":1200,"input_tokens_details":{"cached_tokens":512},"output_tokens":2}}""")
+                    .setBody("""{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"完成"}}],"usage":{"prompt_tokens":1200,"prompt_tokens_details":{"cached_tokens":512},"completion_tokens":2}}""")
                 }
             }
             server.start()
-            val model = ResponsesModel(server.url("/v1").toString(), BearerToken.fixed(null), "trace-device",
+            val model = OpenAiCompatModel(server.url("/v1").toString(), null, "trace-device",
                 Capabilities(true, false, 128_000, false), OkHttpClient())
             try {
                 app.detailedTraces.setEnabled(false)

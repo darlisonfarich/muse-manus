@@ -18,7 +18,6 @@ class SpeechSettingsTest {
             SpeechChoice.Doubao(DoubaoProtocol.CONCURRENT),
             SpeechChoice.Provider("p1", "whisper-1", TranscribeMethod.AudioTranscriptions),
             SpeechChoice.Provider("p2", "gpt-4o-audio", TranscribeMethod.ChatInputAudio),
-            SpeechChoice.Provider("p3", "gemini-flash", TranscribeMethod.GeminiInline),
             SpeechChoice.Provider("p4", "asr-x", TranscribeMethod.ChatInputAudioUri),
             SpeechChoice.Provider("p5", "asr-y", TranscribeMethod.ChatInputAudioOnly),
         )
@@ -29,6 +28,17 @@ class SpeechSettingsTest {
             assertEquals(c, s.choice.value)
             assertEquals(c, SpeechSettings(prefs).choice.value)
         }
+    }
+
+    @Test fun removedGeminiTranscriptionFallsBackToAuto() {
+        val prefs = MemoryPrefs()
+        val s = SpeechSettings(prefs)
+        s.set(SpeechChoice.Provider("p3", "legacy", TranscribeMethod.GeminiInline))
+        assertEquals(SpeechChoice.Auto, s.choice.value)
+        assertEquals(SpeechChoice.Auto, SpeechSettings(prefs).choice.value)
+        prefs.edit().putString("speech_choice",
+            """{"type":"provider","providerId":"p3","model":"legacy","method":"GeminiInline"}""").commit()
+        assertEquals(SpeechChoice.Auto, SpeechSettings(prefs).choice.value)
     }
 
     @Test fun silentMarkNeedsTwoSilentSessionsInARow() {
