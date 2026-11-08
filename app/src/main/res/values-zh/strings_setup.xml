@@ -80,4 +80,6 @@
     <string name="model_probe_tried">试了 %1$s，都没测试通过。</string>
     <string name="model_probe_fallback">先试的 %1$s 没测试通过：%2$s。主模型用了测试通过的「%3$s」。</string>
     <string name="model_pick_main">选主模型</string>
+    <string name="mcp_direct_writes_title">允许 Muse 直接控制</string>
+    <string name="mcp_direct_writes_detail">开启后，已认证的 MCP 客户端可执行可撤销的手机操作。关闭后仅可读取。密码、购买和其他重大操作仍被阻止。</string>
 </resources>
