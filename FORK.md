@@ -130,6 +130,8 @@ mas não oferece mais upload de traces para servidores OTLP/HTTP.
   Os testes de registro/visualização local permanecem.
 - Removidas as onze strings exclusivas do envio OTLP de cada uma das dez
   traduções `strings_trace.xml`; mantidas as strings da gravação local.
+- `docs/dev/architecture.md`: removidas as instruções e referências à transmissão
+  OTLP, mantendo a descrição da exportação voluntária local.
 - **Preservados:** `core/trace/*`, `app/record/DetailedTraces.kt`, a
   dependência `traceSchemas(libs.otel.proto)` em `core/build.gradle.kts`,
   e as demais capacidades do aplicativo. `LICENSE`, `NOTICE` e créditos
