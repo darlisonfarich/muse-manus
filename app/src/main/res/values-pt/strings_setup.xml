@@ -2,7 +2,7 @@
 <resources>
     <string name="welcome_title">Oi, eu sou o Mika</string>
     <string name="welcome_lead">Seu assistente pessoal no celular.\nDiga o que fazer e eu resolvo em segundo plano.</string>
-    <string name="welcome_note">Antes de começar: configure um modelo e ative o controle do celular. Leva cerca de 3 minutos.</string>
+    <string name="welcome_note">Use o Muse para controlar o celular sem outro modelo, ou configure uma IA própria. Depois ative o controle do aparelho.</string>
     <string name="welcome_start">Começar</string>
     <string name="welcome_apps">Usar apps</string>
     <string name="welcome_apps_body">Toca, digita e rola em uma tela em segundo plano, deixando a sua livre</string>
