@@ -8,7 +8,7 @@ import org.junit.Test
 
 class GerSessionManagerTest {
     private data class Run(val conversationId: String, val goal: String) {
-        val key = "$"+"conversationId/$"+"goal"
+        val key = "$conversationId/$goal"
     }
 
     @Test fun directSlotIsExclusiveAndReleasedIdempotently() {
