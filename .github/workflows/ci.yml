@@ -94,9 +94,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
-      # assembleDebug 验证单测碰不到的打包路径：31MB 的 rootfs、jniLibs 旧式解压、AIDL、Compose。
+      # assembleDebug validates packaging; assembleDebugAndroidTest compiles instrumented tests, catching removed adapters.
       - name: Unit tests and debug build
-        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug --stacktrace
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v7
