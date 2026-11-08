@@ -764,36 +764,31 @@ class ProviderStoreTest {
         assertEquals(listed, store().providers.value.single().models)
     }
 
+    /** The configured Custom base URL wins even if model metadata advertises another host/protocol. */
     @Test
-    fun eachModelIsBuiltWithTheEndpointItsListingNamed() = runTest {
-        val s = store()
-        val p = s.connect(
-            "X", ProviderConfig.Kind.OpenAiCompat, "https://x.test/v1", "k",
-            listOf(ListedModel("a", endpoint = chat), ListedModel("b", endpoint = messages), ListedModel("plain")),
-        )
-        s.use(ModelRole.Main, p.id, "b", none)
-        s.use(ModelRole.Light, p.id, "plain", none)
-        store().modelFor(ModelRole.Main)
-        store().modelFor(ModelRole.Light)
-        assertEquals(listOf(messages, null), endpoints)
-        assertEquals(listOf("k", "k"), built.map { it.second })
-        // 重新列出、地址换了,下次建模型用新的
-        val moved = messages.copy(baseUrl = "https://y.test/anthropic/v1")
-        s.rememberModels(p.id, listOf(ListedModel("b", endpoint = moved)))
-        s.modelFor(ModelRole.Main)
-        assertEquals(moved, endpoints.last())
+    fun modelListCannotRedirectTheCustomAdapter() = runTest {
+        val server = MockWebServer().also { it.start() }
+        val attacker = MockWebServer().also { it.start() }
+        try {
+            val realBase = server.url("/v1").toString().trimEnd('/')
+            val injected = ModelEndpoint(ModelProtocol.Responses, attacker.url("/v1").toString())
+            val st = ProviderStore(tmp.root, AesGcmKeyCipher { key }, userAgent = "MuseManus/1")
+            val p = st.connect("Custom", ProviderConfig.Kind.OpenAiCompat, realBase, "k",
+                listOf(ListedModel("m", endpoint = injected)))
+            st.use(ModelRole.Main, p.id, "m", none)
+            server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}"""))
+            st.modelFor(ModelRole.Main)!!.complete("s", emptyList(), emptyList())
+            assertEquals("/v1/chat/completions", server.takeRequest().path)
+            assertEquals(0, attacker.requestCount)
+        } finally { server.shutdown(); attacker.shutdown() }
     }
 
     @Test
-    fun adapterAndBaseUrlFollowTheProtocolWithoutRepeatingTheVersionPath() {
+    fun adapterIsPinnedToCustomBaseUrlForEveryListedProtocol() {
         val c = cfg("1")
-        assertEquals(ProviderConfig.Kind.OpenAiCompat to "https://example.test/v1", ProviderStore.adapterFor(c, null))
-        assertEquals(ProviderConfig.Kind.OpenAiCompat to "https://x.test/openai/v1", ProviderStore.adapterFor(c, chat))
-        assertEquals(ProviderConfig.Kind.Anthropic to "https://x.test/anthropic", ProviderStore.adapterFor(c, messages))
-        assertEquals(ProviderConfig.Kind.Gemini to "https://x.test/google", ProviderStore.adapterFor(c, generate))
-        assertEquals(ProviderConfig.Kind.OpenAiResponses to "https://x.test/openai/v1", ProviderStore.adapterFor(c, responses))
-        val anthropicConfig = c.copy(kind = ProviderConfig.Kind.Anthropic, baseUrl = "https://api.anthropic.com")
-        assertEquals(ProviderConfig.Kind.Anthropic to "https://api.anthropic.com", ProviderStore.adapterFor(anthropicConfig, null))
+        for (endpoint in listOf(null, chat, messages, generate, responses)) {
+            assertEquals(ProviderConfig.Kind.OpenAiCompat to c.baseUrl, ProviderStore.adapterFor(c, endpoint))
+        }
     }
 
     // ---------- 请求头 ----------
@@ -812,28 +807,23 @@ class ProviderStoreTest {
         assertTrue(setups.all { it.headers["User-Agent"] == "Mika/1.2.3" })
     }
 
-    /** 列表把模型指到 Responses 的(同一服务商下只说这一种协议的模型):走真的 Responses 适配器,照样带客户端标识和会话号。 */
+    /** Session headers still work for Custom models using Chat Completions. */
     @Test
-    fun responsesRoutedModelCarriesTheSessionHeader() = runTest {
-        val server = okhttp3.mockwebserver.MockWebServer().also { it.start() }
+    fun customModelCarriesSessionHeaderOnChatCompletions() = runTest {
+        val server = MockWebServer().also { it.start() }
         try {
-            val s = ProviderStore(tmp.root, AesGcmKeyCipher { key }, userAgent = "Mika/1.2.3")
-            val responsesBase = server.url("/v1").toString()
-            val listed = ListedModel("r-only", endpoint = ModelEndpoint(ModelProtocol.Responses, responsesBase))
-            val p = s.connect("Go", ProviderConfig.Kind.OpenAiCompat, "https://go.test/v1", "k", listOf(listed), sessionHeader = "x-test-session")
-            s.use(ModelRole.Main, p.id, "r-only", none)
-            server.enqueue(okhttp3.mockwebserver.MockResponse().setHeader("Content-Type", "text/event-stream")
-                .setBody("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"))
+            val st = ProviderStore(tmp.root, AesGcmKeyCipher { key }, userAgent = "MuseManus/1")
+            val p = st.connect("Custom", ProviderConfig.Kind.OpenAiCompat, server.url("/v1").toString(), "k",
+                listOf(ListedModel("m")), sessionHeader = "x-test-session")
+            st.use(ModelRole.Main, p.id, "m", none)
+            server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}"""))
             val session = ModelSession.of("conv-a")
-            s.modelFor(ModelRole.Main, session)!!.complete("s", emptyList(), emptyList())
+            st.modelFor(ModelRole.Main, session)!!.complete("s", emptyList(), emptyList())
             val req = server.takeRequest()
-            assertEquals("/v1/responses", req.path)
-            assertEquals("Mika/1.2.3", req.getHeader("User-Agent"))
+            assertEquals("/v1/chat/completions", req.path)
+            assertEquals("MuseManus/1", req.getHeader("User-Agent"))
             assertEquals(session.id, req.getHeader("x-test-session"))
-            assertEquals("Bearer k", req.getHeader("Authorization"))
-        } finally {
-            server.shutdown()
-        }
+        } finally { server.shutdown() }
     }
 
     @Test
@@ -845,19 +835,15 @@ class ProviderStoreTest {
         assertEquals(mapOf("User-Agent" to "Mika/1.2.3"), setups.single().headers)
     }
 
-    /** 会话头随服务商存下;旧版本存下的(没有这一项)按地址对得上的预设补上,预设的地址就会带。 */
     @Test
-    fun sessionHeaderPersistsAndIsFilledFromThePresetForOldFiles() {
-        val goUrl = ProviderPresets.all.first { it.sessionHeader != null }
-        val s = store()
-        val p = s.connect(goUrl.label, goUrl.kind, goUrl.baseUrl, "k", emptyList())
-        assertEquals(goUrl.sessionHeader, p.sessionHeader)
-        assertEquals(goUrl.sessionHeader, store().provider(p.id)?.sessionHeader)
-        val f = File(tmp.root, "providers.json")
-        f.writeText(f.readText().replace(",\"sessionHeader\":\"${goUrl.sessionHeader}\"", ""))
-        assertFalse(f.readText().contains("sessionHeader"))
-        assertEquals(goUrl.sessionHeader, store().provider(p.id)?.sessionHeader)
-        assertTrue("written back", f.readText().contains("sessionHeader"))
+    fun customSessionHeaderPersistsAndIsNotRecreatedAfterRemoval() {
+        val st = store()
+        val p = st.connect("Custom", ProviderConfig.Kind.OpenAiCompat, "https://custom.test/v1", "k",
+            listOf(ListedModel("m")), sessionHeader = "x-custom-session")
+        assertEquals("x-custom-session", store().provider(p.id)?.sessionHeader)
+        val file = File(tmp.root, "providers.json")
+        file.writeText(file.readText().replace(",\"sessionHeader\":\"x-custom-session\"", ""))
+        assertNull(store().provider(p.id)?.sessionHeader)
     }
 
     /** 试调用走真的适配器:带客户端标识和声明的会话头、带一个试用的工具;回了工具调用才算通过,服务端的报错原样带回。 */
@@ -886,18 +872,6 @@ class ProviderStoreTest {
             assertTrue(e.error.message.orEmpty(), e.error.message.orEmpty().contains("MissingSessionID"))
             assertNull(server.takeRequest().getHeader("x-test-session"))
 
-            // Responses 不给回复上限;回了函数调用就算通过
-            server.enqueue(okhttp3.mockwebserver.MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
-                "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"get_time\",\"arguments\":\"{}\"}}\n\n" +
-                    "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n",
-            ))
-            assertEquals(ProbeResult.ToolCalled, s.probe(ProviderConfig.Kind.OpenAiResponses, url, "sk", null, "m", null, none))
-            val responses = server.takeRequest()
-            assertEquals("/v1/responses", responses.path)
-            assertEquals("Mika/1.2.3", responses.getHeader("User-Agent"))
-            val responsesBody = responses.body.readUtf8()
-            assertFalse(responsesBody.contains("max_output_tokens"))
-            assertTrue(responsesBody.contains("get_time"))
         } finally {
             server.shutdown()
         }
@@ -963,4 +937,39 @@ class ProviderStoreTest {
         override suspend fun complete(system: String, messages: List<Message>, tools: List<ToolSpec>): ModelReply =
             ModelReply(emptyList(), StopReason.EndTurn, Usage(3, 2))
     }
+    /** Old Kind enum names are read as strings before enumValueOf and never crash app startup. */
+    @Test
+    fun newLegacyKindConfigurationsAreDiscardedSafely() {
+        val cfg = """{"id":"old","providerId":"old-p","name":"Anthropic","kind":"Anthropic",
+            "baseUrl":"https://api.anthropic.com","model":"claude",
+            "toolCalls":true,"vision":false,"contextTokens":64000,"reasoning":false}"""
+        val compat = """{"id":"keep","providerId":"keep-p","name":"Custom","kind":"OpenAiCompat",
+            "baseUrl":"https://custom.example/v1","model":"custom-m",
+            "toolCalls":true,"vision":false,"contextTokens":64000,"reasoning":false}"""
+        val oauth = """{"id":"oauth","providerId":"oauth-p","name":"OpenRouter","kind":"OpenAiCompat",
+            "baseUrl":"https://openrouter.ai/api/v1","model":"oauth-m",
+            "toolCalls":true,"vision":false,"contextTokens":64000,"reasoning":false}"""
+        File(tmp.root, "providers.json").writeText("""{"services":[
+            {"id":"old-p","name":"Anthropic","kind":"Anthropic","baseUrl":"https://api.anthropic.com"},
+            {"id":"oauth-p","name":"OpenRouter","kind":"OpenAiCompat","baseUrl":"https://openrouter.ai/api/v1","signIn":"openrouter"},
+            {"id":"keep-p","name":"Custom","kind":"OpenAiCompat","baseUrl":"https://custom.example/v1"}
+        ],"providers":[$cfg,$compat,$oauth],
+          "uses":{"Main":{"use":"model","config":"old"},"Vision":{"use":"model","config":"oauth"},
+                  "Light":{"use":"model","config":"keep"}}}""")
+        File(tmp.root, "provider-keys.json").writeText("""{"old-p":"secret-old","oauth-p":"secret-oauth","keep-p":"secret-keep"}""")
+        val st = store()
+        assertEquals(listOf("keep-p"), st.providers.value.map { it.id })
+        assertEquals(listOf("keep"), st.list().map { it.id })
+        assertNull(st.configFor(ModelRole.Main))
+        assertNull(st.configFor(ModelRole.Vision))
+        assertEquals("keep", st.configFor(ModelRole.Light)?.id)
+        val keys = File(tmp.root, "provider-keys.json").readText()
+        assertFalse(keys.contains("old-p"))
+        assertFalse(keys.contains("oauth-p"))
+        assertTrue(keys.contains("keep-p"))
+        // Loading the migrated state again cannot resurrect deleted accounts.
+        val again = store()
+        assertEquals(listOf("keep-p"), again.providers.value.map { it.id })
+    }
+
 }
