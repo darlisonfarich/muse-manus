@@ -15,7 +15,6 @@ import com.wangzan101.mika.settings.ChatGptSignInService
 import com.wangzan101.mika.settings.FeatureFlags
 import com.wangzan101.mika.task.TaskService
 import com.wangzan101.mika.task.TriggerRuntime
-import com.wangzan101.mika.wechat.WechatService
 
 /**
  * 完全退出 Mika:用户滑掉界面、或进程被系统回收时,无障碍服务还开着,悬浮胶囊和后台任务会一直在。
@@ -41,12 +40,10 @@ object MikaQuit {
         // 先撤掉系统闹钟和进程内的长任务,再停前台服务;服务被系统重交启动请求时也会按退出标记拒绝工作
         runCatching { TriggerRuntime.suspendAlarms(app) }
         runCatching { RuntimePreparer.stop(app) }
-        runCatching { app.wechat.stop() }
         runCatching { app.mcp.stopServer() }
         runCatching { app.chatGptSignIn.cancel() }
         runCatching { app.stopService(Intent(app, TaskService::class.java)) }
         runCatching { app.stopService(Intent(app, McpService::class.java)) }
-        runCatching { app.stopService(Intent(app, WechatService::class.java)) }
         runCatching { app.stopService(Intent(app, SandboxService::class.java)) }
         runCatching { app.stopService(Intent(app, ChatGptSignInService::class.java)) }
         (context as? Activity)?.finishAndRemoveTask()
