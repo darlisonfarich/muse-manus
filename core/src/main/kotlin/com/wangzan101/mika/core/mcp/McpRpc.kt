@@ -161,7 +161,10 @@ class McpRpc(
         } catch (e: Exception) {
             return Call.Done(toolResult("Mika could not do that: ${e.message ?: e::class.simpleName}", null, isError = true))
         }
-        return Call.Done(toolResult(out.toString(), out, isError = false))
+        // Binary screenshots are already base64 in structuredContent. Duplicating them
+        // into the text block would exceed the relay's 1 MiB response limit.
+        val text = if (name == "phone_screenshot") "Screenshot data is in structuredContent (mimeType + base64 data)." else out.toString()
+        return Call.Done(toolResult(text, out, isError = false))
     }
 
     private fun toolResult(text: String, structured: JsonObject?, isError: Boolean) = buildJsonObject {
