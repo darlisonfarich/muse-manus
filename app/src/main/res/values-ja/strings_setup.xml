@@ -80,4 +80,6 @@
     <string name="model_probe_tried">%1$s を試しましたが、どれもテストに通りませんでした。</string>
     <string name="model_probe_fallback">最初に試した %1$s はテストに通りませんでした: %2$s。メインモデルは、テストに通った「%3$s」です。</string>
     <string name="model_pick_main">メインモデルを選択</string>
+    <string name="mcp_direct_writes_title">Muse の直接操作を許可</string>
+    <string name="mcp_direct_writes_detail">有効にすると、認証済みの MCP クライアントが元に戻せるスマートフォン操作を実行できます。無効にすると読み取り専用になります。パスワード、購入、重大な操作は引き続き禁止されます。</string>
 </resources>

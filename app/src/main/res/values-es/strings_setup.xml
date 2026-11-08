@@ -80,4 +80,6 @@
     <string name="model_probe_tried">Se probó %1$s; ninguno pasó la prueba.</string>
     <string name="model_probe_fallback">%1$s, que se probó primero, no pasó la prueba: %2$s. El modelo principal es “%3$s”, que sí la pasó.</string>
     <string name="model_pick_main">Elegir modelo principal</string>
+    <string name="mcp_direct_writes_title">Permitir el control directo de Muse</string>
+    <string name="mcp_direct_writes_detail">Al activarlo, los clientes MCP autenticados pueden ejecutar acciones reversibles. Desactívalo para permitir solo lectura. Las contraseñas, compras y acciones importantes siguen bloqueadas.</string>
 </resources>

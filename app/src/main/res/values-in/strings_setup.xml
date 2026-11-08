@@ -80,4 +80,6 @@
     <string name="model_probe_tried">Sudah mencoba %1$s; tidak satu pun lulus pengujian.</string>
     <string name="model_probe_fallback">%1$s, yang dicoba pertama, tidak lulus pengujian: %2$s. Model utamanya “%3$s”, yang lulus.</string>
     <string name="model_pick_main">Pilih model utama</string>
+    <string name="mcp_direct_writes_title">Izinkan kendali langsung Muse</string>
+    <string name="mcp_direct_writes_detail">Jika aktif, klien MCP terautentikasi dapat menjalankan tindakan yang dapat dibatalkan. Nonaktifkan untuk mode hanya baca. Kata sandi, pembelian, dan tindakan penting tetap diblokir.</string>
 </resources>

@@ -3,6 +3,7 @@ package com.wangzan101.mika.core.remote
 import com.wangzan101.mika.core.device.DeviceAccess
 import com.wangzan101.mika.core.mcp.McpRpc
 import com.wangzan101.mika.core.mcp.McpTaskTools
+import com.wangzan101.mika.core.mcp.DirectPhoneHost
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.net.InetAddress
@@ -15,6 +16,7 @@ class RemoteEndpoints(
     private val device: DeviceAccess? = null,
     private val history: RemoteHistory? = null,
     private val records: RunExportSource? = null,
+    private val directPhone: DirectPhoneHost? = null,
 ) {
     private val clients = LinkedHashMap<String, Long>()
     private val mutable = MutableStateFlow(RemoteActivity())
@@ -23,10 +25,11 @@ class RemoteEndpoints(
     fun handle(req: HttpRequest, deviceAccess: Boolean = true, historyAccess: Boolean = true): HttpResponse {
         // Relay adapters do not carry the phone's bearer token. They still get one isolated task namespace,
         // never the internal unscoped view and never local history.
-        val owner = req.accessOwner ?: "relay"
+        val authenticatedOwner = req.accessOwner
+        val owner = authenticatedOwner ?: "relay"
         val scopedTasks = tasks.scope(owner)
         val service = RemoteTaskService(scopedTasks, records = records?.scope(owner))
-        val rpc = McpRpc(McpTaskTools(service, device.takeIf { deviceAccess }), serverVersion) { remote, name -> seen(remote, name) }
+        val rpc = McpRpc(McpTaskTools(service, device.takeIf { deviceAccess }, directPhone = directPhone.takeIf { deviceAccess && authenticatedOwner != null }, phoneOwner = authenticatedOwner), serverVersion) { remote, name -> seen(remote, name) }
         if (req.path == McpRpc.PATH) return rpc.handle(req)
         if (req.path == RemoteTaskApi.ROOT || req.path.startsWith("${RemoteTaskApi.ROOT}/")) {
             seen(req.remote, req.header("x-mika-client")?.take(64))

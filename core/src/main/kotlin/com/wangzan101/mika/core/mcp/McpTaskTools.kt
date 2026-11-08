@@ -23,11 +23,14 @@ import kotlinx.serialization.json.putJsonObject
 class McpTaskTools(
     private val service: RemoteTaskService,
     device: DeviceAccess? = null,
+    directPhone: DirectPhoneHost? = null,
+    phoneOwner: String? = null,
 ) {
     constructor(tasks: RemoteTasks, pollMs: Long = 250, device: DeviceAccess? = null) :
         this(RemoteTaskService(tasks, pollMs), device)
 
     private val deviceTools = device?.let(::McpDeviceTools)
+    private val phoneTools = if (directPhone != null && !phoneOwner.isNullOrBlank()) McpPhoneTools(directPhone, phoneOwner) else null
     class ToolError(message: String) : Exception(message)
 
     data class Tool(val name: String, val description: String, val schema: JsonObject, val readOnly: Boolean)
@@ -77,7 +80,7 @@ class McpTaskTools(
             schema(required = emptyList()) {
                 putJsonObject("limit") { put("type", "integer"); put("minimum", 1); put("maximum", MAX_LIST); put("description", "How many (default $DEFAULT_LIST).") }
             }, readOnly = true),
-    ) + deviceTools?.tools.orEmpty()
+    ) + deviceTools?.tools.orEmpty() + phoneTools?.tools.orEmpty()
 
     /** MCP 的工具定义(tools/list 的一项)。 */
     fun definitions(): JsonArray = buildJsonArray {
@@ -132,8 +135,11 @@ class McpTaskTools(
                     }
                 }
             }
-            else -> if (deviceTools?.tools?.any { it.name == name } == true) deviceTools.call(name, args)
-                else throw ToolError("Unknown tool: $name")
+            else -> when {
+                deviceTools?.tools?.any { it.name == name } == true -> deviceTools.call(name, args)
+                phoneTools?.has(name) == true -> phoneTools.call(name, args)
+                else -> throw ToolError("Unknown tool: $name")
+            }
         }
     } catch (e: RemoteTaskError) {
         // 按错误类型换回原 MCP 客户端看到的说法(带 MCP 工具名);共用服务不包含 MCP 命令名。

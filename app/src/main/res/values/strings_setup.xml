@@ -80,4 +80,6 @@
     <string name="model_probe_tried">Tried %1$s; none of them passed the test.</string>
     <string name="model_probe_fallback">%1$s, tried first, didn’t pass the test: %2$s. The main model is “%3$s”, which passed.</string>
     <string name="model_pick_main">Choose main model</string>
+    <string name="mcp_direct_writes_title">Allow direct Muse control</string>
+    <string name="mcp_direct_writes_detail">When enabled, authenticated MCP clients may execute reversible phone actions. Disable to make this connection read-only. Password, purchase and other consequential actions remain blocked.</string>
 </resources>
