@@ -25,10 +25,11 @@ class RemoteEndpoints(
     fun handle(req: HttpRequest, deviceAccess: Boolean = true, historyAccess: Boolean = true): HttpResponse {
         // Relay adapters do not carry the phone's bearer token. They still get one isolated task namespace,
         // never the internal unscoped view and never local history.
-        val owner = req.accessOwner ?: "relay"
+        val authenticatedOwner = req.accessOwner
+        val owner = authenticatedOwner ?: "relay"
         val scopedTasks = tasks.scope(owner)
         val service = RemoteTaskService(scopedTasks, records = records?.scope(owner))
-        val rpc = McpRpc(McpTaskTools(service, device.takeIf { deviceAccess }, directPhone = directPhone.takeIf { deviceAccess }, phoneOwner = owner), serverVersion) { remote, name -> seen(remote, name) }
+        val rpc = McpRpc(McpTaskTools(service, device.takeIf { deviceAccess }, directPhone = directPhone.takeIf { deviceAccess && authenticatedOwner != null }, phoneOwner = authenticatedOwner), serverVersion) { remote, name -> seen(remote, name) }
         if (req.path == McpRpc.PATH) return rpc.handle(req)
         if (req.path == RemoteTaskApi.ROOT || req.path.startsWith("${RemoteTaskApi.ROOT}/")) {
             seen(req.remote, req.header("x-mika-client")?.take(64))
