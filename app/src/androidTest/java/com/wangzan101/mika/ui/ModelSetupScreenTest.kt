@@ -52,6 +52,7 @@ class ModelSetupScreenTest {
         selectPreset = { calls += "preset $it" }, testAndSave = { calls += "test" }, openForm = { calls += "open form" },
         saveUntested = { calls += "save untested" },
         openProvider = { calls += "provider $it" }, pickRole = { calls += "role $it" }, next = { calls += "next" },
+        skipModel = { calls += "skip model" },
         openUsage = { calls += "usage" },
     )
 
@@ -77,10 +78,13 @@ class ModelSetupScreenTest {
         assertEquals(listOf("start"), calls)
     }
 
-    @Test fun firstVisitShowsFormAndNextIsDisabled() {
+    @Test fun firstVisitOffersModelFreeRemoteAccessWithoutSavingProvider() {
         show(ModelSetupUi(form))
-        compose.onNodeWithTag("setup-next").assertIsNotEnabled()
-        // 上面多了「用账号登录」一组,按钮可能在屏幕外:先滚到再点
+        compose.onNodeWithTag("setup-next").assertDoesNotExist()
+        compose.onNodeWithTag("setup-skip-model").assertIsEnabled().performClick()
+        assertEquals(listOf("skip model"), calls)
+        calls.clear()
+        // A configuração tradicional do provedor permanece disponível.
         compose.onNodeWithTag("setup-test").performScrollTo().assertIsEnabled().performClick()
         compose.onNodeWithTag("preset-Kimi").performScrollTo().performClick()
         assertEquals(listOf("test", "preset Kimi"), calls)
@@ -112,6 +116,7 @@ class ModelSetupScreenTest {
         compose.onNodeWithText(ModelsCopy.ADD_PROVIDER).performClick()
         compose.onNodeWithTag("provider-通义千问").performClick()
         compose.onNodeWithTag("role-vision").performScrollTo().performClick()
+        compose.onNodeWithTag("setup-skip-model").assertDoesNotExist()
         compose.onNodeWithTag("setup-next").assertIsEnabled().performClick()
         assertEquals(listOf("open form", "provider p2", "role Vision", "next"), calls)
     }
@@ -122,6 +127,7 @@ class ModelSetupScreenTest {
         compose.onNodeWithText(ModelsCopy.LEAD).assertDoesNotExist()
         // 改动当场生效,左上角返回就行
         compose.onNodeWithTag("setup-next").assertDoesNotExist()
+        compose.onNodeWithTag("setup-skip-model").assertDoesNotExist()
         ModelRole.entries.forEach { compose.onNodeWithText(ModelsCopy.roleLabel(it)).assertIsDisplayed() }
         compose.onNodeWithText(ModelsCopy.OFF).assertIsDisplayed()
         compose.onNodeWithText(ModelsCopy.OFF_NOTE).assertIsDisplayed()
