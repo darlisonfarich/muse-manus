@@ -100,7 +100,7 @@ class GerIntentQueue(
                 notifyChanged()
             }
         }
-        val deadline = nowMs() + timeoutMs
+        var deadline = nowMs() + timeoutMs
         try {
             while (true) {
                 if (ticket.cancelled) return GerIntentOutcome.Cancelled
@@ -109,9 +109,16 @@ class GerIntentQueue(
                 if (head) {
                     // Do not hold this queue's monitor or the Android host mutex
                     // while parked between attempts.
-                    when (val result = attempt { ticket.cancelled }) {
-                        is GerIntentAttempt.Done -> return GerIntentOutcome.Completed(result.result)
-                        is GerIntentAttempt.Blocked -> ticket.cause = result.cause
+                    val started = nowMs()
+                    try {
+                        when (val result = attempt { ticket.cancelled }) {
+                            is GerIntentAttempt.Done -> return GerIntentOutcome.Completed(result.result)
+                            is GerIntentAttempt.Blocked -> ticket.cause = result.cause
+                        }
+                    } finally {
+                        // Count only time genuinely waiting for a resource, not
+                        // seconds spent checking gates or executing a long batch.
+                        deadline += (nowMs() - started).coerceAtLeast(0L)
                     }
                 }
                 if (ticket.cancelled) return GerIntentOutcome.Cancelled
