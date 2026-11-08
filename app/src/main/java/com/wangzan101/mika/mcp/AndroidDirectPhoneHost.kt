@@ -1,6 +1,8 @@
 package com.wangzan101.mika.mcp
 
 import android.content.Context
+import android.app.KeyguardManager
+import android.os.PowerManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.hardware.display.DisplayManager
@@ -125,6 +127,23 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
 
     private fun busy(): Boolean = app.taskState.busy.value || app.taskState.runs.value.isNotEmpty()
 
+    /** A remote tool must not wake, unlock or take back a screen without user action. */
+    private fun ready(s: Session): Boolean {
+        val lock = context.getSystemService(KeyguardManager::class.java)
+        val power = context.getSystemService(PowerManager::class.java)
+        return lock?.isDeviceLocked != true && lock?.isKeyguardLocked != true &&
+            power?.isInteractive != false && s.binding.shell.value != null &&
+            ScreenAccessibility.instance.value != null
+    }
+
+    private fun readyForGate(binding: ShellBinding): Boolean {
+        val lock = context.getSystemService(KeyguardManager::class.java)
+        val power = context.getSystemService(PowerManager::class.java)
+        return lock?.isDeviceLocked != true && lock?.isKeyguardLocked != true &&
+            power?.isInteractive != false && binding.shell.value != null &&
+            ScreenAccessibility.instance.value != null
+    }
+
     private suspend fun create(owner: String, now: Long): Session {
         val services = PhoneServices.of(context)
         val binding = services.sharedShell.acquire()
@@ -164,7 +183,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             }
             val executor = ActionExecutor(
                 tools, OperationGuards(400), confirmations = null,
-                gate = { check(settings.directWritesEnabled.value && settings.enabled.value && !busy()) },
+                gate = { check(settings.directWritesEnabled.value && settings.enabled.value && !busy() && readyForGate(binding)) },
                 recorder = ActionRecorder(sink), approvals = ApprovalSettings.STRICT,
                 // Bridge origin is STRICT in ApprovalPolicy; generic Mcp runs only use ASK.
                 // Origin.McpTool never consumes a remote approval/grant.
@@ -245,7 +264,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         val tool = ACTIONS[external] ?: return fail("unknown_tool")
         if (!settings.enabled.value || !settings.directWritesEnabled.value) return fail("write_disabled")
         if (busy()) return fail("session_conflict")
-        if (sensitive(s)) return fail("needs_user")
+        if (!ready(s) || sensitive(s)) return fail("needs_user")
         val request = requestId(args) ?: return fail("request_id_required")
         val clean = JsonObject(args.filterKeys { it != "request_id" })
         val key = digest(s.owner + "|" + request)
