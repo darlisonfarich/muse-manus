@@ -114,6 +114,56 @@ segredos que não sejam nós `secret=true`, nem teste real no POCO. As ressalvas
 do PR anterior permanecem em aberto. Os portões NÃO adotam lista de Apps proibidos.
 
 
+## Remoção 1 — envio OTLP de traces (PR independente)
+
+O Muse Manus mantém a gravação, visualização e exportação **local** de traces,
+mas não oferece mais upload de traces para servidores OTLP/HTTP.
+
+- Removidos `app/record/OtlpSender.kt` (cliente de rede e tipos de resposta)
+  e `app/ui/TraceSendRow.kt` (formulário, credenciais e comando de envio).
+- Removido `TraceSendRow` de `app/ui/RunTraceSection.kt`; preservados
+  `TraceExportControls`, `TraceDetails`, `TraceSettingsRows` e a exportação
+  voluntária para arquivo local.
+- Removidos somente os testes vinculados ao envio de rede:
+  `app/src/test/java/com/wangzan101/mika/record/OtlpSenderTest.kt` e
+  `app/src/androidTest/java/com/wangzan101/mika/ui/OtlpSendDeviceTest.kt`.
+  Os testes de registro/visualização local permanecem.
+- Removidas as onze strings exclusivas do envio OTLP de cada uma das dez
+  traduções `strings_trace.xml`; mantidas as strings da gravação local.
+- `docs/dev/architecture.md`: removidas as instruções e referências à transmissão
+  OTLP, mantendo a descrição da exportação voluntária local.
+- **Preservados:** `core/trace/*`, `app/record/DetailedTraces.kt`, a
+  dependência `traceSchemas(libs.otel.proto)` em `core/build.gradle.kts`,
+  e as demais capacidades do aplicativo. `LICENSE`, `NOTICE` e créditos
+  do Mika continuam intactos.
+
+Esta remoção não altera a ponte do Muse nem o canal genérico de tarefas.
+
+## Remoção 2 — canal de mensagens WeChat (PR independente)
+
+- Excluídos a implementação do bot/canal WeChat em `core/wechat` e
+  `app/wechat`, sua interface `app/ui/WechatSettings.kt`, os testes
+  exclusivos do canal, o serviço do `AndroidManifest.xml` e as strings de
+  configuração do bot em dez idiomas.
+- `MikaApp.kt`: removida a inicialização/reconexão automática do canal; em
+  recuperação de tarefas persistidas, somente o canal local registrado é
+  resolvido e uma origem antiga/desconhecida não é enviada a outro canal.
+- `app/quit/MikaQuit.kt`: removidas referências residuais a `app.wechat` e
+  `WechatService`, preservando o encerramento dos demais serviços.
+- `TaskService.kt`: origem de canal desconhecida retorna erro explícito
+  `unsupported_channel`, em vez de acionar WeChat por fallback. Preservados
+  `LocalChannel`, `Channel`, `ChannelGateway`, `Outbox` e toda a
+  abstração de integração futura.
+- `SettingsScreen.kt` e `SettingsScreenTest.kt`: removida a página do bot
+  e atualizado o teste da navegação, que agora verifica sua ausência.
+- `docs/dev/architecture.md` atualizado para refletir a remoção.
+- **Preservados** `core/src/main/resources/knowledge/apps/wechat/APP.md`,
+  os exemplos de uso do App WeChat, seus assets de demonstração e os testes
+  genéricos de `ChannelGateway`. Nenhuma lista de aplicativos proibidos.
+
+Licenças e créditos originais intocados. Este PR não altera o transporte de
+ponte do Muse e é independente da remoção OTLP.
+
 ## Remoção 3 — buscas externas You/Exa/Jina (PR independente)
 
 - Excluídos `YouSearch.kt`, `ExaSearch.kt`, `JinaSearch.kt` e o teste

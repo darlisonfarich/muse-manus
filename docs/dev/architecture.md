@@ -75,9 +75,9 @@
 
 结果、提问、通知经 `Outbox`(`core/run/Outbox.kt`)送出:先记下要发的,再发。状态 Pending → Attempting → Delivered / Failed / Uncertain;同一个送达编号只送一次;发到一半结果不明的标为 Uncertain,不自动重发。记录在 `outbox-v3.json`(`app/task/FileOutboxStore.kt`)。
 
-渠道任务只发一次受理确认,不转发运行阶段或步数。任务持久化登记后,以 `accepted:<运行编号>` 的 `Notice` 进入 `Outbox`,发送不阻塞任务执行;同一渠道消息编号的重投不建任务也不再确认,不同编号即使文字相同也分别登记,并在同一对话里按先后顺序执行。提问、确认与接管仍只走 `ChannelInteraction`。结果链路另记主循环完成到送出、Outbox 加发送、微信 HTTP 各段毫秒数,不记消息内容。
+渠道任务只发一次受理确认,不转发运行阶段或步数。任务持久化登记后,以 `accepted:<运行编号>` 的 `Notice` 进入 `Outbox`,发送不阻塞任务执行;同一渠道消息编号的重投不建任务也不再确认,不同编号即使文字相同也分别登记,并在同一对话里按先后顺序执行。提问、确认与接管仍只走 `ChannelInteraction`。结果链路记主循环完成到送出、Outbox 加发送各段毫秒数,不记消息内容。
 
-本机渠道是 `LocalChannel`(`app/task/LocalChannel.kt`):本机界面加系统通知。`WechatChannel`(`app/wechat/`)是第二渠道:单账号、本人私聊文本,凭证加密保存在本机,独立前台服务长轮询,不建中继服务器,也不另建任务状态机。入站消息先写待处理账本再推进同步游标,`TaskCenter` 按渠道消息编号持久化去重后才确认;进程重启会先补交未登记消息。任务记录保存来源 `ChannelPeer`,提问、结果与 `RunRecovery` 都按来源路由。渠道接口 `Channel`、`ChannelGateway`(主人身份、提问编号对应、付款确认只能在能确认的渠道上做,`Channel.confirms`)在 `core/run/`;微信 `confirms=false`,付款确认与手机接管仍走手机。
+本机渠道是 `LocalChannel`(`app/task/LocalChannel.kt`):本机界面加系统通知。已移除微信机器人渠道与长轮询服务,不再从本机启动或恢复。任务记录仍保留来源 `ChannelPeer`,通用渠道接口 `Channel`、`ChannelGateway`、`Outbox` 和 `RunRecovery` 保留以便未来接入新渠道。任务服务对未注册的渠道明确报 `unsupported_channel`,不会暗中转发到微信。内置的 `knowledge/apps/wechat` 属于「操作微信 App」的知识,不是机器人渠道,继续保留。
 
 ### 进程重启后
 
@@ -325,7 +325,7 @@
 - **请求头与会话号**(`core/model/ClientHeaders.kt`):发给模型服务的每个请求(四种协议的适配器 Chat Completions、Messages、generateContent、Responses,一次性和流式,以及 `ModelCatalog` 列模型)都带 `ClientHeaders.of` 给的头,Key(或 ChatGPT 的访问令牌)的头仍由适配器自己加;「用 ChatGPT 登录」也带 `User-Agent`,它没声明会话头,不发会话号。`User-Agent` 是 `Mika/<版本>`(App 用 `BuildConfig.VERSION_NAME` 交给 `ProviderStore`,core 不写版本号)。有的服务商要求每段对话带一个固定的会话号(据此路由、复用提示词缓存,不带就拒绝):预设用 `ProviderPreset.sessionHeader` 声明头名(目前只有「OpenCode Go」的 `x-opencode-session`),连上时记在服务商上(`Provider.sessionHeader`,存在 `providers.json` 的 `services[].sessionHeader`;旧版本存下的没有这一项,读入时按地址对得上的预设补上)。没声明的服务商不发会话号,代码里不按服务商名字判断。会话号是 `ModelSession.of(对话 id)`(UUID v3,不可逆,不把对话 id 本身发出去):`TaskEnvironment` 的三个模型工厂多一个 `ModelSession` 参数,`TaskRun` 按自己的对话建出主、轻量、看图模型,核查、意图判断、结局判定、停止后的交代都用这几个,`TaskService` 起对话标题时也按同一个对话 id 取;同一段对话里每次运行、每个旁路调用的会话号都一样,换一段对话就不同。不属于任何对话的请求(列模型、连接测试)每次用 `ModelSession.fresh()` 的新号。
 - **明文 http**(`res/xml/network_security_config.xml`,清单里 `networkSecurityConfig` 引用):用户自己在本机、局域网跑的模型服务多半只有 http,所以整个 App 允许明文(`base-config cleartextTrafficPermitted="true"`),证书只信系统的。代码里没有别处拒绝 http:`ModelCatalog` 和适配器只要求是合法的 http(s) 地址,添加表单只要求以 `http://` 或 `https://` 开头。添加服务商时,明文 http 又不在本机或局域网(`LocalHosts.isLocal`:localhost、127/8、::1、10/8、172.16/12、192.168/16、169.254/16、fc00::/7、fe80::/10、`.local`)的地址在表单下提醒一句(`AddForm.unencryptedWarning`),不拦着。内置浏览器因此也能直接打开 http 网页:以前系统先拒绝(`ERR_CLEARTEXT_NOT_PERMITTED`)、`WebScreen` 再换 https 重开,现在按原地址打开,那段换 https 的重试只在设备策略或 WebView 仍拒绝明文时才用得上;https 页面里的明文子资源仍按 `MIXED_CONTENT_NEVER_ALLOW` 拒绝。
 - **网络代理**(`core/net/NetProxy.kt`、`ProxyAddress.kt`、`LocalHosts.kt`;设置在 `app/settings/NetProxyStore.kt`):设置 › 高级与其他 ›「网络与连接」组里的「网络代理」(`ui/NetProxySettings.kt`,只在这一处改),填 `http://[用户:密码@]主机:端口`,也认 socks5、socks5h、https(`ProxyAddress.parse` 核对,写错了不存),空着是直连。地址可能带账号密码,和服务商的 Key 一样经 `KeyCipher`(安卓密钥库)加密存成 `settings/net-proxy.bin`,不进明文偏好设置、不写日志,界面上只显示协议、主机和端口(`ProxyAddress.toString` 也不带账号密码)。早先它只给容器用、存在 `container-proxy.bin`(另一把密钥):`NetProxyStore` 第一次读时解出来按新的存好、删掉旧文件。
-  - 谁走它:`NetProxy.shared.client(…)` 建的 OkHttp 客户端——`ProviderStore` 的模型客户端(四种适配器一次性和流式、语音转写、连接测试)和列模型、账号登录换令牌的客户端,`UpdateChecker`,内置浏览器的下载(`WebStack`);沙箱命令经环境变量(见第 6 节 sandbox)。不走它的:远程中转(`RelayGateway`)、运行记录导出(`OtlpSender`)。
+  - 谁走它:`NetProxy.shared.client(…)` 建的 OkHttp 客户端——`ProviderStore` 的模型客户端(四种适配器一次性和流式、语音转写、连接测试)和列模型、账号登录换令牌的客户端,`UpdateChecker`,内置浏览器的下载(`WebStack`);沙箱命令经环境变量(见第 6 节 sandbox)。不走它的:远程中转(`RelayGateway`)。详细 Trace 不再发送到网络，仍可由用户显式保存为本地文件。
   - 怎么走:客户端装的是 `NetProxy.selector`(`ProxySelector`),每个请求现问:`LocalHosts.bypassesProxy`(`isLocal` 那几段,加不带点的机器名、`.lan`/`.home.arpa`/`.internal`、100.64/10)直连,别的走 HTTP 或 SOCKS 代理;SOCKS 时域名交给代理解析(socks5 与 socks5h 一样)。`https://` 代理(先和代理握 TLS)OkHttp 不支持,`ProxyAddress.forApp` 为假,Mika 自己的连接直连、设置页写明只给容器用。流式回复照旧逐段读,代理不改变读法。设置改了 `NetProxyStore` 调 `NetProxy.changed()`:重新解析、清掉各客户端的空闲连接(正在进行的请求照旧走完)。
   - 账号密码:HTTP 代理由 `NetProxy.authenticator`(OkHttp 的 `proxyAuthenticator`)在代理回 407 时、以及建 https 隧道前带上 `Proxy-Authorization: Basic`;同一请求带过还被拒就不再试。SOCKS 代理只能经全进程一个的 `java.net.Authenticator` 给:`MikaApp` 启动时装上 `NetProxy.socksAuthenticator`,它只回答协议是 SOCKS、主机端口都对上当前代理的询问,别的一律不答。
   - 报错:`HttpSupport` 连接失败时,走了代理的请求按 `NetProxy.classify` 归类成 `ModelError.Proxy`(`ProxyFailure.Unreachable`:拒绝连接、找不到代理主机、连接超时、建隧道失败、SOCKS 握手出错;`ProxyFailure.AuthFailed`:代理拒了账号密码),HTTP 407 也算后者;读回复时断了之类照旧是 `Network`。`userReason`、试调用(`ModelSetupViewModel.proxyReason`)、列模型(`ListFailure.ProxyUnreachable` / `ListFailure.ProxyAuth`)都说是代理的问题,不说成 Key 或模型不对;连不上可重试,账号密码不对不重试,也不停用模型。
@@ -346,7 +346,7 @@
 **详细 Trace** 默认关闭。调试版和性能测试版可在「设置 → 开发者选项 → 运行记录」开启，从下一次任务起采集，关闭即停录。四种模型接口的每次主循环请求（含重发）和顶层工具调用各记一个 span。在「查看过程 → 详细 Trace」可对照同一模型相邻请求中首个变化的块，缓存用量未上报与命中为零分开显示。
 
 - 「保存本次 Trace」默认导出只含诊断元数据的 OTLP Protobuf 文件（`.pb`）。勾选「附带脱敏正文」才保存 ZIP，内含同一份 `trace.pb` 和按 span ID 命名的脱敏正文。
-- 在「详细 Trace」点「通过 OTLP/HTTP 发送」，填写完整的 traces 接收地址，可选填鉴权头。确认后只发送默认 `.pb` 的诊断元数据，鉴权值仅用于当次请求。公网地址须用 HTTPS，本机、局域网 IP 和解析到本地地址的 `.local` 名称可用 HTTP。界面显示接收确认、拒收的 span 数或 HTTP 错误，发送失败后仍可在本机查看或保存归档。
+- Muse Manus 已移除 OTLP/HTTP 网络发送入口，以及接收地址和鉴权头设置。详细 Trace 仍在本机记录、查看；用户可手动保存成 `.pb` 或 ZIP。本功能不再向外部接收端发送请求。
 - 遇到「部分记录」，先看根 span 的 `mika.trace.partial_reasons`。要定位截断的块，查看模型 span 上 `mika.trace.truncated` 事件的 `mika.block.path` 和 `mika.truncation.reason`。单次运行的正文预算为 8 MiB，最多记录 1,024 个子 span。
 
 应用私有归档的总容量默认 100 MiB，可在开发者选项中调整。空间不足时先清理最旧的已结束归档，正在录制或导出的归档会保留。
