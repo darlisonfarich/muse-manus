@@ -109,7 +109,11 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             when (name) {
                 "phone_observe", "phone_list_apps" -> {
                     if (sensitive(s)) fail("needs_user")
-                    else s.tools.executeRead(Part.ToolCall(UUID.randomUUID().toString(), name, "{}")).content
+                    else {
+                        val observed = s.tools.executeRead(Part.ToolCall(UUID.randomUUID().toString(), name, "{}")).content
+                        // Do not return a capture if a credential screen appeared during the read.
+                        if (sensitive(s)) fail("needs_user") else observed
+                    }
                 }
                 "phone_screenshot" -> screenshot(s)
                 "phone_run" -> batch(s, args)
@@ -184,6 +188,8 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
     private suspend fun screenshot(s: Session): JsonObject {
         if (sensitive(s)) return fail("needs_user")
         val png = s.screen.screenshotPng() ?: return fail("screenshot_unavailable")
+        // Recheck after capture, preventing the usual check-then-screen-transition race.
+        if (sensitive(s)) return fail("needs_user")
         if (png.size <= 600_000) return encoded(png, "image/png")
         val bmp = BitmapFactory.decodeByteArray(png, 0, png.size) ?: return fail("screenshot_unavailable")
         var scaled: Bitmap = bmp
