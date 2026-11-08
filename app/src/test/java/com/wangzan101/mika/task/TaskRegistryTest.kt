@@ -9,6 +9,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runCurrent
 
 class TaskRegistryTest {
     private data class Run(val conversationId: String, val goal: String) {
@@ -111,6 +113,25 @@ class TaskRegistryTest {
         resources.ger.releaseDirect("mcp:owner")
         assertTrue(registry.reserve("com.chat", run.key) { true })
         registry.onEnded(run)
+    }
+
+    @Test fun taskSideCanWaitForDirectSessionAppReleaseWithoutStealingIt() = kotlinx.coroutines.test.runTest {
+        val resources = registry.resources
+        assertTrue(resources.ger.claimDirect("mcp:owner"))
+        assertTrue(resources.reserveApp("com.chat", "mcp:owner", resources.ger::isActiveOwner) { true })
+        val task = (registry.tryStart("a", "wait") as StartResult.Started).run
+        val waiting = async {
+            registry.awaitApp("com.chat", task.key, 120_000L) {
+                registry.appFree("com.chat", task.key) { true }
+            }
+        }
+        runCurrent()
+        assertFalse(waiting.isCompleted)
+        resources.releaseOwner("mcp:owner")
+        resources.ger.releaseDirect("mcp:owner")
+        runCurrent()
+        assertEquals(com.wangzan101.mika.core.uistate.AppWait.Free, waiting.await())
+        registry.onEnded(task)
     }
 
     @Test fun centerUsesItsResourceSchedulerForMainScreenAndClipboard() {
