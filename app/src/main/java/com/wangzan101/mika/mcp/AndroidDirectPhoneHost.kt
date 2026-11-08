@@ -142,19 +142,22 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         val progress = BatchProgress()
         val outcome = scheduler.ger.intentions.dispatch(
             sessionOwner, request, settings.directWaitTimeoutMs,
-        ) { isCancelled ->
-            lock.withLock {
-                if (isCancelled()) return@withLock GerIntentAttempt.Done(fail("cancelled"))
-                if (!settings.enabled.value) return@withLock GerIntentAttempt.Done(fail("remote_access_disabled"))
+        ) attempt@{ isCancelled ->
+            // Never park waiting for an already-running host action. This also
+            // lets phone_cancel revoke queued calls without waiting on its mutex.
+            if (!lock.tryLock()) return@attempt GerIntentAttempt.Blocked("host_busy")
+            try {
+                if (isCancelled()) return@attempt GerIntentAttempt.Done(fail("cancelled"))
+                if (!settings.enabled.value) return@attempt GerIntentAttempt.Done(fail("remote_access_disabled"))
                 if (name !in READS && !settings.directWritesEnabled.value)
-                    return@withLock GerIntentAttempt.Done(fail("write_disabled"))
+                    return@attempt GerIntentAttempt.Done(fail("write_disabled"))
                 val now = System.currentTimeMillis()
                 if (current != null && now - current!!.lastUsed > ttlMs) closeActive()
-                if (busy()) return@withLock GerIntentAttempt.Blocked("task_running")
+                if (busy()) return@attempt GerIntentAttempt.Blocked("task_running")
                 if (current != null && current!!.owner != owner)
-                    return@withLock GerIntentAttempt.Blocked("direct_session_busy")
+                    return@attempt GerIntentAttempt.Blocked("direct_session_busy")
                 if (!scheduler.ger.claimDirect(sessionOwner))
-                    return@withLock GerIntentAttempt.Blocked(
+                    return@attempt GerIntentAttempt.Blocked(
                         if (scheduler.ger.hasRunningTasks()) "task_running" else "direct_session_busy"
                     )
                 val s = try {
@@ -164,15 +167,15 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                     throw e
                 } catch (_: Exception) {
                     if (current == null) scheduler.ger.releaseDirect(sessionOwner)
-                    return@withLock GerIntentAttempt.Done(fail("phone_unavailable"))
+                    return@attempt GerIntentAttempt.Done(fail("phone_unavailable"))
                 }
                 if (!scheduler.ger.canUseDirect(sessionOwner))
-                    return@withLock GerIntentAttempt.Blocked("task_running")
-                if (isCancelled()) return@withLock GerIntentAttempt.Done(fail("cancelled"))
+                    return@attempt GerIntentAttempt.Blocked("task_running")
+                if (isCancelled()) return@attempt GerIntentAttempt.Done(fail("cancelled"))
                 s.lastUsed = now
                 try {
-                    if (!ready(s)) return@withLock GerIntentAttempt.Done(fail("needs_user"))
-                    if (sensitive(s)) return@withLock GerIntentAttempt.Done(fail("needs_user"))
+                    if (!ready(s)) return@attempt GerIntentAttempt.Done(fail("needs_user"))
+                    if (sensitive(s)) return@attempt GerIntentAttempt.Done(fail("needs_user"))
                     when (name) {
                         "phone_observe", "phone_list_apps" -> {
                             if (sensitive(s)) GerIntentAttempt.Done(fail("needs_user"))
@@ -200,7 +203,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                     }
                 } catch (e: CancellationException) { throw e }
                 catch (_: Exception) { GerIntentAttempt.Done(fail("phone_unavailable")) }
-            }
+            } finally { lock.unlock() }
         }
         return when (outcome) {
             is GerIntentOutcome.Completed -> outcome.result
