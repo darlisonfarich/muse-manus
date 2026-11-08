@@ -198,14 +198,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                             val reason = launchBlocker(s, name, args)
                             if (reason != null) GerIntentAttempt.Blocked(reason)
                             else if (busy()) GerIntentAttempt.Blocked("task_running")
-                            else {
-                                val result = action(s, name, args)
-                                // action() reports session_conflict before the journal
-                                // is touched; this race is safe to queue and retry.
-                                if (result["error"] == JsonPrimitive("session_conflict"))
-                                    GerIntentAttempt.Blocked("task_running")
-                                else GerIntentAttempt.Done(result)
-                            }
+                            else action(s, name, args)
                         }
                     }
                 } catch (e: CancellationException) { throw e }
@@ -392,11 +385,11 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             // A deterministic ID per step makes a completed step non-replayable,
             // even if the MCP connection dies after step N and before the reply.
             val key = UUID.nameUUIDFromBytes((id + ":" + progress.index).toByteArray()).toString()
-            val outcome = action(s, name, JsonObject(params + ("request_id" to JsonPrimitive(key))))
-            // A concurrent task admission may occur before action() journals. In
-            // that case there was no attempt: leave the step in the queue.
-            if (outcome["error"] == JsonPrimitive("session_conflict"))
-                return GerIntentAttempt.Blocked("task_running")
+            val step = action(s, name, JsonObject(params + ("request_id" to JsonPrimitive(key))))
+            // Only Blocked is guaranteed pre-PENDING; no step may be replayed
+            // after an execution has reached the durable journal.
+            if (step is GerIntentAttempt.Blocked) return step
+            val outcome = (step as GerIntentAttempt.Done).result
             if (outcome["error"] == JsonPrimitive("delivery_unknown"))
                 return GerIntentAttempt.Done(fail("delivery_unknown"))
             progress.results += outcome
@@ -410,22 +403,30 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         })
     }
 
-    private suspend fun action(s: Session, external: String, args: JsonObject): JsonObject {
-        val tool = ACTIONS[external] ?: return fail("unknown_tool")
-        if (!settings.enabled.value || !settings.directWritesEnabled.value) return fail("write_disabled")
-        if (busy()) return fail("session_conflict")
-        if (!ready(s) || sensitive(s)) return fail("needs_user")
-        val request = requestId(args) ?: return fail("request_id_required")
+    /**
+     * Blocked means no audit marker and NO action attempted. After markOnce's
+     * fsync(PENDING), every result is terminal for this request_id, even when
+     * Android reports no progress; repeating it could otherwise double-send.
+     */
+    private suspend fun action(s: Session, external: String, args: JsonObject): GerIntentAttempt<JsonObject> {
+        val tool = ACTIONS[external] ?: return GerIntentAttempt.Done(fail("unknown_tool"))
+        if (!settings.enabled.value || !settings.directWritesEnabled.value)
+            return GerIntentAttempt.Done(fail("write_disabled"))
+        if (busy() || !app.resources.ger.canUseDirect(directOwner(s.owner)))
+            return GerIntentAttempt.Blocked("task_running")
+        if (!ready(s) || sensitive(s)) return GerIntentAttempt.Done(fail("needs_user"))
+        val request = requestId(args) ?: return GerIntentAttempt.Done(fail("request_id_required"))
         val clean = JsonObject(args.filterKeys { it != "request_id" })
         val key = digest(s.owner + "|" + request)
-        if (!markOnce(key, external, clean.keys.sorted().joinToString(","))) return fail("delivery_unknown")
+        if (!markOnce(key, external, clean.keys.sorted().joinToString(",")))
+            return GerIntentAttempt.Done(fail("delivery_unknown"))
         val result = try {
             s.executor.run(Part.ToolCall(request, tool, clean.toString()), Origin.McpTool(++step))
                 .execution().content
         } catch (e: CancellationException) { throw e }
         catch (_: Exception) { fail("delivery_unknown") }
         audit(key, "completed", if (result["ok"] == JsonPrimitive(true)) "ok" else "not_applied")
-        return result
+        return GerIntentAttempt.Done(result)
     }
 
     private fun requestId(args: JsonObject): String? =
