@@ -34,6 +34,16 @@ class ResourceSchedulerTest {
         assertTrue(resources.reserveApp("com.example", if (first == "a") "b" else "a", { true }, { true }))
     }
 
+    @Test fun liveDirectHolderCannotBeEvictedByStaleAppHeuristic() {
+        val resources = ResourceScheduler()
+        assertTrue(resources.ger.claimDirect("mcp:owner"))
+        assertTrue(resources.reserveApp("com.mail", "mcp:owner", resources.ger::isActiveOwner) { true })
+        assertFalse(resources.appFree("com.mail", "task-a", resources.ger::isActiveOwner) { false })
+        resources.releaseOwner("mcp:owner")
+        resources.ger.releaseDirect("mcp:owner")
+        assertTrue(resources.appFree("com.mail", "task-a", resources.ger::isActiveOwner) { true })
+    }
+
     @Test fun clipboardLeaseSerializesTwoTasks() {
         val resources = ResourceScheduler()
         val entered = CountDownLatch(1)
