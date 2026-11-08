@@ -23,14 +23,14 @@ class McpDirectPhoneToolsTest {
 
     @Test fun phoneToolsAreHiddenWithoutAnAuthenticatedOwner() {
         val host = FakeHost()
-        val none = McpTaskTools(FakeRemoteTasks(), directPhone = host)
+        val none = McpTaskTools(com.wangzan101.mika.core.remote.RemoteTaskService(FakeRemoteTasks()), directPhone = host)
         assertFalse(none.has("phone_tap"))
         assertFalse(none.has("phone_observe"))
     }
 
     @Test fun phoneToolsAreOwnerScopedAndDoNotInvokeTheInternalAgent() = runTest {
         val host = FakeHost()
-        val tools = McpTaskTools(FakeRemoteTasks(), directPhone = host, phoneOwner = "owner-a")
+        val tools = McpTaskTools(com.wangzan101.mika.core.remote.RemoteTaskService(FakeRemoteTasks()), directPhone = host, phoneOwner = "owner-a")
         assertTrue(tools.has("phone_tap"))
         assertTrue(tools.has("phone_observe"))
         assertTrue(tools.has("phone_run"))
@@ -47,7 +47,7 @@ class McpDirectPhoneToolsTest {
     }
 
     @Test fun noArbitraryCommandsAreExported() {
-        val tools = McpTaskTools(FakeRemoteTasks(), directPhone = FakeHost(), phoneOwner = "a")
+        val tools = McpTaskTools(com.wangzan101.mika.core.remote.RemoteTaskService(FakeRemoteTasks()), directPhone = FakeHost(), phoneOwner = "a")
         val names = tools.definitions().map { it.jsonObject["name"]!!.jsonPrimitive.content }.toSet()
         assertFalse("phone_system_command" in names)
         assertFalse("request_confirmation" in names)
