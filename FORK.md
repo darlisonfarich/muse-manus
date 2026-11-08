@@ -216,3 +216,12 @@ ponte do Muse e é independente da remoção OTLP.
   de modelos atualizados. Sem alterações em MCP, `LICENSE` e `NOTICE`.
 
 **PR em rascunho: revisão Muse obrigatória, CI 4/4 verde, sem merge.**
+
+
+## Fase 2 / PR-A — proteção de OTP em observações ao vivo
+
+- Quando uma tela contiver qualquer campo de senha (também em nós aninhados da árvore), sequências **isoladas de 4 a 8 dígitos** são substituídas por `[OTP REDACTED]` nos nomes dos elementos e nos textos, descrições, dicas e títulos das janelas.
+- O mascaramento ocorre **antes** da estabilização de referências, diffs, observações, histórico e serialização MCP. Linhas do OCR passam pelo mesmo filtro após a proteção de regiões secretas.
+- A geometria, as referências, o indicador `secret` e os identificadores de captura são preservados. Texto normal sem campo de senha **não** é alterado. Números embutidos em identificadores alfanuméricos ou com mais de oito dígitos não são classificados como OTP isolado.
+- Este PR **não habilita** captura de screenshots sensíveis, digitação em senha, execução remota nem qualquer nova permissão. O PR-B deve recusar leitura de imagem de telas com senha e aplicar os gates existentes antes de agir.
+- Testes JVM: mascaramento em árvore (inclusive aninhada), elemento, OCR, código em texto corrido, ausência de senha e observação `phone_observe`.
