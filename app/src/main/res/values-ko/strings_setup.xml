@@ -2,7 +2,7 @@
 <resources>
     <string name="welcome_title">안녕하세요, Mika예요</string>
     <string name="welcome_lead">내 휴대전화 속 개인 비서예요.\n할 일을 말씀하시면 백그라운드에서 처리해 드릴게요.</string>
-    <string name="welcome_note">시작하기 전에 모델을 설정하고 휴대전화 제어를 켜세요. 3분 정도 걸려요.</string>
+    <string name="welcome_note">Muse가 휴대전화를 원격으로 제어한다면 모델 없이 계속하거나 별도의 AI를 설정할 수 있습니다. 이후 휴대전화 제어를 활성화하세요.</string>
     <string name="welcome_start">시작하기</string>
     <string name="welcome_apps">앱 사용</string>
     <string name="welcome_apps_body">백그라운드 화면에서 탭, 입력, 스크롤을 해서 내 화면은 자유롭게 쓸 수 있어요</string>
@@ -16,8 +16,10 @@
     <string name="hide">숨기기</string>
     <string name="show">표시</string>
     <string name="model_setup_title">모델 설정</string>
-    <string name="model_setup_lead">Mika는 직접 연결한 모델 서비스로 생각해요. 먼저 제공업체를 연결한 다음, 역할마다 모델을 고르세요.</string>
-    <string name="model_setup_onboarding_note">메인 모델만 필수예요. 나머지 둘은 나중에 해도 돼요.</string>
+    <string name="model_setup_lead">앱 내 AI 작업에는 모델 제공업체가 필요합니다. Muse가 휴대전화를 원격으로 제어한다면 모델 없이 계속할 수 있습니다.</string>
+    <string name="model_setup_onboarding_note">기본 모델은 앱 내 AI 작업에만 필요합니다. 원격 접속은 별도로 설정할 수 있습니다.</string>
+    <string name="model_setup_skip_model">모델 없이 계속</string>
+    <string name="model_setup_skip_model_note">Muse가 휴대전화를 제어하도록 하려면 설정을 마친 후 설정 › 고급 › 컴퓨터 접근 (MCP)을 여세요. 모델을 추가하기 전에는 앱 내 AI 채팅과 작업을 사용할 수 없습니다.</string>
     <string name="model_kind">API 유형</string>
     <string name="model_base_url">기본 URL</string>
     <string name="model_provider_name">이름</string>

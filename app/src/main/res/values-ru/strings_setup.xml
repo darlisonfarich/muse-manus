@@ -2,7 +2,7 @@
 <resources>
     <string name="welcome_title">Привет, я Mika</string>
     <string name="welcome_lead">Ваш личный помощник в телефоне.\nСкажите, что нужно сделать, и я выполню это в фоне.</string>
-    <string name="welcome_note">Прежде чем начать: настройте модель и включите управление телефоном. Это займёт около 3 минут.</string>
+    <string name="welcome_note">Если Muse будет удалённо управлять телефоном, можно продолжить без модели или настроить собственный ИИ. Затем включите управление телефоном.</string>
     <string name="welcome_start">Начать</string>
     <string name="welcome_apps">Работа с приложениями</string>
     <string name="welcome_apps_body">Нажимает, вводит текст и прокручивает на фоновом экране, не занимая ваш</string>
@@ -16,8 +16,10 @@
     <string name="hide">Скрыть</string>
     <string name="show">Показать</string>
     <string name="model_setup_title">Настройка модели</string>
-    <string name="model_setup_lead">Mika думает с помощью вашего собственного сервиса моделей. Сначала подключите провайдера, затем выберите модель для каждой роли.</string>
-    <string name="model_setup_onboarding_note">Обязательна только основная модель; две другие можно настроить позже.</string>
+    <string name="model_setup_lead">Для задач ИИ внутри приложения нужен поставщик модели. Если Muse будет управлять телефоном удалённо, можно продолжить без модели.</string>
+    <string name="model_setup_onboarding_note">Основная модель нужна только для задач ИИ внутри приложения. Удалённый доступ настраивается отдельно.</string>
+    <string name="model_setup_skip_model">Продолжить без модели</string>
+    <string name="model_setup_skip_model_note">Чтобы Muse управлял телефоном, после настройки откройте Настройки › Дополнительно › Доступ с компьютера (MCP). Чат и задачи ИИ внутри приложения недоступны до добавления модели.</string>
     <string name="model_kind">Тип API</string>
     <string name="model_base_url">Базовый URL</string>
     <string name="model_provider_name">Название</string>

@@ -2,7 +2,7 @@
 <resources>
     <string name="welcome_title">你好,我是 Mika</string>
     <string name="welcome_lead">你手機上的私人助理。\n說要做什麼,我在背景替你辦完。</string>
-    <string name="welcome_note">開始前需要配一個模型、開啟手機操作,約 3 分鐘</string>
+    <string name="welcome_note">如由 Muse 遠端控制手機，可略過模型設定；也可以設定自己的 AI。接著啟用手機操作。</string>
     <string name="welcome_start">開始設定</string>
     <string name="welcome_apps">操作 App</string>
     <string name="welcome_apps_body">在背景的一塊螢幕上點、輸入、翻頁,不佔用你的螢幕</string>
@@ -16,8 +16,10 @@
     <string name="hide">隱藏</string>
     <string name="show">顯示</string>
     <string name="model_setup_title">設定模型</string>
-    <string name="model_setup_lead">Mika 用你自己的模型服務來思考。先連一家服務商，再給每件事選模型。</string>
-    <string name="model_setup_onboarding_note">只有主模型必須選，另外兩個可以以後再說。</string>
+    <string name="model_setup_lead">本機 AI 工作需要設定模型供應商。如由 Muse 遠端控制手機，可不設定模型直接繼續。</string>
+    <string name="model_setup_onboarding_note">只有使用應用程式內 AI 工作時才需要主模型。遠端存取可另外設定。</string>
+    <string name="model_setup_skip_model">不設定模型，繼續</string>
+    <string name="model_setup_skip_model_note">若要由 Muse 控制手機，完成設定後前往「設定 › 進階 › 電腦存取 (MCP)」。未新增模型前，應用程式內的 AI 聊天與工作無法使用。</string>
     <string name="model_kind">介面</string>
     <string name="model_base_url">介面網址</string>
     <string name="model_provider_name">名稱</string>
