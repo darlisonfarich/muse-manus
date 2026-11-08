@@ -34,6 +34,7 @@ import com.wangzan101.mika.core.uistate.AppAccessScreenPort
 import com.wangzan101.mika.core.uistate.ScreenPort
 import com.wangzan101.mika.core.uistate.UiTreeNode
 import com.wangzan101.mika.settings.McpSettings
+import com.wangzan101.mika.task.GerSessionManager
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -78,15 +79,19 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         val screen: ScreenPort,
         val tools: ToolDispatcher,
         val executor: ActionExecutor,
+        val lease: GerSessionManager.DirectLease,
         val releaseBinding: () -> Unit,
         var lastUsed: Long,
     ) {
-        fun close() { display.current?.release(); releaseBinding() }
+        fun close() {
+            try { display.current?.release() }
+            finally { try { releaseBinding() } finally { lease.release() } }
+        }
     }
 
     suspend fun close() = lock.withLock { closeActive() }
 
-    private fun closeActive() { current?.close(); current = null }
+    private fun closeActive() { val old = current; current = null; old?.close() }
 
     override suspend fun call(owner: String, name: String, args: JsonObject): JsonObject = lock.withLock {
         if (owner.isBlank()) return@withLock fail("unauthenticated")
@@ -146,7 +151,9 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
 
     private suspend fun create(owner: String, now: Long): Session {
         val services = PhoneServices.of(context)
-        val binding = services.sharedShell.acquire()
+        val lease = app.ger.acquireDirect() ?: throw IllegalStateException("Direct session slot unavailable")
+        val binding = try { services.sharedShell.acquire() }
+            catch (e: Exception) { lease.release(); throw e }
         try {
             val shell = withTimeoutOrNull(12_000L) { binding.shell.filterNotNull().first() }
                 ?: throw IllegalStateException("shell unavailable")
@@ -158,13 +165,27 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                     context.getSystemService(DisplayManager::class.java))
             }
             var physical: AndroidScreen? = null
+            // Same package claims as TaskCenter: a direct session is now a real resource owner.
+            val holderActive: (String) -> Boolean = { holder ->
+                app.resources.isExternalOwnerActive(holder) ||
+                    app.taskState.runs.value.any { it.key == holder }
+            }
+            fun displayInUse(pkg: String, user: Int?): Boolean = runCatching {
+                if (user == null) shell.displayOfPackage(pkg) else shell.displayOfPackageInUser(pkg, user)
+            }.getOrDefault(-1) >= 0
             val lazy = LazyPhoneScreen(metrics.widthPixels, metrics.heightPixels,
                 listApps = { withContext(Dispatchers.IO) { launchableApps(context.packageManager, context.packageName) } },
             ) {
                 AndroidScreen(a11y, shell, display,
                     checkOtherTasks = true,
-                    reserve = { !busy() },
-                    appFree = { _, _ -> !busy() },
+                    reserve = { pkg -> !busy() && lease.reserveApp(pkg, holderActive) { displayInUse(pkg, null) } },
+                    reserveCopy = { pkg, user ->
+                        !busy() && lease.reserveApp("$pkg@$user", holderActive) { displayInUse(pkg, user) }
+                    },
+                    appFree = { pkg, user ->
+                        val claim = if (user == null) pkg else "$pkg@$user"
+                        !busy() && lease.appFree(claim, holderActive) { displayInUse(pkg, user) }
+                    },
                     appAccess = app.appAccess,
                 ).also { physical = it }
             }
@@ -190,9 +211,9 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                 provenance = RunProvenance(RunOrigin.Bridge, Attendance.Unattended),
                 selfPackage = context.packageName,
             )
-            return Session(owner, binding, display, safe, tools, executor, services.sharedShell::release, now)
+            return Session(owner, binding, display, safe, tools, executor, lease, services.sharedShell::release, now)
         } catch (e: Exception) {
-            services.sharedShell.release()
+            try { services.sharedShell.release() } finally { lease.release() }
             throw e
         }
     }
