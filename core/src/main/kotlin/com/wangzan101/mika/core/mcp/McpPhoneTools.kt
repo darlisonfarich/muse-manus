@@ -32,6 +32,16 @@ class McpPhoneTools(private val host: DirectPhoneHost, private val owner: String
         put("type", "array"); put("description", description); put("maxItems", max)
         putJsonObject("items") { put("type", "object") }
     }
+    private fun gesturePaths(): JsonObject = buildJsonObject {
+        put("type", "array"); put("minItems", 1); put("maxItems", 2)
+        putJsonObject("items") {
+            put("type", "array"); put("minItems", 2); put("maxItems", 32)
+            putJsonObject("items") {
+                put("type", "array"); put("minItems", 2); put("maxItems", 2)
+                putJsonObject("items") { put("type", "integer"); put("minimum", 0); put("maximum", 999) }
+            }
+        }
+    }
     private fun schema(required: List<String> = emptyList(), vararg properties: Pair<String, JsonObject>): JsonObject = buildJsonObject {
         put("type", "object")
         putJsonObject("properties") { properties.forEach { (name, spec) -> put(name, spec) } }
@@ -44,6 +54,7 @@ class McpPhoneTools(private val host: DirectPhoneHost, private val owner: String
 
     val tools: List<McpTaskTools.Tool> = listOf(
         McpTaskTools.Tool("phone_status", "Read session state and whether the local kill switch permits writes.", schema(), true),
+        McpTaskTools.Tool("phone_get_state", "Alias for phone_status: session, write controls and current task contention.", schema(), true),
         McpTaskTools.Tool("phone_observe", "Read sanitized Android accessibility elements and current application. Password screens require the user.", schema(), true),
         McpTaskTools.Tool("phone_screenshot", "Read a protected-screen-aware screenshot, compressed to under 1 MiB; password screens are denied.", schema(), true),
         McpTaskTools.Tool("phone_list_apps", "List installed application package names and labels.", schema(), true),
@@ -54,13 +65,15 @@ class McpPhoneTools(private val host: DirectPhoneHost, private val owner: String
         McpTaskTools.Tool("phone_type", "Type text in a non-secret field. Enter may submit content; the same local gate still applies.", schema(listOf("text", "request_id"),
             ref, sid, "x" to integer("Normalized X", 0, 999), "y" to integer("Normalized Y", 0, 999), "text" to string("Text to type", 10000),
             "pressEnter" to bool(), id), false),
-        McpTaskTools.Tool("phone_scroll", "Scroll an element or screen in a direction.", schema(listOf("request_id"), ref, sid, "direction" to string("up or down"), id), false),
+        McpTaskTools.Tool("phone_scroll", "Scroll the virtual screen in a chosen direction.", schema(listOf("direction", "request_id"),
+            "direction" to string("up, down, left or right"), "amount" to integer("Amount 1–20 (default 3)", 1, 20),
+            "x" to integer("Normalized X", 0, 999), "y" to integer("Normalized Y", 0, 999), id), false),
         McpTaskTools.Tool("phone_swipe", "Swipe using 0–999 normalized endpoints.", schema(listOf("request_id"),
             "startX" to integer("Start X", 0, 999), "startY" to integer("Start Y", 0, 999),
             "endX" to integer("End X", 0, 999), "endY" to integer("End Y", 0, 999),
             "durationMs" to integer("Gesture duration ms", 50, 5000), id), false),
         McpTaskTools.Tool("phone_gesture", "Perform a preplanned multipoint gesture with existing phone_gesture safety gates.", schema(listOf("paths", "request_id"),
-            "paths" to array("Gesture paths, up to two fingers and 32 points each", 2),
+            "paths" to gesturePaths(),
             "durationMs" to integer("Gesture duration ms", 50, 5000), id), false),
         McpTaskTools.Tool("phone_key", "Press an allowed navigation/editing key. System-wide HOME/POWER/VOLUME/RECENTS remain blocked by the shared shell allowlist.", schema(listOf("key", "request_id"),
             "key" to string("Allowed KEYCODE_* name"), id), false),
