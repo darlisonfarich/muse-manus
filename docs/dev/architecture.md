@@ -75,9 +75,9 @@
 
 结果、提问、通知经 `Outbox`(`core/run/Outbox.kt`)送出:先记下要发的,再发。状态 Pending → Attempting → Delivered / Failed / Uncertain;同一个送达编号只送一次;发到一半结果不明的标为 Uncertain,不自动重发。记录在 `outbox-v3.json`(`app/task/FileOutboxStore.kt`)。
 
-渠道任务只发一次受理确认,不转发运行阶段或步数。任务持久化登记后,以 `accepted:<运行编号>` 的 `Notice` 进入 `Outbox`,发送不阻塞任务执行;同一渠道消息编号的重投不建任务也不再确认,不同编号即使文字相同也分别登记,并在同一对话里按先后顺序执行。提问、确认与接管仍只走 `ChannelInteraction`。结果链路另记主循环完成到送出、Outbox 加发送、微信 HTTP 各段毫秒数,不记消息内容。
+渠道任务只发一次受理确认,不转发运行阶段或步数。任务持久化登记后,以 `accepted:<运行编号>` 的 `Notice` 进入 `Outbox`,发送不阻塞任务执行;同一渠道消息编号的重投不建任务也不再确认,不同编号即使文字相同也分别登记,并在同一对话里按先后顺序执行。提问、确认与接管仍只走 `ChannelInteraction`。结果链路记主循环完成到送出、Outbox 加发送各段毫秒数,不记消息内容。
 
-本机渠道是 `LocalChannel`(`app/task/LocalChannel.kt`):本机界面加系统通知。`WechatChannel`(`app/wechat/`)是第二渠道:单账号、本人私聊文本,凭证加密保存在本机,独立前台服务长轮询,不建中继服务器,也不另建任务状态机。入站消息先写待处理账本再推进同步游标,`TaskCenter` 按渠道消息编号持久化去重后才确认;进程重启会先补交未登记消息。任务记录保存来源 `ChannelPeer`,提问、结果与 `RunRecovery` 都按来源路由。渠道接口 `Channel`、`ChannelGateway`(主人身份、提问编号对应、付款确认只能在能确认的渠道上做,`Channel.confirms`)在 `core/run/`;微信 `confirms=false`,付款确认与手机接管仍走手机。
+本机渠道是 `LocalChannel`(`app/task/LocalChannel.kt`):本机界面加系统通知。已移除微信机器人渠道与长轮询服务,不再从本机启动或恢复。任务记录仍保留来源 `ChannelPeer`,通用渠道接口 `Channel`、`ChannelGateway`、`Outbox` 和 `RunRecovery` 保留以便未来接入新渠道。任务服务对未注册的渠道明确报 `unsupported_channel`,不会暗中转发到微信。内置的 `knowledge/apps/wechat` 属于「操作微信 App」的知识,不是机器人渠道,继续保留。
 
 ### 进程重启后
 

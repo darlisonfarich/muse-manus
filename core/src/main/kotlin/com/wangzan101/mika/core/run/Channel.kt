@@ -39,7 +39,7 @@ enum class SendOutcome { Delivered, Failed, Uncertain }
 /** 渠道负责收发，不决定谁是主人、谁能批准。 */
 interface Channel {
     val id: String
-    /** 能在这个渠道里回答付款确认(只有付款要问,只在手机上同意)。 */
+    /** Whether this channel can carry confirmation replies; approvals are decided separately by the policy. */
     val confirms: Boolean
     fun isAlive(peer: ChannelPeer): Boolean = true
     fun start(sink: ChannelInputSink): AutoCloseable

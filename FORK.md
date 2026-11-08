@@ -112,3 +112,27 @@ Mudanças sobre a `main` pós-P0. Preservados `LICENSE`, `NOTICE` e pacotes-font
 **Atenção:** este PR depende da revisão e do CI; não cobre a mitigação P0 dos
 segredos que não sejam nós `secret=true`, nem teste real no POCO. As ressalvas
 do PR anterior permanecem em aberto. Os portões NÃO adotam lista de Apps proibidos.
+
+
+## Remoção 2 — canal de mensagens WeChat (PR independente)
+
+- Excluídos a implementação do bot/canal WeChat em `core/wechat` e
+  `app/wechat`, sua interface `app/ui/WechatSettings.kt`, os testes
+  exclusivos do canal, o serviço do `AndroidManifest.xml` e as strings de
+  configuração do bot em dez idiomas.
+- `MikaApp.kt`: removida a inicialização/reconexão automática do canal; em
+  recuperação de tarefas persistidas, somente o canal local registrado é
+  resolvido e uma origem antiga/desconhecida não é enviada a outro canal.
+- `TaskService.kt`: origem de canal desconhecida retorna erro explícito
+  `unsupported_channel`, em vez de acionar WeChat por fallback. Preservados
+  `LocalChannel`, `Channel`, `ChannelGateway`, `Outbox` e toda a
+  abstração de integração futura.
+- `SettingsScreen.kt` e `SettingsScreenTest.kt`: removida a página do bot
+  e atualizado o teste da navegação, que agora verifica sua ausência.
+- `docs/dev/architecture.md` atualizado para refletir a remoção.
+- **Preservados** `core/src/main/resources/knowledge/apps/wechat/APP.md`,
+  os exemplos de uso do App WeChat, seus assets de demonstração e os testes
+  genéricos de `ChannelGateway`. Nenhuma lista de aplicativos proibidos.
+
+Licenças e créditos originais intocados. Este PR não altera o transporte de
+ponte do Muse e é independente da remoção OTLP.

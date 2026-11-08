@@ -170,9 +170,9 @@ class TaskService : Service() {
 
     private fun channelFor(peer: ChannelPeer): Channel = when (peer.channelId) {
         LocalChannel.ID -> localChannel
-        else -> checkNotNull((application as com.wangzan101.mika.MikaApp).wechat.channelFor(peer.channelId)) {
-            "unknown channel ${peer.channelId}"
-        }
+        // The generic Channel interface remains for future extensions, but the removed
+        // WeChat transport MUST NOT be used as an implicit fallback.
+        else -> error("unsupported_channel: ${peer.channelId}")
     }
 
     private fun acknowledgeChannel(peer: ChannelPeer?, messageId: String?) {
