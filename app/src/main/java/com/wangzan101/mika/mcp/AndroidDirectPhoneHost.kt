@@ -168,6 +168,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                 s.lastUsed = now
                 try {
                     if (!ready(s)) return@withLock GerIntentAttempt.Done(fail("needs_user"))
+                    if (sensitive(s)) return@withLock GerIntentAttempt.Done(fail("needs_user"))
                     when (name) {
                         "phone_observe", "phone_list_apps" -> {
                             if (sensitive(s)) GerIntentAttempt.Done(fail("needs_user"))
@@ -372,6 +373,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             val name = (cmd["name"] as? JsonPrimitive)?.contentOrNull ?: return GerIntentAttempt.Done(fail("invalid_commands"))
             if (name !in ACTIONS) return GerIntentAttempt.Done(fail("invalid_commands"))
             val params = cmd["arguments"] as? JsonObject ?: JsonObject(emptyMap())
+            if (!ready(s) || sensitive(s)) return GerIntentAttempt.Done(fail("needs_user"))
             launchBlocker(s, name, params)?.let { return GerIntentAttempt.Blocked(it) }
             // A deterministic ID per step makes a completed step non-replayable,
             // even if the MCP connection dies after step N and before the reply.
@@ -381,6 +383,8 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             // that case there was no attempt: leave the step in the queue.
             if (outcome["error"] == JsonPrimitive("session_conflict"))
                 return GerIntentAttempt.Blocked("task_running")
+            if (outcome["error"] == JsonPrimitive("delivery_unknown"))
+                return GerIntentAttempt.Done(fail("delivery_unknown"))
             progress.results += outcome
             progress.index++
             if (outcome["ok"] != JsonPrimitive(true)) break
