@@ -95,7 +95,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         }
         val now = System.currentTimeMillis()
         if (current != null && now - current!!.lastUsed > ttlMs) closeActive()
-        if (name == "phone_status") return@withLock buildJsonObject {
+        if (name == "phone_status" || name == "phone_get_state") return@withLock buildJsonObject {
             put("ok", true); put("active", current?.owner == owner)
             put("writeEnabled", settings.enabled.value && settings.directWritesEnabled.value)
             put("busy", busy()); put("sessionTtlMs", ttlMs)
