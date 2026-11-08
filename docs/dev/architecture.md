@@ -346,7 +346,7 @@
 **详细 Trace** 默认关闭。调试版和性能测试版可在「设置 → 开发者选项 → 运行记录」开启，从下一次任务起采集，关闭即停录。四种模型接口的每次主循环请求（含重发）和顶层工具调用各记一个 span。在「查看过程 → 详细 Trace」可对照同一模型相邻请求中首个变化的块，缓存用量未上报与命中为零分开显示。
 
 - 「保存本次 Trace」默认导出只含诊断元数据的 OTLP Protobuf 文件（`.pb`）。勾选「附带脱敏正文」才保存 ZIP，内含同一份 `trace.pb` 和按 span ID 命名的脱敏正文。
-- Muse Manus 已移除 o envio pela rede OTLP/HTTP e os campos de endereço/credenciais. A gravação e a exportação local permanecem disponíveis, e nenhum trace é enviado automaticamente por esse caminho.
+- Muse Manus 已移除 OTLP/HTTP 网络发送入口，以及接收地址和鉴权头设置。详细 Trace 仍在本机记录、查看；用户可手动保存成 `.pb` 或 ZIP。本功能不再向外部接收端发送请求。
 - 遇到「部分记录」，先看根 span 的 `mika.trace.partial_reasons`。要定位截断的块，查看模型 span 上 `mika.trace.truncated` 事件的 `mika.block.path` 和 `mika.truncation.reason`。单次运行的正文预算为 8 MiB，最多记录 1,024 个子 span。
 
 应用私有归档的总容量默认 100 MiB，可在开发者选项中调整。空间不足时先清理最旧的已结束归档，正在录制或导出的归档会保留。
