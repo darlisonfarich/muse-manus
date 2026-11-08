@@ -87,7 +87,11 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         fun close() { display.current?.release(); releaseBinding() }
     }
 
-    suspend fun close() = lock.withLock { closeActive() }
+    suspend fun close() {
+        // A stopped MCP listener must never leave requests parked in memory.
+        app.resources.ger.intentions.cancelAll()
+        lock.withLock { closeActive() }
+    }
 
     private fun directOwner(owner: String): String = "mcp:" + digest(owner)
 
