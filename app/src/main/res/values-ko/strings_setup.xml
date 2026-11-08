@@ -80,4 +80,6 @@
     <string name="model_probe_tried">%1$s을(를) 시도했지만 테스트를 통과한 모델이 없어요.</string>
     <string name="model_probe_fallback">먼저 시도한 %1$s이(가) 테스트를 통과하지 못했어요: %2$s. 메인 모델은 테스트를 통과한 “%3$s”이에요.</string>
     <string name="model_pick_main">메인 모델 선택</string>
+    <string name="mcp_direct_writes_title">Muse 직접 제어 허용</string>
+    <string name="mcp_direct_writes_detail">활성화하면 인증된 MCP 클라이언트가 되돌릴 수 있는 휴대전화 작업을 수행할 수 있습니다. 비활성화하면 읽기 전용입니다. 비밀번호, 구매 및 중요한 작업은 계속 차단됩니다.</string>
 </resources>
