@@ -85,6 +85,8 @@ class MikaApp : Application(), WebOwner, SandboxOwner, TaskEnvironment.Owner, Ph
 
     /** 各任务的标签池共用的标签总数上限。 */
     val resources = ResourceScheduler()
+    /** GER phase 1: process-wide direct-session leases and shared package claims. */
+    val ger by lazy { com.wangzan101.mika.task.GerSessionManager(resources) }
     val detailedTraces by lazy { DetailedTraces(this) }
 
     val remoteTasks by lazy { RemoteTaskHub(this) }
