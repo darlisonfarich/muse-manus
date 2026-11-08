@@ -162,7 +162,9 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                 tools, OperationGuards(400), confirmations = null,
                 gate = { check(settings.directWritesEnabled.value && settings.enabled.value && !busy()) },
                 recorder = ActionRecorder(sink), approvals = ApprovalSettings.STRICT,
-                provenance = RunProvenance(RunOrigin.Mcp, Attendance.Unattended),
+                // Bridge origin is STRICT in ApprovalPolicy; generic Mcp runs only use ASK.
+                // Origin.McpTool never consumes a remote approval/grant.
+                provenance = RunProvenance(RunOrigin.Bridge, Attendance.Unattended),
                 selfPackage = context.packageName,
             )
             return Session(owner, binding, display, safe, tools, executor, services.sharedShell::release, now)
