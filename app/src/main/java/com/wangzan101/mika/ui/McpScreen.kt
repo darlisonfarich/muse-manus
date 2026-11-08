@@ -88,6 +88,15 @@ fun McpScreen(runtime: McpRuntime, onBack: () -> Unit) {
                     MikaSwitch(historyEnabled, runtime.settings::setHistoryEnabled, Modifier.testTag("computer-history"))
                 }
             }
+            val directWritesEnabled by runtime.settings.directWritesEnabled.collectAsState()
+            GroupCard {
+                ListRow(MikaIcons.Desktop, stringResource(R.string.mcp_direct_writes_title),
+                    stringResource(R.string.mcp_direct_writes_detail), first = true,
+                    onClick = { runtime.settings.setDirectWritesEnabled(!directWritesEnabled) }) {
+                    MikaSwitch(directWritesEnabled, runtime.settings::setDirectWritesEnabled,
+                        Modifier.testTag("mcp-direct-writes"))
+                }
+            }
             DeviceAccessSection(runtime.device.settings)
         },
         relayGuide = { mcp -> RelaySection(runtime, mcp) { copy(context, it) } },
