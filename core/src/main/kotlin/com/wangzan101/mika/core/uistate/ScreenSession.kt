@@ -142,7 +142,9 @@ internal class ScreenSession(
      * 端口原样的这一屏留作接着那个动作的「动作前」([probe] 用它,不再读一次)。
      */
     suspend fun snapshot(internal: Boolean = false): ScreenSnapshot = screen.snapshot().let { p ->
-        (stabilizer?.next(p)?.screen ?: p).also { primed = if (internal) it.snapshotId to p else null }
+        // Before stable refs, history, diffs, evidence or remote tool serialization.
+        val safe = OtpRedaction.snapshot(p)
+        (stabilizer?.next(safe)?.screen ?: safe).also { primed = if (internal) it.snapshotId to p else null }
     }.also {
         reads++
         if (!internal) stale = false
@@ -511,7 +513,7 @@ internal class ScreenSession(
         if (raw.isEmpty()) return raw to "empty"
         val legible = VisibleText.legible(raw)
         if (legible.isEmpty()) return legible to "illegible"
-        return VisibleText.missing(s, legible) to null
+        return OtpRedaction.ocr(s, VisibleText.missing(s, legible)) to null
     }
 
     /** 写进读屏结果的 treeQuality:只在手机上、树不够用时写(网页没有屏上文字可补)。 */
@@ -531,7 +533,7 @@ internal class ScreenSession(
      * 读到了时再加上能力另给的 [extra](网页正文的开头:读屏只有视口里的元素)。读不到也照样返回(没有观察)。
      */
     suspend fun freshLook(withImage: Boolean, extra: (suspend () -> Observation?)? = null): Look {
-        val s = screenAttempt { screen.snapshot() }
+        val s = screenAttempt { OtpRedaction.snapshot(screen.snapshot()) }
         val png = if (withImage && s != null && !s.protected && s.captureError == null) {
             screenAttempt { screen.screenshotPng() }
         } else null
@@ -562,12 +564,13 @@ internal data class TreeRead(val tree: TreeCheck, val ocr: List<VisibleTextLine>
 
 /** 读屏的元素文字,一行一个;第一行是前台 App。没有文字时为空串。密码框里的字不记。 */
 internal fun screenText(s: ScreenSnapshot): String {
-    val names = s.elements.filter { it.meaningful && it.name.isNotBlank() && !it.secret }.map { it.name.replace('\n', ' ') }
+    val safe = OtpRedaction.snapshot(s)
+    val names = safe.elements.filter { it.meaningful && it.name.isNotBlank() && !it.secret }.map { it.name.replace('\n', ' ') }
     // 网页标题不在元素里,也是这一屏的事实(页面给的,和元素文字一样是待核对的材料);没有可读元素的网页也照样留着
-    val title = s.web?.title?.takeIf { it.isNotBlank() }?.let { "网页标题:${it.replace('\n', ' ')}" }
-    val dialog = s.web?.dialog?.let { "网页弹框(${it.kind}):${it.message.replace('\n', ' ')}" }
+    val title = safe.web?.title?.takeIf { it.isNotBlank() }?.let { "网页标题:${it.replace('\n', ' ')}" }
+    val dialog = safe.web?.dialog?.let { "网页弹框(${it.kind}):${it.message.replace('\n', ' ')}" }
     if (names.isEmpty() && title == null && dialog == null) return ""
-    val where = s.web?.let { "当前网页:${it.url}" } ?: "当前 App:${s.packageName ?: "未知"}"
+    val where = safe.web?.let { "当前网页:${it.url}" } ?: "当前 App:${safe.packageName ?: "未知"}"
     return (listOfNotNull(where, title, dialog) + names).joinToString("\n").take(MAX_READ_CHARS)
 }
 
