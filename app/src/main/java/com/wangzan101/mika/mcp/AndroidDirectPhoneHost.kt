@@ -174,7 +174,10 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                 if (isCancelled()) return@attempt GerIntentAttempt.Done(fail("cancelled"))
                 s.lastUsed = now
                 try {
-                    if (!ready(s)) return@attempt GerIntentAttempt.Done(fail("needs_user"))
+                    // Virtual-display reads must work with the physical screen off.
+                    // Only actions require an unlocked, interactive physical phone.
+                    if (DirectPhoneScreenPolicy.requiresInteractivePhysicalScreen(name) && !ready(s))
+                        return@attempt GerIntentAttempt.Done(fail("needs_user"))
                     if (sensitive(s)) return@attempt GerIntentAttempt.Done(fail("needs_user"))
                     when (name) {
                         "phone_observe", "phone_list_apps" -> {
@@ -477,7 +480,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
     }
 
     companion object {
-        private val READS = setOf("phone_observe", "phone_list_apps", "phone_screenshot")
+        private val READS = DirectPhoneScreenPolicy.reads
         private val ACTIONS = mapOf(
             "phone_launch_app" to "phone_launch_app",
             "phone_tap" to "phone_tap",
