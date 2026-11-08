@@ -68,28 +68,6 @@ val updateReadme by tasks.registering(JavaExec::class) {
     outputs.upToDateWhen { false }
 }
 
-// 桌面上对着 OpenAI 真实服务走一遍「用 ChatGPT 登录」(登录、列模型、Responses、工具调用、换新令牌),见 docs/dev/chatgpt-signin-check.md。
-// 单独的源码集:不进 core 的产物,也不进 app
-val chatgptCheck by sourceSets.creating {
-    compileClasspath += sourceSets.main.get().output
-    runtimeClasspath += sourceSets.main.get().output
-}
-configurations[chatgptCheck.implementationConfigurationName].extendsFrom(configurations.implementation.get())
-configurations[chatgptCheck.runtimeOnlyConfigurationName].extendsFrom(configurations.runtimeOnly.get())
-
-val chatgptSignInCheck by tasks.registering(JavaExec::class) {
-    group = "verification"
-    description = "用 App 的登录代码对着 OpenAI 走一遍 ChatGPT 登录;-Ptimeout=<秒> -Pmodel=<slug> -Pkeep"
-    classpath = chatgptCheck.runtimeClasspath
-    mainClass.set("com.wangzan101.mika.core.chatgpt.check.ChatGptSignInCheckKt")
-    args(listOfNotNull(
-        providers.gradleProperty("timeout").orNull?.let { "--timeout=$it" },
-        providers.gradleProperty("model").orNull?.let { "--model=$it" },
-        if (providers.gradleProperty("keep").isPresent) "--keep" else null,
-    ))
-    outputs.upToDateWhen { false }
-}
-
 tasks.test {
     // 跨语言 CLI 契约由 cliTest 显式运行;纯 JVM 测试不要求电脑安装 Python。
     exclude("**/RemoteCliContractTest*")
