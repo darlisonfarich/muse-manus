@@ -36,6 +36,25 @@ class McpSettingsTest {
         assertFalse(settings().enabled.value)
     }
 
+    @Test fun directPhoneWritesDefaultOffAndCanBeRevokedImmediately() {
+        val first = settings()
+        assertFalse(first.directWritesEnabled.value)
+        first.setEnabled(true)
+        assertFalse(first.directWritesEnabled.value) // Network access is not write consent.
+        first.setDirectWritesEnabled(true)
+        assertTrue(first.directWritesEnabled.value)
+        assertTrue(settings().directWritesEnabled.value) // Persists after a restart.
+        first.setDirectWritesEnabled(false)
+        assertFalse(first.directWritesEnabled.value)
+        assertFalse(settings().directWritesEnabled.value)
+        assertTrue(first.enabled.value) // Kill switch leaves read-only access available.
+    }
+
+    @Test fun legacyConfigurationNeverEnablesPhoneWrites() {
+        tmp.root.resolve("mcp.json").writeText("""{"enabled":true,"port":8765,"historyEnabled":true}""")
+        assertFalse(settings().directWritesEnabled.value)
+    }
+
     @Test fun unreadableFileMeansOff() {
         tmp.root.resolve("mcp.json").writeText("{oops")
         assertFalse(settings().enabled.value)
