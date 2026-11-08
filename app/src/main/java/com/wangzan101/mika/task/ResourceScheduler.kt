@@ -28,6 +28,7 @@ class ResourceScheduler(
     fun reserveApp(packageName: String, owner: String, holderActive: (String) -> Boolean, stillUsed: () -> Boolean): Boolean {
         if (!appFree(packageName, owner, holderActive, stillUsed)) return false
         apps[packageName] = owner
+        ger.intentions.notifyChanged()
         return true
     }
 
@@ -43,7 +44,10 @@ class ResourceScheduler(
 
     @Synchronized fun releaseOwner(owner: String) {
         waiting.remove(owner)
-        if (apps.values.removeAll { it == owner }) released.value++
+        if (apps.values.removeAll { it == owner }) {
+            released.value++
+            ger.intentions.notifyChanged()
+        }
     }
 
     @Synchronized fun appHolder(packageName: String): String? = apps[packageName]
