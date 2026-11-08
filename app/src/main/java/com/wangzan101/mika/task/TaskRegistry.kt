@@ -86,13 +86,13 @@ class TaskCenter<R : Any>(
      */
     @Synchronized
     fun reserve(pkg: String, owner: String, stillUsed: () -> Boolean): Boolean {
-        return resources.reserveApp(pkg, owner, { byKey(it) != null }, stillUsed)
+        return resources.reserveApp(pkg, owner, { byKey(it) != null || resources.isExternalOwnerActive(it) }, stillUsed)
     }
 
     /** 任务 [owner] 此刻能不能占 [pkg](只查不占,规则同 [reserve])。 */
     @Synchronized
     fun appFree(pkg: String, owner: String, stillUsed: () -> Boolean): Boolean =
-        resources.appFree(pkg, owner, { byKey(it) != null }, stillUsed)
+        resources.appFree(pkg, owner, { byKey(it) != null || resources.isExternalOwnerActive(it) }, stillUsed)
 
     /**
      * 任务 [owner] 等别的任务放开 [pkg],最多 [timeoutMs](见 [ResourceScheduler.awaitApp]:互相等的不等)。
