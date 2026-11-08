@@ -211,7 +211,7 @@ class DiagnosticsTest {
         assertTrue(t, t.contains("- OpenAiCompat api.deepseek.com (5 models listed)"))
         assertTrue(t, t.contains("main: deepseek-chat @ api.deepseek.com"))
         assertTrue(t, t.contains("vision: off"))
-        assertTrue(t, t.contains("ChatGPT sign-in: no"))
+        assertFalse(t, t.contains("ChatGPT sign-in:"))
         assertTrue(t, t.contains("battery whitelist: on, applied"))
         assertTrue(t, t.contains("restore after reboot: off by user, not applied"))
         assertTrue(t, t.contains("write secure settings: not granted"))

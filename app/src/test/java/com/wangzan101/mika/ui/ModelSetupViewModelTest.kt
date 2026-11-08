@@ -266,8 +266,9 @@ class ModelSetupViewModelTest {
         val store = store()
         val vm = vm(store)
         vm.selectPreset(ProviderPresets.custom.label); vm.setBaseUrl(url); vm.setApiKey("sk"); vm.testAndSave(); runCurrent()
-        assertEquals(listOf("claude-sonnet-5-5"), built.map { it.first })
-        assertEquals("claude-sonnet-5-5", store.configFor(ModelRole.Main)?.model)
+        assertTrue("foreign protocol must not be probed", built.isEmpty())
+        assertNull(store.configFor(ModelRole.Main))
+        assertEquals(listOf("claude-sonnet-5-5"), store.providers.value.single().models?.map { it.id })
     }
 
     /** 列表里的模型全都写明不走当前接口类型:一个都不试,照旧存下服务商,并说清为什么。 */
@@ -545,7 +546,7 @@ class ModelSetupViewModelTest {
         vm.testAndSave(); runCurrent()
         vm.setModel("gemini"); vm.testAndSave(); runCurrent()
         assertEquals(
-            ListState.Failed("列不出模型，用「gemini」试调用也说找不到：地址或接口类型可能填错了，也可能没有这个模型（模型名例如 gemini-flash-latest）。"),
+            ListState.Failed("列不出模型，用「gemini」试调用也说找不到：地址或接口类型可能填错了，也可能没有这个模型（模型名例如 deepseek-chat）。"),
             vm.state.value.form.test,
         )
         assertTrue(store.providers.value.isEmpty())
@@ -607,7 +608,7 @@ class ModelSetupViewModelTest {
         reply = { throw ModelError.ModelNotFound("gemini") }
         vm.retest(p.id); runCurrent()
         assertEquals(
-            ListState.Failed("模型「gemini」不存在。要填服务商文档里完整的模型 ID（例如 gemini-flash-latest）。"),
+            ListState.Failed("模型「gemini」不存在。要填服务商文档里完整的模型 ID（例如 deepseek-chat）。"),
             vm.state.value.retest[p.id],
         )
         assertEquals(listOf("gemini"), vm.state.value.unverified(vm.state.value.providers.single()))
@@ -642,7 +643,7 @@ class ModelSetupViewModelTest {
         listing[qwenUrl] = ModelListResult.Ok(listOf(ListedModel("qwen-vl", vision = true), ListedModel("qwen-max")))
         val store = store()
         val vm = vm(store)
-        vm.setApiKey("sk"); vm.testAndSave(); runCurrent()
+        vm.setBaseUrl(deepseekUrl); vm.setName("DeepSeek"); vm.setApiKey("sk"); vm.testAndSave(); runCurrent()
         val main = store.roles.value.main
         vm.openForm()
         assertTrue(vm.state.value.showForm)
@@ -660,7 +661,7 @@ class ModelSetupViewModelTest {
         listing[qwenUrl] = ModelListResult.Ok(listOf(ListedModel("qwen-max"), ListedModel("qwen-plain", toolCalls = false)))
         val store = store()
         val vm = vm(store)
-        vm.setApiKey("sk"); vm.testAndSave(); runCurrent()
+        vm.setBaseUrl(deepseekUrl); vm.setName("DeepSeek"); vm.setApiKey("sk"); vm.testAndSave(); runCurrent()
         vm.openForm(); vm.selectPreset(ProviderPresets.custom.label); vm.setBaseUrl(qwenUrl); vm.setName("通义千问"); vm.setApiKey("qk"); vm.testAndSave(); runCurrent()
         val qwen = vm.state.value.providers.first { it.name == "通义千问" }
         // 选择页列出所有服务商的全部模型,不按能力过滤
@@ -809,7 +810,7 @@ class ModelSetupViewModelTest {
         assertEquals("😀".repeat(ModelSetupViewModel.MAX_NAME), capped)
         vm.setBaseUrl(deepseekUrl)
         assertEquals(ProviderConnection.nameForUrl(deepseekUrl), vm.state.value.form.defaultName)
-        vm.selectPreset(ProviderPresets.custom.label)
+        vm.closeForm(); vm.openForm()
         assertEquals("", vm.state.value.form.name)
         assertEquals("别的名字", vm.state.value.form.copy(name = "别的名字").providerName)
     }
@@ -912,7 +913,7 @@ class ModelSetupViewModelTest {
         assertTrue("一次列模型都没调", listCalls.isEmpty())
         assertTrue("一次试调用都没有", built.isEmpty())
         val p = store.providers.value.single()
-        assertEquals("DeepSeek", p.name)
+        assertEquals("api.deepseek.com", p.name)
         assertEquals("sk-1", store.providerKey(p.id))
         assertEquals(emptyList<ListedModel>(), p.models)
         assertEquals(emptySet<String>(), p.verifiedModels)
@@ -962,7 +963,7 @@ class ModelSetupViewModelTest {
         listing[deepseekUrl] = deepseek
         val store = store()
         val vm = vm(store)
-        vm.setApiKey("sk-1"); vm.testAndSave(); runCurrent()
+        vm.setBaseUrl(deepseekUrl); vm.setApiKey("sk-1"); vm.testAndSave(); runCurrent()
         val main = store.configFor(ModelRole.Main)
         assertEquals("deepseek-chat", main?.model)
         vm.openForm(); vm.selectPreset(ProviderPresets.custom.label)
@@ -1000,7 +1001,7 @@ class ModelSetupViewModelTest {
         val p = store.providers.value.single()
         assertEquals(setOf("deepseek-chat"), p.verifiedModels)
         assertFalse(p.savedUntested)
-        vm.openForm(); vm.setApiKey("sk-2"); vm.saveWithoutTest(); runCurrent()
+        vm.openForm(); vm.setBaseUrl(deepseekUrl); vm.setApiKey("sk-2"); vm.saveWithoutTest(); runCurrent()
         assertEquals("不重复添加", 1, store.providers.value.size)
         val after = store.provider(p.id)!!
         assertEquals("sk-2", store.providerKey(p.id))

@@ -155,7 +155,7 @@ class ProviderStoreTest {
         assertNull(setups.last().readTimeoutSeconds)
     }
 
-    /** 预设改了默认上下文后,按旧默认存下的配置读入时跟上去;用户改过的和写了每模型窗口的不动(见 repairStaleContextDefaults)。 */
+    /** Custom-only has no external preset overrides: preserved defaults and user windows survive reload. */
     @Test fun stalePresetWindowIsRepairedOnLoadButUserValuesAreNot() {
         val s = store()
         val deepseek = s.connect("DeepSeek", ProviderConfig.Kind.OpenAiCompat, "https://api.deepseek.com", "k", listOf(ListedModel("deepseek-flash")))
@@ -165,7 +165,7 @@ class ProviderStoreTest {
         // 用户给另一条配置单独写过窗口:不动
         assertTrue(s.setModelContext(s.configFor(ModelRole.Light)!!.id, ModelContextSettings(windowTokens = 32_000)))
         val reloaded = store()
-        assertEquals(1_000_000, reloaded.configFor(ModelRole.Main)!!.capabilities.contextTokens)
+        assertEquals(64_000, reloaded.configFor(ModelRole.Main)!!.capabilities.contextTokens)
         // 预设默认没变的(示例地址不对应任何预设)和用户写过的都不动
         assertEquals(64_000, reloaded.configFor(ModelRole.Light)!!.capabilities.contextTokens)
     }
@@ -891,19 +891,20 @@ class ProviderStoreTest {
         }
     }
 
-    /** 试调用给 Messages 的回复上限留得够一次工具调用(16 个 token 装不下)。 */
+    /** Removed adapters cannot be used even if old callers retain their enum values. */
     @Test
-    fun probeLeavesRoomForAToolCall() = runTest {
+    fun probeRejectsRemovedProviderKindsBeforeAnyNetworkRequest() = runTest {
         val server = okhttp3.mockwebserver.MockWebServer().also { it.start() }
         try {
             val s = ProviderStore(tmp.root, AesGcmKeyCipher { key }, userAgent = "Mika/1.2.3")
-            server.enqueue(okhttp3.mockwebserver.MockResponse().setHeader("Content-Type", "application/json").setBody(
-                """{"content":[{"type":"tool_use","id":"t1","name":"get_time","input":{}}],"stop_reason":"tool_use","usage":{"input_tokens":1,"output_tokens":1}}""",
-            ))
-            assertEquals(ProbeResult.ToolCalled, s.probe(ProviderConfig.Kind.Anthropic, server.url("/").toString(), "sk", null, "m", null, none))
-            val body = server.takeRequest().body.readUtf8()
-            assertTrue(body, body.contains("\"max_tokens\":1024"))
-            assertTrue(body.contains("get_time"))
+            var rejected = false
+            try {
+                s.probe(ProviderConfig.Kind.Anthropic, server.url("/").toString(), "sk", null, "m", null, none)
+            } catch (e: IllegalArgumentException) {
+                rejected = e.message == "unsupported_model_kind"
+            }
+            assertTrue("non-Custom adapter must fail closed", rejected)
+            assertEquals("unsupported provider must never reach the network", 0, server.requestCount)
         } finally {
             server.shutdown()
         }

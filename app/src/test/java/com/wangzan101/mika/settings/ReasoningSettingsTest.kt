@@ -13,21 +13,27 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import javax.crypto.KeyGenerator
 
+/** Custom-only runtime: verify settings persistence, supported metadata and Chat Completions wire format. */
 class ReasoningSettingsTest {
     @get:Rule val tmp = TemporaryFolder()
     private val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
     private val caps = Capabilities(toolCalls = true, vision = true, contextTokens = 100_000, reasoning = true)
     private val setups = mutableListOf<ClientSetup>()
+
     private fun store() = ProviderStore(tmp.root, AesGcmKeyCipher { key }, modelFactory = { cfg, _, _, setup ->
         setups += setup
         object : ChatModel {
             override val name = cfg.model
             override val capabilities = cfg.capabilities
-            override suspend fun complete(system: String, messages: List<Message>, tools: List<ToolSpec>): ModelReply = error("not called")
+            override suspend fun complete(system: String, messages: List<Message>, tools: List<ToolSpec>): ModelReply =
+                error("not called")
         }
     })
-    private fun connected(s: ProviderStore) = s.connect("Responses", ProviderConfig.Kind.OpenAiResponses, "https://example.test/v1", "k",
-        listOf(ListedModel("m", reasoningEfforts = listOf("low", "medium", "high")), ListedModel("other", reasoningEfforts = emptyList())))
+
+    private fun connected(s: ProviderStore) =
+        s.connect("Custom", ProviderConfig.Kind.OpenAiCompat, "https://example.test/v1", "k",
+            listOf(ListedModel("m", reasoningEfforts = listOf("low", "medium", "high")),
+                ListedModel("other", reasoningEfforts = emptyList())))
 
     @Test fun sameModelCanHaveDifferentEffortPerRoleAndSurvivesReload() {
         val s = store()
@@ -80,84 +86,23 @@ class ReasoningSettingsTest {
         assertTrue(s.setReasoningEffort(ModelRole.Main, null))
     }
 
-    @Test fun providerReportedLevelsWorkForEveryProtocol() {
-        val cfg = ProviderConfig("c", ProviderConfig.Kind.OpenAiCompat, "https://example.test", "m", caps)
+    @Test fun providerReportedLevelsAreUsedOnlyForTheCustomProvider() {
+        val cfg = ProviderConfig("c", ProviderConfig.Kind.OpenAiCompat, "https://custom.example/v1", "m", caps)
         assertNull(ReasoningOptions.of(cfg, null))
-        val chat = ListedModel(
-            "m", endpoint = ModelEndpoint(ModelProtocol.ChatCompletions, "https://example.test"),
-            reasoningEfforts = listOf("low", "high"),
-        )
-        listOf(ModelProtocol.ChatCompletions, ModelProtocol.Messages, ModelProtocol.GenerateContent, ModelProtocol.Responses)
-            .forEach { protocol ->
-                val listed = chat.copy(endpoint = ModelEndpoint(protocol, "https://example.test"))
-                assertEquals(listOf("low", "high"), ReasoningOptions.of(cfg, listed)!!.levels)
-                assertTrue(ReasoningOptions.of(cfg, listed)!!.fromProvider)
-            }
+        val listed = ListedModel("m", endpoint = ModelEndpoint(ModelProtocol.ChatCompletions, "https://custom.example/v1"),
+            reasoningEfforts = listOf("low", "high"))
+        assertEquals(listOf("low", "high"), ReasoningOptions.of(cfg, listed)!!.levels)
+        assertTrue(ReasoningOptions.of(cfg, listed)!!.fromProvider)
+        assertEquals(emptyList<String>(), ReasoningOptions.of(cfg, listed.copy(reasoningEfforts = emptyList()))!!.levels)
+        assertNull(ReasoningOptions.of(cfg, ListedModel("m", reasoning = true)))
+        assertEquals(emptyList<String>(), ReasoningOptions.of(cfg, ListedModel("m", reasoning = false))!!.levels)
     }
 
-    @Test fun manualLevelsFollowTheProtocolAndNeedReasoningSupport() {
-        val direct = ProviderConfig("c", ProviderConfig.Kind.OpenAiResponses, "https://example.test", "m", caps)
-        assertFalse(ReasoningOptions.of(direct, null)!!.fromProvider)
-        assertEquals(emptyList<String>(), ReasoningOptions.of(direct, ListedModel("m", reasoning = false))!!.levels)
-        val xai = ProviderConfig("x", ProviderConfig.Kind.Xai, "https://example.test", "m", caps)
-        assertFalse(ReasoningOptions.of(xai, null)!!.fromProvider)
-        // 订阅登录不跟列表里写的别的协议走,档位也按它实际走的 Responses 给(和建模型同一个判断)
-        val viaMessages = ListedModel("m", endpoint = ModelEndpoint(ModelProtocol.Messages, "https://example.test"))
-        assertFalse(ReasoningOptions.of(xai, viaMessages)!!.fromProvider)
-        assertEquals(ProviderConfig.Kind.Xai, ProviderStore.adapterFor(xai, viaMessages.endpoint).first)
-        // 列表还没加载、或只说了能思考没给档位:兼容接口、Messages、generateContent 都不猜
-        val thinking = ListedModel("m", reasoning = true)
-        for (kind in listOf(ProviderConfig.Kind.OpenAiCompat, ProviderConfig.Kind.Anthropic, ProviderConfig.Kind.Gemini)) {
-            assertNull(ReasoningOptions.of(direct.copy(kind = kind), null))
-            assertNull(ReasoningOptions.of(direct.copy(kind = kind), thinking))
-        }
-    }
-
-    // 预设里官方文档写明档位的兼容服务商(DeepSeek)按预设给;列表写明过的仍以列表为准,自定义地址照旧不猜
-    @Test fun presetLevelsFillInWhenTheListingDeclaresNone() {
+    @Test fun customThinkingMetadataSurvivesReloadAndLegacyListsHaveNoOptions() {
         val s = store()
-        val p = s.connect("DeepSeek", ProviderConfig.Kind.OpenAiCompat, "https://api.deepseek.com", "k", listOf(ListedModel("deepseek-flash")))
-        s.use(ModelRole.Main, p.id, "deepseek-flash", caps)
-        val options = ReasoningOptions.of(s.configFor(ModelRole.Main)!!, p.models!!.first())!!
-        assertEquals(listOf("none", "low", "high", "max"), options.levels)
-        assertFalse(options.fromProvider)
-        // 档位进得了 setReasoningEffort 的校验,也到得了请求
-        assertTrue(s.setReasoningEffort(ModelRole.Main, "none"))
-        s.modelFor(ModelRole.Main)
-        assertEquals("none", setups.last().reasoningEffort)
-        // 列表写明档位的以列表为准
-        val declared = ProviderConfig("c2", ProviderConfig.Kind.OpenAiCompat, "https://agg.example/v1", "m2", caps)
-        val listed = ReasoningOptions.of(declared, ListedModel("m2", reasoningEfforts = listOf("low")))!!
-        assertEquals(listOf("low"), listed.levels)
-        assertTrue(listed.fromProvider)
-        // 对不上预设的地址(自定义)没有档位
-        val custom = ProviderConfig("c3", ProviderConfig.Kind.OpenAiCompat, "https://custom.example/v1", "m3", caps)
-        assertNull(ReasoningOptions.of(custom, ListedModel("m3")))
-    }
-
-    // Anthropic 列表写明的档位照给;只接受按预算思考的模型能思考但没有可选档位,也不接受档位
-    @Test fun anthropicOffersExactlyTheCatalogLevels() {
-        val cfg = ProviderConfig("c", ProviderConfig.Kind.Anthropic, "https://api.anthropic.example", "m", caps)
-        val adaptive = ListedModel("m", reasoning = true, reasoningEfforts = listOf("low", "medium", "high"),
-            thinkingTypes = listOf("adaptive", "enabled"))
-        assertEquals(listOf("low", "medium", "high"), ReasoningOptions.of(cfg, adaptive)!!.levels)
-        // 不接受 disabled 的,列表就没有 none
-        assertFalse("none" in ReasoningOptions.of(cfg, adaptive)!!.levels)
-        val budgetOnly = ListedModel("m", reasoning = true, reasoningEfforts = emptyList(), thinkingTypes = listOf("enabled", "disabled"))
-        assertEquals(emptyList<String>(), ReasoningOptions.of(cfg, budgetOnly)!!.levels)
-
-        val s = store()
-        val p = s.connect("A", ProviderConfig.Kind.Anthropic, "https://api.anthropic.example", "k", listOf(budgetOnly))
-        s.use(ModelRole.Main, p.id, "m", caps)
-        assertFalse(s.setReasoningEffort(ModelRole.Main, "high"))
-        assertFalse(s.setReasoningEffort(ModelRole.Main, "none"))
-    }
-
-    // 列表写明的思考方式随列表存下,建模型时交给适配器;旧版本存的列表没有这一项,不给档位、不出错
-    @Test fun thinkingTypesSurviveReloadAndOldListsGetNoOptions() {
-        val s = store()
-        val listed = ListedModel("m", reasoning = true, reasoningEfforts = listOf("none", "high"), thinkingTypes = listOf("adaptive", "disabled"))
-        val p = s.connect("A", ProviderConfig.Kind.Anthropic, "https://api.anthropic.example", "k", listOf(listed))
+        val listed = ListedModel("m", reasoning = true, reasoningEfforts = listOf("none", "high"),
+            thinkingTypes = listOf("adaptive", "disabled"))
+        val p = s.connect("Custom", ProviderConfig.Kind.OpenAiCompat, "https://custom.example/v1", "k", listOf(listed))
         s.use(ModelRole.Main, p.id, "m", caps)
         assertTrue(s.setReasoningEffort(ModelRole.Main, "high"))
         val reloaded = store()
@@ -165,8 +110,6 @@ class ReasoningSettingsTest {
         reloaded.modelFor(ModelRole.Main)
         assertEquals(listOf("adaptive", "disabled"), setups.last().thinkingTypes)
         assertEquals("high", setups.last().reasoningEffort)
-
-        // 去掉新字段,模拟旧版本存下的列表
         val file = tmp.root.resolve("providers.json")
         file.writeText(file.readText().replace(Regex(""","reasoningEfforts":\[[^]]*]"""), "")
             .replace(Regex(""","thinkingTypes":\[[^]]*]"""), ""))
@@ -177,14 +120,15 @@ class ReasoningSettingsTest {
         assertNull(ReasoningOptions.of(old.configFor(ModelRole.Main)!!, oldListed))
     }
 
-    @Test fun metadataRefreshDropsAnUnavailableChoiceAndUsesServerDefault() {
+    @Test fun metadataRefreshDropsUnavailableEffortWithoutChangingTheMainModel() {
         val s = store()
         val p = connected(s)
         s.use(ModelRole.Main, p.id, "m", caps)
-        s.setReasoningEffort(ModelRole.Main, "high")
-        s.connect("Responses", ProviderConfig.Kind.OpenAiResponses, "https://example.test/v1", "k",
+        assertTrue(s.setReasoningEffort(ModelRole.Main, "high"))
+        s.connect("Custom", ProviderConfig.Kind.OpenAiCompat, "https://example.test/v1", "k",
             listOf(ListedModel("m", reasoning = false)))
         val reloaded = store()
+        assertEquals("m", reloaded.configFor(ModelRole.Main)?.model)
         assertNull(reloaded.roles.value.reasoningEffort(ModelRole.Main))
         assertFalse(reloaded.setReasoningEffort(ModelRole.Main, "high"))
         assertTrue(reloaded.setReasoningEffort(ModelRole.Main, null))
@@ -192,16 +136,11 @@ class ReasoningSettingsTest {
         assertNull(setups.last().reasoningEffort)
     }
 
-    @Test fun chatGptCatalogCannotIntroduceUltraAndAnOldUltraChoiceFallsBackToDefault() {
+    @Test fun unsupportedSavedEffortCannotBeReplayedAfterReload() {
         val s = store()
-        val p = s.connect("ChatGPT", ProviderConfig.Kind.ChatGpt, "https://example.test/v1", "k",
-            listOf(ListedModel("m", reasoningEfforts = listOf("low", "ultra", "max"))))
+        val p = connected(s)
         s.use(ModelRole.Main, p.id, "m", caps)
-        val listed = s.provider(p.id)!!.models!!.single()
-        assertEquals(listOf("low", "max"), ReasoningOptions.of(s.configFor(ModelRole.Main)!!, listed)!!.levels)
-        assertFalse(s.setReasoningEffort(ModelRole.Main, "ultra"))
         assertTrue(s.setReasoningEffort(ModelRole.Main, "low"))
-        // 模拟旧版本已经落盘的 ultra:读入时清掉,不能继续发出去让每次调用都 HTTP 400。
         val file = tmp.root.resolve("providers.json")
         file.writeText(file.readText().replace("\"reasoningEffort\":\"low\"", "\"reasoningEffort\":\"ultra\""))
         val reloaded = store()
@@ -210,47 +149,23 @@ class ReasoningSettingsTest {
         assertNull(setups.last().reasoningEffort)
     }
 
-    @Test fun savedRoleEffortReachesRealResponsesAdapter() = runTest {
+    @Test fun savedRoleEffortReachesRealCustomChatCompletionsAdapter() = runTest {
         MockWebServer().use { server ->
             server.start()
             val s = ProviderStore(tmp.root, AesGcmKeyCipher { key })
-            val p = s.connect("Responses", ProviderConfig.Kind.OpenAiResponses, server.url("/v1").toString(), "k",
+            val p = s.connect("Custom", ProviderConfig.Kind.OpenAiCompat, server.url("/v1").toString(), "k",
                 listOf(ListedModel("m", reasoningEfforts = listOf("high"))))
             s.use(ModelRole.Main, p.id, "m", caps)
-            s.setReasoningEffort(ModelRole.Main, "high")
-            server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream")
-                .setBody("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n"))
+            assertTrue(s.setReasoningEffort(ModelRole.Main, "high"))
+            server.enqueue(MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("""{"choices":[{"finish_reason":"stop","message":{"content":"ok"}}]}"""))
             s.modelFor(ModelRole.Main)!!.complete("", emptyList(), emptyList())
-            val body = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
-            assertEquals("high", body["reasoning"]!!.jsonObject["effort"]!!.jsonPrimitive.content)
-        }
-    }
-
-    @Test fun savedRoleEffortReachesEveryAdapter() = runTest {
-        MockWebServer().use { server ->
-            server.start()
-            val base = server.url("/").toString().trimEnd('/')
-            for (protocol in listOf(ModelProtocol.ChatCompletions, ModelProtocol.Messages, ModelProtocol.GenerateContent)) {
-                val s = ProviderStore(tmp.newFolder("p-${protocol.wire}"), AesGcmKeyCipher { key })
-                val p = s.connect("P", ProviderConfig.Kind.of(protocol), base, "k",
-                    listOf(ListedModel("m", endpoint = ModelEndpoint(protocol, base), reasoningEfforts = listOf("high"))))
-                s.use(ModelRole.Main, p.id, "m", caps)
-                assertTrue(s.setReasoningEffort(ModelRole.Main, "high"))
-                val reply = when (protocol) {
-                    ModelProtocol.ChatCompletions -> """{"choices":[{"finish_reason":"stop","message":{"content":"ok"}}]}"""
-                    ModelProtocol.Messages -> """{"content":[],"stop_reason":"end_turn"}"""
-                    else -> """{"candidates":[{"content":{"parts":[]},"finishReason":"STOP"}]}"""
-                }
-                server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(reply))
-                s.modelFor(ModelRole.Main)!!.complete("", emptyList(), emptyList())
-                val body = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
-                val sent = when (protocol) {
-                    ModelProtocol.ChatCompletions -> body["reasoning_effort"]
-                    ModelProtocol.Messages -> body["output_config"]!!.jsonObject["effort"]
-                    else -> body["generationConfig"]!!.jsonObject["thinkingConfig"]!!.jsonObject["thinkingLevel"]
-                }
-                assertEquals("high", sent!!.jsonPrimitive.content.lowercase())
-            }
+            val request = server.takeRequest()
+            assertEquals("/v1/chat/completions", request.path)
+            val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
+            assertEquals("high", body["reasoning_effort"]!!.jsonPrimitive.content)
+            assertFalse(body.containsKey("output_config"))
+            assertFalse(body.containsKey("generationConfig"))
         }
     }
 }
