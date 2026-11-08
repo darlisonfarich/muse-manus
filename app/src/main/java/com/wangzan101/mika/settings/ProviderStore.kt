@@ -67,38 +67,20 @@ data class ProviderConfig(
     /** 所属 [Provider] 的 id;为空时由 [ProviderStore.save] 按接口类型、地址和名字归到对应服务商。 */
     val providerId: String = "",
 ) {
-    /**
-     * 接口类型。[OpenAiResponses] 用在模型列表给某个模型写明 Responses 协议时、预设「OpenAI」,以及添加自定义服务商时选了它;
-     * [ChatGpt] 是用 ChatGPT 账号登录、用套餐额度调用的那一家:凭据是登录(见 [ChatGptSession]),不是 API Key。
-     * [Xai] 同样是账号登录(设备码),凭据是登录不是 API Key,调用 xAI 自己的 Responses 接口。
-     */
+    /** Only the user-configured OpenAI-compatible connection remains; old kinds are parsed as strings and rejected. */
     enum class Kind {
-        OpenAiCompat, Anthropic, Gemini, OpenAiResponses, ChatGpt, Xai;
+        OpenAiCompat;
 
-        /**
-         * 这个接口类型发请求走哪种协议。用它筛掉接口写明了不支持的模型,见 [com.wangzan101.mika.ui.ModelSetupViewModel]
-         * 的试调用。账号登录的两家(ChatGpt、Xai)都走 Responses;这两家不走那张表单的试调用(登录时已经核对过),
-         * 所以这里只求写对,不影响筛谁。
-         */
-        val protocol: ModelProtocol
-            get() = when (this) {
-                OpenAiCompat -> ModelProtocol.ChatCompletions
-                Anthropic -> ModelProtocol.Messages
-                Gemini -> ModelProtocol.GenerateContent
-                OpenAiResponses, ChatGpt, Xai -> ModelProtocol.Responses
-            }
+        val protocol: ModelProtocol get() = ModelProtocol.ChatCompletions
 
         companion object {
-            /** 模型单独指定的协议用哪种接口类型的适配器。 */
-            fun of(protocol: ModelProtocol): Kind = when (protocol) {
-                ModelProtocol.ChatCompletions -> OpenAiCompat
-                ModelProtocol.Messages -> Anthropic
-                ModelProtocol.GenerateContent -> Gemini
-                ModelProtocol.Responses -> OpenAiResponses
+            /** Never reinterpret an external protocol as a Custom Chat Completions endpoint. */
+            fun of(protocol: ModelProtocol): Kind {
+                require(protocol == ModelProtocol.ChatCompletions) { "unsupported_model_protocol" }
+                return OpenAiCompat
             }
 
-            /** 添加自定义服务商时可选的接口类型(填地址和 API Key 的)。Responses 排最后,和 README 里的次序一致。 */
-            val withApiKey: List<Kind> = listOf(OpenAiCompat, Anthropic, Gemini, OpenAiResponses)
+            val withApiKey: List<Kind> = listOf(OpenAiCompat)
         }
     }
 }
@@ -658,7 +640,6 @@ class ProviderStore(
             keys = json.parseToJsonElement(keyFile.readText()).jsonObject.mapValues { it.value.jsonPrimitive.content }
         }
         migrate()
-        repairStaleContextDefaults()
         // 指向不存在的配置的选择退回默认,没人用的配置删掉;和文件里的不一样(含刚迁移的用途)才写回
         _roles.value = _roles.value.keepOnly(_configs.value.map { it.id }.toSet())
         repairUnavailableReasoningEfforts()
@@ -728,24 +709,6 @@ class ProviderStore(
         _roles.value = _roles.value.copy(reasoningEfforts = repaired)
     }
 
-    /**
-     * 预设的默认上下文更新后,把当年按旧默认存下的配置跟上去:仅当存着的正是旧默认、这家预设现在的默认已经不同、
-     * 用户没给这个模型单独写过窗口时才改;用户改过的任何值一律不动。只在 [load] 读入后跑一次,
-     * 改动随读入后的统一写回落盘。窗口按旧值 64k 时,压缩会频繁改写请求前缀,服务商的前缀缓存整段失效(见 [ProviderPresets])。
-     */
-    private fun repairStaleContextDefaults() {
-        val fixed = _configs.value.mapNotNull { c ->
-            val now = ProviderPresets.forBaseUrl(c.baseUrl)?.capabilities?.contextTokens
-                ?.takeIf { it != LEGACY_DEFAULT_CONTEXT_TOKENS }
-            if (now != null && c.capabilities.contextTokens == LEGACY_DEFAULT_CONTEXT_TOKENS &&
-                provider(c.providerId)?.contextSettings?.get(c.model)?.windowTokens == null
-            ) c.id to now else null
-        }.toMap()
-        if (fixed.isEmpty()) return
-        _configs.value = _configs.value.map { c ->
-            fixed[c.id]?.let { window -> c.copy(capabilities = c.capabilities.copy(contextTokens = window)) } ?: c
-        }
-    }
 
     private fun providerOf(o: JsonObject): Provider? {
         if (o.str("kind") != "OpenAiCompat" || !o["signIn"]?.jsonPrimitive?.content.isNullOrBlank()) return null
@@ -938,9 +901,6 @@ class ProviderStore(
     companion object {
         private const val CONFIG_FILE = "providers.json"
         private const val KEY_FILE = "provider-keys.json"
-
-        /** 各家预设沿用的旧上下文默认值;预设改了默认后,存着这个值的配置由 [repairStaleContextDefaults] 跟上去。 */
-        private const val LEGACY_DEFAULT_CONTEXT_TOKENS = 64_000
 
         /** `uses` 里每个用途的 `use`:具体模型(另记 `config`)、用主模型、不用。旧版本的文件里只有 `roles`。 */
         private const val USE_MODEL = "model"

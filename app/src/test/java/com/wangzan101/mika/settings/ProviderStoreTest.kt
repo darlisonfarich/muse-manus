@@ -156,7 +156,7 @@ class ProviderStoreTest {
     }
 
     /** Custom-only has no external preset overrides: preserved defaults and user windows survive reload. */
-    @Test fun stalePresetWindowIsRepairedOnLoadButUserValuesAreNot() {
+    @Test fun customContextWindowStaysStableAcrossReloadWithoutExternalPresets() {
         val s = store()
         val deepseek = s.connect("DeepSeek", ProviderConfig.Kind.OpenAiCompat, "https://api.deepseek.com", "k", listOf(ListedModel("deepseek-flash")))
         val other = connected(s)
@@ -891,23 +891,36 @@ class ProviderStoreTest {
         }
     }
 
-    /** Removed adapters cannot be used even if old callers retain their enum values. */
+    /** An obsolete model protocol must never silently become Custom. */
     @Test
-    fun probeRejectsRemovedProviderKindsBeforeAnyNetworkRequest() = runTest {
-        val server = okhttp3.mockwebserver.MockWebServer().also { it.start() }
-        try {
-            val s = ProviderStore(tmp.root, AesGcmKeyCipher { key }, userAgent = "Mika/1.2.3")
+    fun onlyCustomKindExistsAndForeignProtocolsCannotBeMapped() {
+        assertEquals(listOf(ProviderConfig.Kind.OpenAiCompat), ProviderConfig.Kind.entries)
+        assertEquals(listOf(ProviderConfig.Kind.OpenAiCompat), ProviderConfig.Kind.withApiKey)
+        assertEquals(ProviderConfig.Kind.OpenAiCompat, ProviderConfig.Kind.of(ModelProtocol.ChatCompletions))
+        for (legacy in listOf(ModelProtocol.Messages, ModelProtocol.GenerateContent, ModelProtocol.Responses)) {
             var rejected = false
             try {
-                s.probe(ProviderConfig.Kind.Anthropic, server.url("/").toString(), "sk", null, "m", null, none)
+                ProviderConfig.Kind.of(legacy)
             } catch (e: IllegalArgumentException) {
-                rejected = e.message == "unsupported_model_kind"
+                rejected = e.message == "unsupported_model_protocol"
             }
-            assertTrue("non-Custom adapter must fail closed", rejected)
-            assertEquals("unsupported provider must never reach the network", 0, server.requestCount)
-        } finally {
-            server.shutdown()
+            assertTrue("foreign protocol must fail closed", rejected)
         }
+    }
+
+    @Test
+    fun oauthOriginCannotBeAttachedToACustomProvider() {
+        val s = store()
+        var rejected = false
+        try {
+            s.connect("Legacy", ProviderConfig.Kind.OpenAiCompat, "https://example.test/v1",
+                "secret", emptyList(), signIn = "chatgpt")
+        } catch (e: IllegalArgumentException) {
+            rejected = e.message == "Account OAuth providers have been removed"
+        }
+        assertTrue(rejected)
+        assertTrue(s.providers.value.isEmpty())
+        assertTrue(s.list().isEmpty())
     }
 
     // ---------- 用量 ----------
