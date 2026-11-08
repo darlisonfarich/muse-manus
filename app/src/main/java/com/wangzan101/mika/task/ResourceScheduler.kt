@@ -16,6 +16,16 @@ class ResourceScheduler(
 ) {
     /** App(包名,另一份用户的写成「包名@用户」)→ 占着它的任务。 */
     private val apps = HashMap<String, String>()
+    /** Active external/direct owners also participate in TaskCenter app arbitration. */
+    private val externalOwners = HashSet<String>()
+
+    @Synchronized fun registerExternalOwner(owner: String) {
+        require(owner.isNotBlank())
+        check(externalOwners.add(owner)) { "Owner is already registered" }
+    }
+
+    @Synchronized fun isExternalOwnerActive(owner: String): Boolean = owner in externalOwners
+
     /** 正在等别的任务放开 App 的任务 → 它等的那个 App。 */
     private val waiting = HashMap<String, String>()
     /** 有任务放开了它占着的 App 就加一:等着的任务据此马上再看一眼,不用等到下一次轮询。 */
@@ -37,6 +47,7 @@ class ResourceScheduler(
     }
 
     @Synchronized fun releaseOwner(owner: String) {
+        externalOwners.remove(owner)
         waiting.remove(owner)
         if (apps.values.removeAll { it == owner }) released.value++
     }
