@@ -14,7 +14,6 @@ import com.wangzan101.mika.shell.IMikaShell
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.io.ByteArrayOutputStream
 
 /**
  * Agent 专用的虚拟屏。画面输出到本进程的 ImageReader,截图不依赖无障碍截图接口。
@@ -115,16 +114,6 @@ class AgentDisplay(
             }
         } finally {
             image.close()
-        }
-    }
-
-    /** 最新一帧的整幅 PNG;还没收到画面时返回 null。 */
-    fun latestFramePng(): ByteArray? {
-        val crop = latestFrameBitmap() ?: return null
-        return try {
-            ByteArrayOutputStream().also { crop.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
-        } finally {
-            crop.recycle()
         }
     }
 
