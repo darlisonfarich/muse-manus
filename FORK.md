@@ -186,6 +186,18 @@ ponte do Muse e é independente da remoção OTLP.
 - Nenhuma alteração no `ChatModel.kt`, `OpenAiCompatModel`, gateway ou
   permissões de aprovação. Licença Apache-2.0 e créditos preservados.
 
+## Segurança — remover a API de PNG bruto do display
+
+- `AgentDisplay.latestFramePng()` foi removido, junto com o uso de
+  `ByteArrayOutputStream` que serializava o quadro completo sem aplicar a
+  máscara de regiões sensíveis.
+- `latestFrameBitmap()` permanece para o caminho interno de OCR/captura,
+  que faz validações e máscara em `AndroidScreen.screenshotPng()` antes de
+  qualquer codificação que possa ser exposta a ferramentas.
+- Teste `AgentDisplayApiSafetyTest` verifica a ausência do acesso PNG bruto e
+  a preservação do método interno de bitmap. Nenhuma alteração em
+  `ChatModel.kt` ou `OpenAiCompatModel.kt`.
+
 ## Remoção final — somente Custom OpenAI-compatible (PR de rascunho)
 
 - Removidos OAuth de modelos ChatGPT/xAI/OpenRouter, clientes de assinatura e
