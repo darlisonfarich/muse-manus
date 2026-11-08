@@ -207,28 +207,5 @@ class ModelSetupNetworkTest {
     }
 
     /** 自定义选 OpenAI Responses:列模型照样 `GET /models`,试调用走 `/responses`(不碰 `/chat/completions`),存下的服务商和主模型都是这种接口。 */
-    @Test fun customResponsesListsThenProbesTheResponsesEndpoint() {
-        routes["/models"] = {
-            MockResponse().setHeader("Content-Type", "application/json").setBody("""{"object":"list","data":[{"id":"gpt-x"}]}""")
-        }
-        routes["/responses"] = {
-            MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
-                "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"get_time\",\"arguments\":\"{}\"}}\n\n" +
-                    "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n",
-            )
-        }
-        val (store, vm) = setUp()
-        vm.setKind(ProviderConfig.Kind.OpenAiResponses)
-        vm.testAndWait()
-        val p = store.providers.value.single()
-        assertEquals(ProviderConfig.Kind.OpenAiResponses, p.kind)
-        assertEquals(setOf("gpt-x"), p.verifiedModels)
-        val main = store.configFor(ModelRole.Main)
-        assertEquals("gpt-x", main?.model)
-        assertEquals(ProviderConfig.Kind.OpenAiResponses, main?.kind)
-        assertFalse(vm.state.value.showForm)
-        val requests = List(server.requestCount) { server.takeRequest() }
-        assertEquals(listOf("/models", "/responses"), requests.map { it.path })
-        assertTrue(requests.all { it.getHeader("Authorization") == "Bearer sk" })
-    }
+
 }

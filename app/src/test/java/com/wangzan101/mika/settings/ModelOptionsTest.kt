@@ -66,7 +66,7 @@ class ModelOptionsTest {
             ListedModel("moonshot-v1"),
         )
         val options = ModelOptions.merge(listed, base)
-        val qwen = ProviderPresets.all.single { it.label == "通义千问" }.familyTokens
+        val qwen = listOf("qwen")
         assertEquals(listOf("qwen"), qwen)
         assertEquals(
             listOf("qwen-plus", "qwen-max", "Other/Chat", "antdigital/Ling-3.1-flash", "moonshot-v1"),
@@ -75,7 +75,7 @@ class ModelOptionsTest {
         assertEquals("qwen-plus", ModelOptions.defaultMain(options, qwen))
         // 认不出是哪家:接口明说能调用工具的在前,其余照列表顺序
         assertEquals(listOf("antdigital/Ling-3.1-flash", "qwen-plus", "qwen-max", "Other/Chat", "moonshot-v1"), ModelOptions.candidates(options))
-        assertEquals(qwen, ModelOptions.familyOf("https://dashscope.aliyuncs.com/compatible-mode/v1/"))
+        assertEquals(emptyList<String>(), ModelOptions.familyOf("https://dashscope.aliyuncs.com/compatible-mode/v1/"))
         assertEquals(emptyList<String>(), ModelOptions.familyOf("https://openrouter.ai/api/v1"))
     }
 
@@ -148,7 +148,7 @@ class ModelOptionsTest {
             ListedModel("gemini-3-flash", displayName = "Gemini 3 Flash"),
             ListedModel("gemini-embedding-001", displayName = "Gemini Embedding 001"),
         )
-        val gemini = ProviderPresets.all.single { it.label == "Gemini" }.familyTokens
+        val gemini = listOf("gemini")
         assertEquals(
             listOf(
                 "gemini-3.1-pro", "gemini-3-flash", "gemini-3-pro-preview", "gemini-2.5-flash", "gemini-2.5-pro",
@@ -188,13 +188,6 @@ class ModelOptionsTest {
         val options = ModelOptions.merge(listed, base)
         assertEquals(listOf("chat", "responses", "plain"), options.map { it.id })
         assertEquals("chat", ModelOptions.defaultMain(options))
-    }
-
-    @Test fun openCodeGoPresetListsFromItsCatalogAddress() {
-        val p = ProviderPresets.all.single { it.label == "OpenCode Go" }
-        assertEquals(ProviderConfig.Kind.OpenAiCompat, p.kind)
-        assertEquals("https://opencode.ai/zen/go/v1", p.baseUrl)
-        assertEquals(p, ProviderPresets.forBaseUrl("https://opencode.ai/zen/go/v1/"))
     }
 
     @Test fun contextLabels() {

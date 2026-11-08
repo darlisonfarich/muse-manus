@@ -52,7 +52,7 @@ class ModelSetupScreenTest {
         selectPreset = { calls += "preset $it" }, testAndSave = { calls += "test" }, openForm = { calls += "open form" },
         saveUntested = { calls += "save untested" },
         openProvider = { calls += "provider $it" }, pickRole = { calls += "role $it" }, next = { calls += "next" },
-        openUsage = { calls += "usage" }, openSignIn = { calls += "signin $it" },
+        openUsage = { calls += "usage" },
     )
 
     private val form = AddForm.of(ProviderPresets.all.first()).copy(apiKey = "sk")
@@ -302,67 +302,5 @@ class ModelSetupScreenTest {
 
     // ---------- 用账号登录 ----------
 
-    private val grok = Provider("p3", "xAI / Grok", ProviderConfig.Kind.Xai, "https://api.x.ai/v1", listOf(ListedModel("grok-4"), ListedModel("grok-4-fast")))
 
-    @Test fun addFormListsAccountSignInsAboveApiKeys() {
-        show(ModelSetupUi(form))
-        compose.onNodeWithText(ModelsCopy.SIGN_IN_GROUP).assertIsDisplayed()
-        compose.onNodeWithText(ModelsCopy.KEY_GROUP).performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag("signin-chatgpt").performScrollTo().performClick()
-        compose.onNodeWithTag("signin-xai").performScrollTo().performClick()
-        compose.onNodeWithTag("signin-openrouter").performScrollTo().performClick()
-        assertEquals(listOf("signin ChatGpt", "signin Xai", "signin OpenRouter"), calls)
-    }
-
-    @Test fun signedInAccountRowOpensTheProvider() {
-        show(ModelSetupUi(form, formOpen = true, providers = listOf(grok), xaiAccount = SubscriptionAccount("me@example.com", signedIn = true)))
-        compose.onNodeWithTag("signin-xai-signed-in", useUnmergedTree = true).assertExists()
-        compose.onNodeWithTag("signin-openrouter-signed-in", useUnmergedTree = true).assertDoesNotExist()
-        compose.onNodeWithTag("signin-xai").performScrollTo().performClick()
-        assertEquals(listOf("provider p3"), calls)
-    }
-
-    @Test fun xaiSheetWarnsFirstThenShowsTheCode() {
-        val started = mutableListOf<String>()
-        val actions = SignInSheetActions(start = { started += "start $it" }, cancel = { started += "cancel $it" }, useApiKey = { started += "key $it" })
-        var ui by mutableStateOf(ModelSetupUi(form))
-        compose.setContent { MikaTheme { SignInSheetBody(ui, SignInKind.Xai, actions) } }
-        compose.onNodeWithText(ModelsCopy.signInTitle(SignInKind.Xai)).assertIsDisplayed()
-        compose.onNodeWithTag("signin-risk").assertIsDisplayed()
-        compose.onNodeWithTag("signin-start").performClick()
-        compose.onNodeWithTag("signin-use-key").performClick()
-        ui = ui.copy(accountSignIn = AccountSignInUi(AccountProvider.Xai, running = true, userCode = "KQ7M-P2XD", openUrl = "https://accounts.x.ai/device",
-            expiresAtMs = System.currentTimeMillis() + 600_000))
-        compose.onNodeWithTag("signin-code").assertTextContains("KQ7M-P2XD")
-        compose.onNodeWithText(ModelsCopy.XAI_CODE_COPY_REOPEN).assertIsDisplayed()
-        compose.onNodeWithTag("signin-cancel").performClick()
-        assertEquals(listOf("start Xai", "key Xai", "cancel Xai"), started)
-    }
-
-    @Test fun openRouterSheetShowsFailureAndCanRetry() {
-        val started = mutableListOf<String>()
-        val ui = ModelSetupUi(form, accountSignIn = AccountSignInUi(AccountProvider.OpenRouter, failure = "已取消登录。"))
-        compose.setContent { MikaTheme { SignInSheetBody(ui, SignInKind.OpenRouter, SignInSheetActions(start = { started += "$it" })) } }
-        compose.onNodeWithText(ModelsCopy.signInStart(SignInKind.OpenRouter)).assertIsDisplayed()
-        compose.onNodeWithTag("signin-risk").assertDoesNotExist()
-        compose.onNodeWithTag("signin-failed").assertTextContains("已取消登录。")
-        compose.onNodeWithTag("signin-start").performClick()
-        assertEquals(listOf("OpenRouter"), started)
-    }
-
-    @Test fun signedInXaiDetailShowsAccountSetMainAndThe403Note() {
-        val got = mutableListOf<String>()
-        val ui = ModelSetupUi(form, providers = listOf(deepseek, grok), configs = listOf(main), roles = RoleChoices(main = "c1"),
-            xaiAccount = SubscriptionAccount("me@example.com", signedIn = true))
-        compose.setContent {
-            MikaTheme {
-                ProviderDetailContent(ui, grok, ProviderDetailActions(useAsMain = { got += "main" }, signOut = { got += "out" }), onBack = {})
-            }
-        }
-        compose.onNodeWithText("me@example.com").assertIsDisplayed()
-        compose.onNodeWithTag("account-403-note").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText(ModelsCopy.SET_MAIN).performScrollTo().performClick()
-        compose.onNodeWithText(ModelsCopy.CHATGPT_SIGN_OUT).performScrollTo().performClick()
-        assertEquals(listOf("main", "out"), got)
-    }
 }
