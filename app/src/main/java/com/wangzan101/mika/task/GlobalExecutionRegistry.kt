@@ -40,7 +40,8 @@ class GlobalExecutionRegistry {
     @Synchronized fun claimDirect(owner: String): Boolean {
         require(owner.isNotBlank())
         if (taskOwners.isNotEmpty()) return false
-        if (directOwner != null && directOwner != owner) return false
+        if (directOwner == owner) return true // No change; do not wake a blocked queue head in a tight loop.
+        if (directOwner != null) return false
         directOwner = owner
         intentions.notifyChanged()
         return true
