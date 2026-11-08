@@ -141,6 +141,29 @@ class GerIntentQueueTest {
         assertFalse(log.contains("three"))
     }
 
+    @Test fun aLongAttemptDoesNotConsumeTheWaitingTimeout() = runTest {
+        val queue = GerIntentQueue(nowMs = { testScheduler.currentTime }, pollMs = 10L)
+        var calls = 0
+        val answer = async {
+            queue.dispatch("mcp:a", "slow-batch", 1_000L) {
+                calls++
+                if (calls == 1) {
+                    // Simulates a lengthy completed command followed by an
+                    // unexecuted next command waiting for a resource.
+                    kotlinx.coroutines.delay(5_000L)
+                    GerIntentAttempt.Blocked("app_busy")
+                } else {
+                    GerIntentAttempt.Done("finished")
+                }
+            }
+        }
+        runCurrent()
+        advanceTimeBy(5_200L)
+        runCurrent()
+        assertEquals(GerIntentOutcome.Completed("finished"), answer.await())
+        assertEquals(2, calls)
+    }
+
     @Test fun parkedSessionAndPendingCallAreDifferentStates() = runTest {
         val ger = GlobalExecutionRegistry()
         val queue = ger.intentions
