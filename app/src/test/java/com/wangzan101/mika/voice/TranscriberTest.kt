@@ -51,14 +51,15 @@ class TranscriberTest {
     }
 
     @Test
-    fun geminiInlineParses() = runBlocking {
-        server.enqueue(MockResponse().setBody("""{"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}"""))
-        val out = t.transcribe(provider(ProviderConfig.Kind.Gemini, ""), "k", "gemini-x", TranscribeMethod.GeminiInline, wav, null)
-        val r = server.takeRequest()
-        assertEquals("/v1beta/models/gemini-x:generateContent", r.path)
-        assertEquals("k", r.getHeader("x-goog-api-key"))
-        assertTrue(r.body.readUtf8().contains("inline_data"))
-        assertEquals("hello", out)
+    fun obsoleteGeminiInlineIsRejectedWithoutNetworkTraffic() = runBlocking {
+        try {
+            t.transcribe(provider(ProviderConfig.Kind.OpenAiCompat, "/v1"), "k", "legacy",
+                TranscribeMethod.GeminiInline, wav, null)
+            fail("removed protocol must not be called")
+        } catch (e: ModelError.BadResponse) {
+            assertTrue(e.message.orEmpty().contains("unsupported_transcribe_method"))
+        }
+        assertEquals(0, server.requestCount)
     }
 
     @Test

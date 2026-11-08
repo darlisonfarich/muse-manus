@@ -37,7 +37,7 @@ class Transcriber(
         p: Provider, key: String?, model: String, method: TranscribeMethod, wav: ByteArray, language: String?,
     ): String {
         val base = p.baseUrl.trim().trimEnd('/')
-        val gemini = p.kind == ProviderConfig.Kind.Gemini
+        if (!supports(p)) throw ModelError.BadResponse("unsupported_transcription_provider")
         val request = when (method) {
             TranscribeMethod.AudioTranscriptions -> {
                 val body = MultipartBody.Builder().setType(MultipartBody.FORM)
@@ -45,7 +45,7 @@ class Transcriber(
                     .addFormDataPart("model", model)
                     .apply { if (!language.isNullOrBlank()) addFormDataPart("language", language) }
                     .build()
-                builder("$base/audio/transcriptions", key, gemini).post(body).build()
+                builder("$base/audio/transcriptions", key).post(body).build()
             }
             TranscribeMethod.ChatInputAudio, TranscribeMethod.ChatInputAudioUri, TranscribeMethod.ChatInputAudioOnly -> {
                 val data = if (method == TranscribeMethod.ChatInputAudio) base64(wav) else "data:audio/wav;base64,${base64(wav)}"
@@ -68,29 +68,14 @@ class Transcriber(
                         })
                     })
                 }
-                builder("$base/chat/completions", key, gemini).post(payload.toString().toRequestBody(JSON)).build()
+                builder("$base/chat/completions", key).post(payload.toString().toRequestBody(JSON)).build()
             }
-            TranscribeMethod.GeminiInline -> {
-                val payload = buildJsonObject {
-                    put("contents", buildJsonArray {
-                        add(buildJsonObject {
-                            put("parts", buildJsonArray {
-                                add(buildJsonObject {
-                                    putJsonObject("inline_data") { put("mime_type", "audio/wav"); put("data", base64(wav)) }
-                                })
-                                add(buildJsonObject { put("text", INSTRUCTION) })
-                            })
-                        })
-                    })
-                }
-                // 和对话适配器一样:库存的地址不带 /v1beta,这里补上
-                builder("$base/v1beta/models/$model:generateContent", key, gemini).post(payload.toString().toRequestBody(JSON)).build()
-            }
+            // Keep the enum value for legacy preference migration, never call the deleted Gemini endpoint.
+            TranscribeMethod.GeminiInline -> throw ModelError.BadResponse("unsupported_transcribe_method")
         }
         val reply = ModelHttp.send(http, request)
         if (!reply.ok) {
-            throw if (gemini) ModelHttp.geminiError(reply.status, reply.retryAfter, reply.body, model)
-            else ModelHttp.openAiError(reply.status, reply.retryAfter, reply.body, model)
+            throw ModelHttp.openAiError(reply.status, reply.retryAfter, reply.body, model)
         }
         return parse(method, reply.body)
     }
@@ -100,9 +85,8 @@ class Transcriber(
      * 通过 = 回 2xx 且解析得出文字字段(空串也算)。Key 的问题(401/403/额度)再试别的方法也没用,直接抛。
      */
     suspend fun detect(p: Provider, key: String?, model: String): TranscribeMethod {
-        val order = if (p.kind == ProviderConfig.Kind.Gemini) listOf(TranscribeMethod.GeminiInline)
-        // 只发音频不带指令的放最后:通用模型也会回 2xx(把录音当聊天回一段话),排在前面会被误选
-        else listOf(
+        // Never probe removed external protocols. The audio-only variant remains last.
+        val order = listOf(
             TranscribeMethod.AudioTranscriptions, TranscribeMethod.ChatInputAudio,
             TranscribeMethod.ChatInputAudioUri, TranscribeMethod.ChatInputAudioOnly,
         )
@@ -123,9 +107,9 @@ class Transcriber(
     /** 只有「这个接口不是这么用的」(找不到路径、方法不对、请求不合、回的不是这个格式)才换下一种。 */
     private fun triesNext(e: ModelError): Boolean = e is ModelError.ModelNotFound || e is ModelError.BadResponse
 
-    private fun builder(url: String, key: String?, gemini: Boolean): Request.Builder = Request.Builder().url(url).apply {
+    private fun builder(url: String, key: String?): Request.Builder = Request.Builder().url(url).apply {
         headers.forEach { (k, v) -> header(k, v) }
-        if (!key.isNullOrEmpty()) { if (gemini) header("x-goog-api-key", key) else header("Authorization", "Bearer $key") }
+        if (!key.isNullOrEmpty()) header("Authorization", "Bearer $key")
     }
 
     private fun parse(method: TranscribeMethod, body: String): String {
@@ -142,12 +126,7 @@ class Transcriber(
                     else -> null
                 }
             }
-            TranscribeMethod.GeminiInline -> {
-                val cand = (root["candidates"] as? JsonArray)?.firstOrNull() as? JsonObject
-                val parts = (cand?.get("content") as? JsonObject)?.get("parts") as? JsonArray
-                // 没有任何文字块(比如静音时只回结束原因)按空串;连候选都没有才算格式不对
-                if (cand == null) null else parts.orEmpty().mapNotNull { (it as? JsonObject)?.str("text") }.joinToString("")
-            }
+            TranscribeMethod.GeminiInline -> throw ModelError.BadResponse("unsupported_transcribe_method")
         }
         return (text ?: throw ModelError.BadResponse("no text field: ${body.take(120)}")).trim()
     }
@@ -164,11 +143,8 @@ class Transcriber(
 
         private val SPEECH_TOKENS = listOf("asr", "transcribe", "whisper", "paraformer", "sensevoice", "stt", "speech")
 
-        /** 这家能不能做语音转文字:有 Key 的 OpenAI 兼容、Responses、Gemini 可以;Anthropic 和账号登录的不行。 */
-        fun supports(p: Provider): Boolean = when (p.kind) {
-            ProviderConfig.Kind.OpenAiCompat, ProviderConfig.Kind.OpenAiResponses, ProviderConfig.Kind.Gemini -> p.signIn == null
-            else -> false
-        }
+        /** Only a manually configured Custom provider may perform remote transcription. */
+        fun supports(p: Provider): Boolean = p.kind == ProviderConfig.Kind.OpenAiCompat && p.signIn == null
 
         /**
          * 列表里像语音模型的:名字按非字母数字切成段,有一段以 asr、transcribe、whisper 等开头。

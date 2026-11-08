@@ -12,8 +12,10 @@ data class ReasoningOptions(val levels: List<String>, val fromProvider: Boolean)
     companion object {
         fun of(config: ProviderConfig, listed: ListedModel?): ReasoningOptions? {
             if (config.kind != ProviderConfig.Kind.OpenAiCompat) return null
-            if (listed?.endpoint != null && listed.endpoint.protocol != ModelProtocol.ChatCompletions) return null
-            if (listed?.protocols != null && ModelProtocol.ChatCompletions !in listed.protocols) return null
+            val endpoint = listed?.endpoint
+            if (endpoint != null && endpoint.protocol != ModelProtocol.ChatCompletions) return null
+            val protocols = listed?.protocols
+            if (protocols != null && ModelProtocol.ChatCompletions !in protocols) return null
             listed?.reasoningEfforts?.let { return ReasoningOptions(it, fromProvider = true) }
             if (listed?.reasoning == false) return ReasoningOptions(emptyList(), fromProvider = true)
             return null

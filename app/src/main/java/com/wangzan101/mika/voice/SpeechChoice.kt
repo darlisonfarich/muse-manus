@@ -174,12 +174,15 @@ class SpeechSettings(private val prefs: SharedPreferences, private val cipher: K
     val systemSilent: StateFlow<Boolean> = _systemSilent.asStateFlow()
 
     fun set(choice: SpeechChoice) {
+        // A previously persisted Gemini-only transcription method must never make another network request.
+        val selected = if (choice is SpeechChoice.Provider && choice.method == TranscribeMethod.GeminiInline)
+            SpeechChoice.Auto else choice
         // 这两种都会去用手机自带识别:用户主动选了,就再给它机会
-        val retry = choice == SpeechChoice.System || choice == SpeechChoice.Auto
-        val edit = prefs.edit().putString(KEY, encode(choice).toString())
+        val retry = selected == SpeechChoice.System || selected == SpeechChoice.Auto
+        val edit = prefs.edit().putString(KEY, encode(selected).toString())
         if (retry) edit.remove(SILENT).remove(STRIKES)
         edit.apply()
-        _choice.value = choice
+        _choice.value = selected
         if (retry) _systemSilent.value = false
     }
 
@@ -265,6 +268,7 @@ class SpeechSettings(private val prefs: SharedPreferences, private val cipher: K
             val id = obj["providerId"]?.jsonPrimitive?.contentOrNull
             val model = obj["model"]?.jsonPrimitive?.contentOrNull
             val method = TranscribeMethod.entries.firstOrNull { it.name == obj["method"]?.jsonPrimitive?.contentOrNull }
+                ?.takeUnless { it == TranscribeMethod.GeminiInline }
             if (id == null || model == null || method == null) null else SpeechChoice.Provider(id, model, method)
         }
         else -> null
