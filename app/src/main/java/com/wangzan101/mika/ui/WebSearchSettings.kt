@@ -1,9 +1,6 @@
 package com.wangzan101.mika.ui
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -12,7 +9,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -20,10 +16,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.wangzan101.mika.R
 import com.wangzan101.mika.core.search.WebSearchProvider
@@ -33,78 +27,30 @@ import com.wangzan101.mika.settings.WebSearchEntry
 import com.wangzan101.mika.ui.components.GroupLabel
 import com.wangzan101.mika.ui.components.MikaDialog
 import com.wangzan101.mika.ui.components.MikaSwitch
-import com.wangzan101.mika.ui.components.SelectChip
 import com.wangzan101.mika.ui.theme.MikaTheme
 import com.wangzan101.mika.ui.theme.MikaType
 
-/** 网页搜索设置里要的文字;不碰界面,单测直接测。 */
+/** Search providers have been reduced to an explicitly configured SearXNG instance. */
 internal object WebSearchCopy {
-    /** 服务商在界面上的名字:品牌名,不翻译。 */
-    fun name(p: WebSearchProvider): String = when (p) {
-        WebSearchProvider.You -> "You.com"
-        WebSearchProvider.Jina -> "Jina"
-        WebSearchProvider.Exa -> "Exa"
-        WebSearchProvider.SearXNG -> "SearXNG"
-    }
-
-    /** 选中这一家时,服务商下面那一行:它怎么用、要填什么。 */
-    fun note(p: WebSearchProvider): String = tr(
-        when (p) {
-            WebSearchProvider.You -> R.string.web_search_note_you
-            WebSearchProvider.Jina -> R.string.web_search_note_jina
-            WebSearchProvider.Exa -> R.string.web_search_note_exa
-            WebSearchProvider.SearXNG -> R.string.web_search_note_searxng
-        },
-    )
-
-    fun keyLabel(p: WebSearchProvider): String = tr(if (p.keyRequired) R.string.web_search_api_key_required else R.string.web_search_api_key)
-
-    /** 要填地址的只有 SearXNG:它的实例地址。 */
+    fun name(p: WebSearchProvider): String = "SearXNG"
+    fun note(p: WebSearchProvider): String = tr(R.string.web_search_note_searxng)
     fun endpointLabel(): String = tr(R.string.web_search_searxng_url)
-
     const val ENDPOINT_PLACEHOLDER = "https://searx.example.org"
-
-    fun problem(p: WebSearchProvider, why: WebSearchProvider.Problem): String = when (why) {
-        WebSearchProvider.Problem.Endpoint -> tr(R.string.web_search_invalid_endpoint)
-        WebSearchProvider.Problem.Key -> tr(R.string.web_search_missing_key, name(p))
-    }
-
-    /** 有密钥框的那几家去哪里拿密钥(官方的密钥页);You.com 不填也能用,填了额度更高。 */
-    fun keyPage(p: WebSearchProvider): String? = when (p) {
-        WebSearchProvider.You -> "https://you.com/platform/api-keys"
-        WebSearchProvider.Jina -> "https://jina.ai/?sui=apikey"
-        WebSearchProvider.Exa -> "https://dashboard.exa.ai/api-keys"
-        else -> null
-    }
-
-    /** 高级与其他那一行右边:开着时写用的哪一家,关着写「关闭」。 */
+    fun problem(p: WebSearchProvider, why: WebSearchProvider.Problem): String =
+        tr(R.string.web_search_invalid_endpoint)
     fun value(config: WebSearchConfig): String = if (config.enabled) name(config.provider) else tr(R.string.state_off)
 }
 
-/**
- * 高级与其他里的网页搜索设置;仍是原有设置层级中的一个对话框,不增加新页面。
- * 上面一排服务商(和识别语言一样的胶囊),下面只放选中那一家要填的:托管的几家只有密钥(Jina、Exa 必填),
- * SearXNG 只有实例地址。
- * 各家填的东西分开记着,来回切换不会丢、也不会串到别家。
- * 没填好时「保存」照样能点:点了不保存,把要填的那一栏标红、写明缺什么并把光标放过去;
- * 一打开不标红,只有点过保存、或那一栏填过又清空时才标。必须有密钥的那几家标着「必填」;有密钥框的都给出拿密钥的链接。
- */
-@OptIn(ExperimentalLayoutApi::class)
+/** No You/Exa/Jina API keys or provider choices are offered here. */
 @Composable
 fun WebSearchDialog(initial: WebSearchConfig, onDismiss: () -> Unit, onSave: (WebSearchConfig) -> Unit) {
     var enabled by remember { mutableStateOf(initial.enabled) }
-    var provider by remember { mutableStateOf(initial.provider) }
-    val entries = remember { mutableStateMapOf<WebSearchProvider, WebSearchEntry>().apply { putAll(initial.entries) } }
-    val entry = entries[provider] ?: WebSearchEntry()
-    val config = WebSearchConfig(enabled, provider, entries.toMap())
-    val problem = config.problem
-    // 点过保存(换一家就重新算)、填过的那几栏:只有这时才把缺的标红
+    var endpoint by remember { mutableStateOf(initial.current.endpoint) }
     var tried by remember { mutableStateOf(false) }
-    val touched = remember { mutableStateMapOf<Pair<WebSearchProvider, WebSearchProvider.Problem>, Boolean>() }
-    fun shows(why: WebSearchProvider.Problem) = problem == why && (tried || touched[provider to why] == true)
-    val endpointFocus = remember { FocusRequester() }
-    val keyFocus = remember { FocusRequester() }
-    val uri = LocalUriHandler.current
+    val focus = remember { FocusRequester() }
+    val config = WebSearchConfig(enabled, WebSearchProvider.SearXNG,
+        mapOf(WebSearchProvider.SearXNG to WebSearchEntry(endpoint)))
+    val invalid = config.problem == WebSearchProvider.Problem.Endpoint
     MikaDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.web_search_title)) },
@@ -115,60 +61,24 @@ fun WebSearchDialog(initial: WebSearchConfig, onDismiss: () -> Unit, onSave: (We
                     MikaSwitch(enabled, { enabled = it }, Modifier.testTag("web-search-enabled"))
                 }
                 GroupLabel(stringResource(R.string.web_search_provider), Modifier.padding(top = 4.dp))
-                FlowRow(
-                    Modifier.fillMaxWidth().testTag("web-search-provider"),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    WebSearchProvider.entries.forEach { p ->
-                        SelectChip(WebSearchCopy.name(p), p == provider, { provider = p; tried = false }, Modifier.testTag("web-search-provider-${p.wire}"))
-                    }
-                }
-                Text(
-                    WebSearchCopy.note(provider), Modifier.padding(top = 8.dp).testTag("web-search-note"),
-                    style = MikaType.Hint, color = MikaTheme.colors.ink3,
-                )
-                if (provider.needsEndpoint) {
-                    val error = shows(WebSearchProvider.Problem.Endpoint)
-                    OutlinedTextField(
-                        entry.endpoint, { entries[provider] = entry.copy(endpoint = it); touched[provider to WebSearchProvider.Problem.Endpoint] = true },
-                        Modifier.fillMaxWidth().padding(top = 8.dp).focusRequester(endpointFocus).testTag("web-search-endpoint"),
-                        singleLine = true, isError = error,
-                        label = { Text(WebSearchCopy.endpointLabel()) }, placeholder = { Text(WebSearchCopy.ENDPOINT_PLACEHOLDER) },
-                        supportingText = if (error) ({ Text(WebSearchCopy.problem(provider, WebSearchProvider.Problem.Endpoint)) }) else null,
-                    )
-                }
-                if (provider.takesKey) {
-                    val error = shows(WebSearchProvider.Problem.Key)
-                    OutlinedTextField(
-                        entry.apiKey, { entries[provider] = entry.copy(apiKey = it); touched[provider to WebSearchProvider.Problem.Key] = true },
-                        Modifier.fillMaxWidth().padding(top = 8.dp).focusRequester(keyFocus).testTag("web-search-key"),
-                        singleLine = true, visualTransformation = PasswordVisualTransformation(),
-                        isError = error,
-                        label = { Text(WebSearchCopy.keyLabel(provider)) },
-                        supportingText = if (error) ({ Text(WebSearchCopy.problem(provider, WebSearchProvider.Problem.Key)) }) else null,
-                    )
-                    WebSearchCopy.keyPage(provider)?.let { page ->
-                        // 没有能打开网页的应用时 openUri 会抛错:这时什么都不做
-                        TextButton({ runCatching { uri.openUri(page) } }, Modifier.testTag("web-search-get-key")) { Text(stringResource(R.string.web_search_get_key)) }
-                    }
-                }
-                // 原来那段说明里要紧的两点:密钥加密存在本机、结果按不可信内容处理
-                Text(
-                    stringResource(R.string.web_search_privacy), Modifier.padding(top = 8.dp).testTag("web-search-privacy"),
-                    style = MikaType.Hint, color = MikaTheme.colors.ink3,
+                Text("SearXNG", Modifier.testTag("web-search-provider-searxng"), style = MikaType.Body)
+                Text(WebSearchCopy.note(WebSearchProvider.SearXNG), Modifier.padding(top = 8.dp).testTag("web-search-note"),
+                    style = MikaType.Hint, color = MikaTheme.colors.ink3)
+                OutlinedTextField(
+                    endpoint, { endpoint = it },
+                    Modifier.fillMaxWidth().padding(top = 8.dp).focusRequester(focus).testTag("web-search-endpoint"),
+                    singleLine = true, isError = invalid && tried,
+                    label = { Text(WebSearchCopy.endpointLabel()) },
+                    placeholder = { Text(WebSearchCopy.ENDPOINT_PLACEHOLDER) },
+                    supportingText = if (invalid && tried) ({ Text(WebSearchCopy.problem(WebSearchProvider.SearXNG,
+                        WebSearchProvider.Problem.Endpoint)) }) else null,
                 )
             }
         },
         confirmButton = {
             TextButton({
-                when (problem) {
-                    null -> onSave(config)
-                    else -> {
-                        tried = true
-                        runCatching { (if (problem == WebSearchProvider.Problem.Key) keyFocus else endpointFocus).requestFocus() }
-                    }
-                }
+                if (config.problem == null) onSave(config)
+                else { tried = true; runCatching { focus.requestFocus() } }
             }, Modifier.testTag("web-search-save")) { Text(stringResource(R.string.save)) }
         },
         dismissButton = { TextButton(onDismiss) { Text(stringResource(R.string.cancel)) } },

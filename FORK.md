@@ -163,3 +163,25 @@ Esta remoção não altera a ponte do Muse nem o canal genérico de tarefas.
 
 Licenças e créditos originais intocados. Este PR não altera o transporte de
 ponte do Muse e é independente da remoção OTLP.
+
+## Remoção 3 — buscas externas You/Exa/Jina (PR independente)
+
+- Excluídos `YouSearch.kt`, `ExaSearch.kt`, `JinaSearch.kt` e o teste
+  exclusivo do You. `ProviderSearchTest.kt` mantém testes SearXNG,
+  removendo apenas os testes dos provedores eliminados.
+- `WebSearchProvider.kt`: só `SearXNG` continua disponível por opção
+  explícita; identificadores persistidos `you`, `exa`, `jina` não
+  viram automaticamente um serviço alternativo.
+- `app/settings/WebSearchSettings.kt`: preferência legada de provedor
+  removido é desativada (fail-closed), e as chaves de API antigas são
+  apagadas do armazenamento; `service()` só cria SearXNG explicitamente
+  habilitado com endpoint válido.
+- `app/ui/WebSearchSettings.kt`: retirados seleção e formulários de
+  chaves dos serviços externos. A tela permite apenas uma instância
+  SearXNG do próprio usuário, sem ativação automática.
+- Atualizados testes de migração e as traduções `strings_web_search.xml`
+  nos dez idiomas; mantidos `SearchHttp.kt`, `WebSearch.kt`, o
+  navegador embutido (`browser/SearchEngine.kt`) e o contrato
+  `web_search` para instância SearXNG explicitamente configurada.
+- Nenhuma alteração no `ChatModel.kt`, `OpenAiCompatModel`, gateway ou
+  permissões de aprovação. Licença Apache-2.0 e créditos preservados.

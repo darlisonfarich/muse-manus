@@ -1,12 +1,8 @@
 package com.wangzan101.mika.settings
 
-import com.wangzan101.mika.core.search.ExaSearch
-import com.wangzan101.mika.core.search.JinaSearch
 import com.wangzan101.mika.core.search.SearxngSearch
 import com.wangzan101.mika.core.search.WebSearchProvider
-import com.wangzan101.mika.core.search.YouSearch
 import com.wangzan101.mika.settings.FeatureFlagsCapsuleTest.MemoryPrefs
-import java.util.Base64
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -14,109 +10,74 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WebSearchSettingsTest {
-    private val identityCipher = object : KeyCipher {
+    private val cipher = object : KeyCipher {
         override fun encrypt(plain: ByteArray) = plain
         override fun decrypt(data: ByteArray) = data
     }
+    private fun settings(prefs: MemoryPrefs = MemoryPrefs()) = WebSearchSettings(prefs, cipher)
+    private fun searxng(url: String = "https://searx.example.org") =
+        WebSearchConfig(true, WebSearchProvider.SearXNG,
+            mapOf(WebSearchProvider.SearXNG to WebSearchEntry(url)))
 
-    private fun settings(prefs: MemoryPrefs = MemoryPrefs()) = WebSearchSettings(prefs, identityCipher)
-
-    /** 升级前只存了 enabled、endpoint、api_key_encrypted。 */
-    private fun legacy(prefs: MemoryPrefs, endpoint: String, key: String) {
-        prefs.edit().putBoolean("enabled", true).putString("endpoint", endpoint)
-            .putString("api_key_encrypted", Base64.getEncoder().encodeToString(key.toByteArray())).commit()
-    }
-
-    @Test fun freshInstallIsOffAndPicksYou() {
+    @Test fun freshInstallNeverStartsAnExternalSearch() {
         val config = settings().get()
         assertFalse(config.enabled)
-        assertEquals(WebSearchProvider.You, config.provider)
+        assertEquals(WebSearchProvider.SearXNG, config.provider)
         assertNull(settings().service())
     }
 
-    @Test fun youWorksWithoutAKey() {
+    @Test fun searxngRequiresExplicitValidAddress() {
         val prefs = MemoryPrefs()
-        settings(prefs).set(WebSearchConfig(true, WebSearchProvider.You))
-        assertTrue(settings(prefs).service() is YouSearch)
-    }
-
-    @Test fun eachProviderKeepsItsOwnKey() {
-        val prefs = MemoryPrefs()
-        settings(prefs).set(
-            WebSearchConfig(
-                true, WebSearchProvider.Exa,
-                mapOf(
-                    WebSearchProvider.You to WebSearchEntry(apiKey = "you-key"),
-                    WebSearchProvider.Exa to WebSearchEntry(apiKey = "exa-key"),
-                    WebSearchProvider.Jina to WebSearchEntry(apiKey = "jina-key"),
-                ),
-            ),
-        )
-        val back = settings(prefs).get()
-        assertEquals("you-key", back.entries[WebSearchProvider.You]!!.apiKey)
-        assertEquals("exa-key", back.current.apiKey)
-        assertEquals("jina-key", back.entries[WebSearchProvider.Jina]!!.apiKey)
-        assertFalse(prefs.getString("api_key_encrypted_exa", null)!!.contains("exa-key"))
-        assertTrue(settings(prefs).service() is ExaSearch)
-    }
-
-    @Test fun anOldExaUrlBecomesExaWithItsKey() {
-        val prefs = MemoryPrefs()
-        legacy(prefs, "https://api.exa.ai/search", "exa-key")
-        val config = settings(prefs).get()
-        assertTrue(config.enabled)
-        assertEquals(WebSearchProvider.Exa, config.provider)
-        assertEquals("exa-key", config.current.apiKey)
-        assertTrue(settings(prefs).service() is ExaSearch)
-        // 保存后写成新的样子,旧的两个键删掉
-        settings(prefs).set(config)
-        assertNull(prefs.getString("endpoint", null))
-        assertNull(prefs.getString("api_key_encrypted", null))
-        assertEquals("exa-key", settings(prefs).get().entries[WebSearchProvider.Exa]!!.apiKey)
-    }
-
-    @Test fun anOldJinaUrlBecomesJina() {
-        val prefs = MemoryPrefs()
-        legacy(prefs, "https://s.jina.ai/", "jina-key")
-        assertEquals(WebSearchProvider.Jina, settings(prefs).get().provider)
-        assertTrue(settings(prefs).service() is JinaSearch)
-    }
-
-    @Test fun anyOtherOldUrlBecomesYouButOffAndDropsTheKey() {
-        val prefs = MemoryPrefs()
-        legacy(prefs, "https://example.com/search", "someone-elses-key")
-        val config = settings(prefs).get()
-        assertFalse(config.enabled)
-        assertEquals(WebSearchProvider.You, config.provider)
-        assertEquals("", config.current.apiKey)
-        assertNull(settings(prefs).service())
-    }
-
-    @Test(expected = IllegalArgumentException::class)
-    fun jinaCannotBeSavedWithoutAKey() {
-        settings().set(WebSearchConfig(true, WebSearchProvider.Jina))
-    }
-
-    @Test(expected = IllegalArgumentException::class)
-    fun exaCannotBeSavedWithoutAKeyEvenWhenOff() {
-        settings().set(WebSearchConfig(false, WebSearchProvider.Exa, mapOf(WebSearchProvider.Exa to WebSearchEntry(apiKey = " "))))
-    }
-
-    @Test fun searxngUsesTheInstanceAndNoKey() {
-        val prefs = MemoryPrefs()
-        settings(prefs).set(WebSearchConfig(true, WebSearchProvider.SearXNG, mapOf(WebSearchProvider.SearXNG to WebSearchEntry("https://searx.example.org"))))
+        settings(prefs).set(searxng())
         assertTrue(settings(prefs).service() is SearxngSearch)
         assertEquals("https://searx.example.org", settings(prefs).get().current.endpoint)
+        assertEquals("searxng", prefs.getString("provider", null))
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun enabledSearxngNeedsAnAddress() {
-        settings().set(WebSearchConfig(true, WebSearchProvider.SearXNG))
+        settings().set(searxng(""))
     }
 
-    @Test fun anUnknownStoredProviderFallsBackSafely() {
+    @Test fun removedProvidersAreNotMappedOntoAnotherEndpoint() {
+        for (legacy in listOf("you", "jina", "exa", "gone")) {
+            val prefs = MemoryPrefs()
+            prefs.edit().putBoolean("enabled", true).putString("provider", legacy)
+                .putString("endpoint_searxng", "https://searx.example.org").commit()
+            val config = settings(prefs).get()
+            assertFalse(legacy, config.enabled)
+            assertEquals(WebSearchProvider.SearXNG, config.provider)
+            assertNull(legacy, settings(prefs).service())
+        }
+    }
+
+    @Test fun migratedCredentialsArePurgedWithoutAccessingLegacyNetwork() {
         val prefs = MemoryPrefs()
-        prefs.edit().putBoolean("enabled", true).putString("provider", "gone").commit()
-        assertEquals(WebSearchProvider.You, settings(prefs).get().provider)
+        prefs.edit().putBoolean("enabled", true).putString("provider", "jina")
+            .putString("api_key_encrypted_jina", "encrypted-secret")
+            .putString("api_key_encrypted_exa", "another-secret")
+            .putString("api_key_encrypted_you", "old-secret")
+            .putString("api_key_encrypted", "old-legacy-secret")
+            .putString("endpoint", "https://s.jina.ai")
+            .putString("endpoint_exa", "https://api.exa.ai").commit()
+        val config = settings(prefs).get()
+        assertFalse(config.enabled)
+        assertNull(settings(prefs).service())
+        for (key in listOf("api_key_encrypted_jina", "api_key_encrypted_exa",
+            "api_key_encrypted_you", "api_key_encrypted", "endpoint", "endpoint_exa"))
+            assertFalse("Stale credential: $key", prefs.contains(key))
+        settings(prefs).set(searxng())
+        assertTrue(settings(prefs).service() is SearxngSearch)
+    }
+
+    @Test fun disabledSavedSearxngNeverSendsQueries() {
+        val prefs = MemoryPrefs()
+        settings(prefs).set(searxng().copy(enabled = false))
+        assertNull(settings(prefs).service())
+    }
+
+    @Test fun removedProviderNamesAreUnknown() {
+        for (legacy in listOf("you", "jina", "exa"))
+            assertNull(WebSearchProvider.of(legacy))
     }
 }
