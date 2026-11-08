@@ -258,7 +258,7 @@ private fun ProvidersSection(ui: ModelSetupUi, actions: ModelSetupActions) {
         GroupLabel(ModelsCopy.PROVIDERS)
         GroupCard {
             ui.providers.forEachIndexed { i, p ->
-                val line = if (ui.signedOut(p)) ModelsCopy.CHATGPT_SIGNED_OUT else ModelsCopy.providerLine(p, ui.listing[p.id], ui.rolesOf(p))
+                val line = ModelsCopy.providerLine(p, ui.listing[p.id], ui.rolesOf(p))
                 // 有用着却没试通过的模型、或跳过测试存下且已经在用:这一行就提醒「没测试通过」
                 val warning = ModelsCopy.UNVERIFIED.takeIf {
                     ui.unverified(p).isNotEmpty() || (ui.untested(p) && ui.rolesOf(p).isNotEmpty())

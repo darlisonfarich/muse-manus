@@ -149,15 +149,11 @@ object DiagnosticsCollector {
     private fun models(app: MikaApp): DiagnosticsSnapshot.Models {
         val store = app.providers
         fun role(r: ModelRole) = store.configFor(r)?.let { DiagnosticsSnapshot.RoleModel(it.model, it.baseUrl) }
-        val chatGpt = store.chatGptProvider()
         return DiagnosticsSnapshot.Models(
             providers = store.providers.value.map { DiagnosticsSnapshot.Provider(it.kind.name, it.baseUrl, it.models?.size) },
             main = role(ModelRole.Main),
             vision = role(ModelRole.Vision),
             light = role(ModelRole.Light),
-            chatGptSignedIn = chatGpt != null && store.hasKey(chatGpt.id),
-            chatGptLastFailure = app.chatGptSignIn.lastFailure,
-            accountLastFailure = app.chatGptSignIn.lastAccountFailure,
         )
     }
 

@@ -473,7 +473,8 @@ class ModelSetupViewModel(
         val mismatched = mutableListOf<String>()
         val usable = ModelOptions.candidates(options, f.familyTokens).filter { m ->
             val listed = models.firstOrNull { it.id == m }
-            if (listed?.endpoint != null && listed.endpoint.protocol != f.kind.protocol) {
+            val discoveredEndpoint = listed?.endpoint
+            if (discoveredEndpoint != null && discoveredEndpoint.protocol != f.kind.protocol) {
                 mismatched += m
                 return@filter false
             }

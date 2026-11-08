@@ -197,7 +197,8 @@ ponte do Muse e é independente da remoção OTLP.
   antigo em modo fail-closed, excluindo serviços OAuth, configurações e Key
   órfãos sem reenquadrar contas antigas como Custom.
 - `core/cap/mcp/McpOAuth.kt` continua suportado: `core/oauth/Pkce.kt`
-  foi **preservado** porque é infraestrutura do MCP, não OAuth de modelo.
+  e `core/oauth/LoopbackCallback.kt` são **preservados** porque
+  oferecem autenticação ao MCP, não login de modelo.
 - Testes da conexão Custom, migração e isolamento de origem reforçados; testes
   exclusivos dos adaptadores removidos foram retirados. README e documentação
   de modelos atualizados. Sem alterações em MCP, `LICENSE` e `NOTICE`.
