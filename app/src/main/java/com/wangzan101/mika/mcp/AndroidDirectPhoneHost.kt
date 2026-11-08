@@ -385,11 +385,12 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             // A deterministic ID per step makes a completed step non-replayable,
             // even if the MCP connection dies after step N and before the reply.
             val key = UUID.nameUUIDFromBytes((id + ":" + progress.index).toByteArray()).toString()
-            val step = action(s, name, JsonObject(params + ("request_id" to JsonPrimitive(key))))
             // Only Blocked is guaranteed pre-PENDING; no step may be replayed
             // after an execution has reached the durable journal.
-            if (step is GerIntentAttempt.Blocked) return step
-            val outcome = (step as GerIntentAttempt.Done).result
+            val outcome = when (val step = action(s, name, JsonObject(params + ("request_id" to JsonPrimitive(key))))) {
+                is GerIntentAttempt.Blocked -> return step
+                is GerIntentAttempt.Done -> step.result
+            }
             if (outcome["error"] == JsonPrimitive("delivery_unknown"))
                 return GerIntentAttempt.Done(fail("delivery_unknown"))
             progress.results += outcome
