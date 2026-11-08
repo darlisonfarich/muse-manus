@@ -123,6 +123,8 @@ do PR anterior permanecem em aberto. Os portões NÃO adotam lista de Apps proib
 - `MikaApp.kt`: removida a inicialização/reconexão automática do canal; em
   recuperação de tarefas persistidas, somente o canal local registrado é
   resolvido e uma origem antiga/desconhecida não é enviada a outro canal.
+- `app/quit/MikaQuit.kt`: removidas referências residuais a `app.wechat` e
+  `WechatService`, preservando o encerramento dos demais serviços.
 - `TaskService.kt`: origem de canal desconhecida retorna erro explícito
   `unsupported_channel`, em vez de acionar WeChat por fallback. Preservados
   `LocalChannel`, `Channel`, `ChannelGateway`, `Outbox` e toda a
