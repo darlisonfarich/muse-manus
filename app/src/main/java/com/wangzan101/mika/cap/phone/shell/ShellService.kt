@@ -12,6 +12,9 @@ import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
+import android.media.MediaMetadata
+import android.media.session.MediaSessionManager
+import android.media.session.PlaybackState
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
 import android.net.Uri
@@ -40,6 +43,7 @@ import android.view.Surface
 import com.wangzan101.mika.core.shell.DevtoolsSocket
 import com.wangzan101.mika.core.uistate.AppCopies
 import com.wangzan101.mika.core.uistate.PressKeys
+import com.wangzan101.mika.core.uistate.GlobalKeyDispatch
 import java.io.File
 import java.io.ByteArrayOutputStream
 import java.lang.reflect.Method
@@ -1085,16 +1089,194 @@ class ShellService(
     }
 
     override fun injectKey(displayId: Int, keyCode: Int): Boolean {
-        // Scoped keys additionally require a display owned by this agent shell.
+        // Global keys must use dispatchGlobalKey; never fall back to blind injection.
         if (!PressKeys.isAllowed(keyCode) ||
+            GlobalKeyDispatch.route(keyCode) != GlobalKeyDispatch.Route.VirtualKey ||
             (!PressKeys.isAllowed(keyCode, PressKeys.Scope.AnyDisplay) && !ownDisplay(displayId))) {
-            Log.w(TAG, "refused key $keyCode")
+            Log.w(TAG, "refused injected key $keyCode")
             return false
         }
         val now = SystemClock.uptimeMillis()
         val down = KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, 0, VIRTUAL_KEYBOARD, 0, 0, InputDevice.SOURCE_KEYBOARD)
         val up = KeyEvent.changeAction(down, KeyEvent.ACTION_UP)
-        return injectPair(down, up, displayId) { exec("input", "-d", "$displayId", "keyevent", "$keyCode") == 0 }
+        // WAIT_FOR_RESULT may report "unconsumed" on a virtual display without a focus
+        // window. Retry ASYNC only when DOWN was not accepted; never replay a whole
+        // key after an accepted DOWN (which could duplicate an action).
+        if (inject(down, displayId)) {
+            return inject(up, displayId) || inject(up, displayId, asyncKey = true)
+        }
+        if (inject(down, displayId, asyncKey = true)) {
+            return inject(up, displayId, asyncKey = true) || inject(up, displayId, asyncKey = true)
+        }
+        // Existing shell fallback is scoped to the SAME display; caller must still
+        // verify an observable effect before reporting success.
+        return exec("input", "-d", "$displayId", "keyevent", "$keyCode") == 0
+    }
+
+    /** Public service dispatch for global controls, allowed only inside an owned task display. */
+    override fun dispatchGlobalKey(displayId: Int, keyCode: Int): Bundle {
+        if (!ownDisplay(displayId) || !PressKeys.isAllowed(keyCode, PressKeys.Scope.VirtualDisplay) ||
+            GlobalKeyDispatch.route(keyCode) != GlobalKeyDispatch.Route.Global) {
+            return dispatchReadback(GlobalKeyDispatch.Outcome.NotApplied, "unavailable", "unavailable")
+        }
+        return when (keyCode) {
+            KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE -> dispatchVolume(keyCode)
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP,
+            KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_MEDIA_PREVIOUS -> dispatchMedia(keyCode)
+            KeyEvent.KEYCODE_HOME -> dispatchHome(displayId)
+            else -> dispatchReadback(GlobalKeyDispatch.Outcome.NotApplied, "unavailable", "unavailable")
+        }
+    }
+
+    private fun dispatchReadback(outcome: GlobalKeyDispatch.Outcome, before: String, after: String) =
+        Bundle().apply {
+            putString("status", outcome.wire)
+            putString("before", before)
+            putString("after", after)
+        }
+
+    private fun volumeState(): PressKeys.VolumeState? = runCatching {
+        val audio = context.getSystemService(AudioManager::class.java)
+        PressKeys.VolumeState(
+            audio.getStreamVolume(AudioManager.STREAM_MUSIC),
+            audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
+            audio.isStreamMute(AudioManager.STREAM_MUSIC),
+        )
+    }.getOrNull()
+
+    private fun volumeLabel(s: PressKeys.VolumeState?): String =
+        s?.let { "current=${it.current},max=${it.max},muted=${it.muted}" } ?: "unavailable"
+
+    private fun dispatchVolume(keyCode: Int): Bundle {
+        val before = volumeState()
+        val sent = runCatching {
+            val direction = when (keyCode) {
+                KeyEvent.KEYCODE_VOLUME_UP -> AudioManager.ADJUST_RAISE
+                KeyEvent.KEYCODE_VOLUME_DOWN -> AudioManager.ADJUST_LOWER
+                else -> AudioManager.ADJUST_TOGGLE_MUTE
+            }
+            context.getSystemService(AudioManager::class.java)
+                .adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, 0)
+        }.onFailure { Log.w(TAG, "AudioManager volume dispatch failed: ${it.javaClass.simpleName}") }.isSuccess
+        var after = volumeState()
+        var outcome = if (sent) GlobalKeyDispatch.volume(keyCode, before, after)
+            else GlobalKeyDispatch.Outcome.NotApplied
+        if (sent && outcome != GlobalKeyDispatch.Outcome.Dispatched) {
+            for (i in 1..3) {
+                SystemClock.sleep(100)
+                after = volumeState()
+                outcome = GlobalKeyDispatch.volume(keyCode, before, after)
+                if (outcome == GlobalKeyDispatch.Outcome.Dispatched) break
+            }
+        }
+        return dispatchReadback(outcome, volumeLabel(before), volumeLabel(after))
+    }
+
+    /** Playback readback needs shell's media-session visibility; absence is UNKNOWN, not success. */
+    private fun mediaState(): GlobalKeyDispatch.Media? = runCatching {
+        val manager = context.getSystemService(MediaSessionManager::class.java)
+        val sessions = manager.getActiveSessions(null)
+        val controller = sessions.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }
+            ?: sessions.firstOrNull { it.playbackState != null } ?: return@runCatching null
+        val state = controller.playbackState ?: return@runCatching null
+        val metadata = controller.metadata
+        val trackInfo = listOfNotNull(
+            metadata?.getString(MediaMetadata.METADATA_KEY_MEDIA_ID),
+            metadata?.getString(MediaMetadata.METADATA_KEY_TITLE),
+            metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST),
+            state.activeQueueItemId.takeIf { it >= 0 }?.toString(),
+        ).takeIf { it.isNotEmpty() }?.joinToString("|")
+        // Never persist media titles/IDs: only an opaque digest for change detection.
+        val track = trackInfo?.let { raw ->
+            java.security.MessageDigest.getInstance("SHA-256")
+                .digest(raw.toByteArray(Charsets.UTF_8))
+                .take(8).joinToString("") { "%02x".format(it) }
+        }
+        GlobalKeyDispatch.Media(controller.sessionToken.hashCode().toString(), state.state, track)
+    }.getOrNull()
+
+    private fun mediaLabel(s: GlobalKeyDispatch.Media?): String =
+        s?.let { "session=${it.session},state=${it.playback},track=${it.track ?: "unavailable"}" } ?: "unavailable"
+
+    private fun dispatchMedia(keyCode: Int): Bundle {
+        val before = mediaState()
+        val sent = runCatching {
+            val audio = context.getSystemService(AudioManager::class.java)
+            // Android requires a full down/up pair for dispatchMediaKeyEvent.
+            val now = SystemClock.uptimeMillis()
+            val down = KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0)
+            val up = KeyEvent.changeAction(down, KeyEvent.ACTION_UP)
+            audio.dispatchMediaKeyEvent(down)
+            audio.dispatchMediaKeyEvent(up)
+        }.onFailure { Log.w(TAG, "media dispatch failed: ${it.javaClass.simpleName}") }.isSuccess
+        var after = mediaState()
+        var outcome = if (sent) GlobalKeyDispatch.media(keyCode, before, after)
+            else GlobalKeyDispatch.Outcome.NotApplied
+        if (sent && outcome != GlobalKeyDispatch.Outcome.Dispatched) {
+            for (i in 1..6) {
+                SystemClock.sleep(140)
+                after = mediaState()
+                outcome = GlobalKeyDispatch.media(keyCode, before, after)
+                if (outcome == GlobalKeyDispatch.Outcome.Dispatched) break
+            }
+        }
+        return dispatchReadback(outcome, mediaLabel(before), mediaLabel(after))
+    }
+
+    private fun homeState(displayId: Int): GlobalKeyDispatch.Home? = runCatching {
+        val task = tasksOn(displayId).firstOrNull() ?: return@runCatching null
+        // TaskInfo.topActivityType==ACTIVITY_TYPE_HOME (2), unlike class-name guesses.
+        GlobalKeyDispatch.Home(
+            TASK_INFO.getField("taskId").getInt(task),
+            TASK_INFO.getField("topActivityType").getInt(task) == 2,
+        )
+    }.getOrNull()
+
+    private fun homeLabel(s: GlobalKeyDispatch.Home?): String =
+        s?.let { "task=${it.taskId},home=${it.isHome}" } ?: "unavailable"
+
+    private fun startHomeOnOwnedDisplay(displayId: Int): Boolean {
+        if (!ownDisplay(displayId)) return false
+        // Android's hidden ActivityTaskManager API has 3- and 5-argument variants.
+        for (method in taskManager.javaClass.methods.filter { it.name == "startHomeOnDisplay" &&
+            it.parameterTypes.size in setOf(3, 5) }) {
+            val args: Array<Any> = if (method.parameterTypes.size == 5)
+                arrayOf(myUser, "mika_global_home", displayId, false, true)
+            else arrayOf(myUser, "mika_global_home", displayId)
+            if (runCatching { method.invoke(taskManager, *args) == true }.getOrDefault(false)) return true
+        }
+        // Same display-constrained startActivityAsUser pattern as startApp, never
+        // ACTION_HOME on the physical/default display.
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId).toBundle()
+        if (runCatching {
+            val start = taskManager.javaClass.methods.first {
+                it.name == "startActivityAsUser" && it.parameterTypes.size == 12
+            }
+            (start.invoke(taskManager, null, ShellContext.SHELL_PACKAGE, null, intent, null,
+                null, null, 0, 0, null, options, USER_CURRENT) as Int) >= 0
+        }.getOrDefault(false)) return true
+        return exec("am", "start", "--display", "$displayId",
+            "-a", Intent.ACTION_MAIN, "-c", Intent.CATEGORY_HOME) == 0
+    }
+
+    private fun dispatchHome(displayId: Int): Bundle {
+        val before = homeState(displayId)
+        val sent = runCatching { startHomeOnOwnedDisplay(displayId) }
+            .onFailure { Log.w(TAG, "startHome on task display failed", it) }.getOrDefault(false)
+        var after = homeState(displayId)
+        var outcome = if (sent) GlobalKeyDispatch.home(before, after)
+            else GlobalKeyDispatch.Outcome.NotApplied
+        if (sent && outcome != GlobalKeyDispatch.Outcome.Dispatched) {
+            for (i in 1..6) {
+                SystemClock.sleep(140)
+                after = homeState(displayId)
+                outcome = GlobalKeyDispatch.home(before, after)
+                if (outcome == GlobalKeyDispatch.Outcome.Dispatched) break
+            }
+        }
+        return dispatchReadback(outcome, homeLabel(before), homeLabel(after))
     }
 
     override fun musicVolumeState(): Bundle? = runCatching {
@@ -1576,11 +1758,11 @@ class ShellService(
     }
 
     @SuppressLint("PrivateApi")
-    private fun inject(event: InputEvent, displayId: Int, waitForFinish: Boolean = false): Boolean = try {
+    private fun inject(event: InputEvent, displayId: Int, waitForFinish: Boolean = false, asyncKey: Boolean = false): Boolean = try {
         event.javaClass.getMethod("setDisplayId", Int::class.java).invoke(event, displayId)
         val manager = inputManager()
         manager.javaClass.getMethod("injectInputEvent", InputEvent::class.java, Int::class.java)
-            .invoke(manager, event, injectMode(event is KeyEvent, waitForFinish)) as Boolean
+            .invoke(manager, event, injectMode(event is KeyEvent, waitForFinish, asyncKey)) as Boolean
     } catch (t: Throwable) {
         Log.w(TAG, "injectInputEvent failed", t)
         false
@@ -1725,8 +1907,9 @@ class ShellService(
          * 或报动作失败,不再「发了就算成」;只等派发、不等 App 处理完,最多等到系统自己的注入超时。
          * 触摸照旧不等(ASYNC):一笔划要按时间逐点送,等派发会打乱快慢。[waitForFinish] 的(主屏解锁输入)等 App 处理完。
          */
-        internal fun injectMode(key: Boolean, waitForFinish: Boolean): Int = when {
+        internal fun injectMode(key: Boolean, waitForFinish: Boolean, asyncKey: Boolean = false): Int = when {
             waitForFinish -> INJECT_MODE_WAIT_FOR_FINISH
+            asyncKey -> INJECT_MODE_ASYNC
             key -> INJECT_MODE_WAIT_FOR_RESULT
             else -> INJECT_MODE_ASYNC
         }

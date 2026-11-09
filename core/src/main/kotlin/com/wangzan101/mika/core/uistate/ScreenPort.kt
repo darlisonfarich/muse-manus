@@ -174,10 +174,11 @@ sealed interface ActionResult {
         val inProfile: String? = null,
         val profileUser: Int? = null,
         val requestedUser: Int? = null,
+        val keyEvidence: KeyDispatchEvidence? = null,
     ) : ActionResult
 
     /** 引用已过期时 reason 为 "ref_expired"。[hint] 是端口的补充说明(例如盖住目标的是什么),原样附在错误说明后。 */
-    data class Failed(val reason: String, val hint: String? = null) : ActionResult
+    data class Failed(val reason: String, val hint: String? = null, val keyEvidence: KeyDispatchEvidence? = null) : ActionResult
 }
 
 /** 打开 App 时这个 App 正被另一个任务用着(同一个 App 同时只能在一块屏上)。 */
