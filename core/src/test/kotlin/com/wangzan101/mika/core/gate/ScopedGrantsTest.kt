@@ -30,7 +30,7 @@ class ScopedGrantsTest {
 
     @Test fun expiresAtDeadlineAndNeverSurvivesClockRollback() {
         var now = 1_000L
-        val grants = ScopedGrantRegistry { now }
+        val grants = ScopedGrantRegistry(clockMs = { now })
         grants.issueFromLocalUi("com.example.app", "personal", ScopedActionClass.Edit, 900L)
         now = 1_899L
         assertTrue(grants.matches("com.example.app", "personal", ScopedActionClass.Edit))
@@ -43,7 +43,7 @@ class ScopedGrantsTest {
     }
 
     @Test fun durationCannotExceedFifteenMinutesOrContainInvalidIdentity() {
-        val grants = ScopedGrantRegistry { 50_000L }
+        val grants = ScopedGrantRegistry(clockMs = { 50_000L })
         assertEquals(null, grants.issueFromLocalUi("com.app.test", "acct", ScopedActionClass.Edit, 0))
         assertEquals(null, grants.issueFromLocalUi("com.app.test", "acct", ScopedActionClass.Edit,
             ScopedGrantRegistry.MAX_TTL_MS + 1))
@@ -53,7 +53,7 @@ class ScopedGrantsTest {
     }
 
     @Test fun explicitRevocationIsImmediateAndRegistryIsProcessLocal() {
-        val grants = ScopedGrantRegistry { 100L }
+        val grants = ScopedGrantRegistry(clockMs = { 100L })
         val one = grants.issueFromLocalUi("com.example.app", "a", ScopedActionClass.Edit, 1000)!!
         val two = grants.issueFromLocalUi("com.example.app", "b", ScopedActionClass.Edit, 1000)!!
         assertTrue(grants.revoke(one.id))
@@ -62,12 +62,12 @@ class ScopedGrantsTest {
         assertTrue(grants.matches("com.example.app", "b", ScopedActionClass.Edit))
         grants.revokeAll()
         assertTrue(grants.active().isEmpty())
-        assertFalse(ScopedGrantRegistry { 101L }.matches("com.example.app", "b", ScopedActionClass.Edit))
+        assertFalse(ScopedGrantRegistry(clockMs = { 101L }).matches("com.example.app", "b", ScopedActionClass.Edit))
         assertEquals(two.id, two.id)
     }
 
     @Test fun grantsDoNotWeakenRemotePaymentDenial() {
-        val grants = ScopedGrantRegistry { 100L }
+        val grants = ScopedGrantRegistry(clockMs = { 100L })
         grants.issueFromLocalUi("com.bank.app", "personal", ScopedActionClass.Navigate, 10_000L)
         val risk = Risk(ActionRisk.Irreversible, payment = true, action = IrrevAction.pay)
         assertEquals(Approval.Deny, ApprovalPolicy.decide(
