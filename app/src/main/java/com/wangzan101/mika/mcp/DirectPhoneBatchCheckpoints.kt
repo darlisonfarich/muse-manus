@@ -22,6 +22,26 @@ internal class DirectPhoneBatchCheckpoints(private val file: File) {
         data object Corrupt : OpenResult
     }
 
+    sealed interface InspectResult {
+        data class Found(val snapshot: Snapshot) : InspectResult
+        data object Missing : InspectResult
+        data object Conflict : InspectResult
+        data object Corrupt : InspectResult
+    }
+
+    /**
+     * Inspection never appends OPEN; reconnect must not manufacture a checkpoint
+     * or treat a missing entry as proof an action was never attempted.
+     */
+    fun inspect(key: String, fingerprint: String, total: Int): InspectResult {
+        if (!isDigest(key) || !isDigest(fingerprint) || total !in 1..30) return InspectResult.Corrupt
+        load()
+        if (broken || key in damaged) return InspectResult.Corrupt
+        val saved = batches[key] ?: return InspectResult.Missing
+        if (saved.fingerprint != fingerprint || saved.total != total) return InspectResult.Conflict
+        return InspectResult.Found(Snapshot(saved.completed, saved.total, fresh = false))
+    }
+
     private data class Batch(val fingerprint: String, val total: Int, var completed: Int = 0)
     private val batches = HashMap<String, Batch>()
     private val damaged = HashSet<String>()

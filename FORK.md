@@ -386,3 +386,116 @@ CI 4/4 e E2E no POCO antes de integrar. Não fazer merge automático.
 ### Integração com a retomada limitada do PR #17
 
 Após integrar os dois caminhos em `AndroidDirectPhoneHost.batch`, `phone_run` reconhece **ambos** `delivery_unknown` e `launch_timeout_unknown` como efeitos incertos. Não soma o passo em `completed`, não grava um evento `OK` em `DirectPhoneBatchCheckpoints`, não avança para o próximo comando e devolve `reconciliation_required`, `executionUnknown=true`, `uncertainStepIndex` e `requiresFreshObservation=true`. O `startApp` pendente permanece em execução única sob o journal do PR #17; nenhum caminho faz replay para contornar o timeout. Confirmar essas invariantes novamente na CI do diff rebaseado e no E2E integrado.
+
+## GER etapa 3 / PR 2 — reconexão do cliente por estado (PR em rascunho)
+
+**Dependências:** PR #15 (fila), PR #17 (limite/estado do lançamento), PR #16
+(checkpoints). Este PR está empilhado na branch #16, ainda **sem** o código do
+#17, que será integrado pela ordem aprovada pelos responsáveis. Não rebasear
+antes dos merges; jamais fazer merge automático.
+
+### Interface de reconciliação, sem novo privilégio
+
+- Novo `phone_reconcile` no MCP autenticado, marcado **read-only** e sem
+  criar sessão, display ou intenção na fila. A consulta exige `request_id`
+  **original** e `kind: "action" | "batch"`; lote exige a lista `commands`
+  **idêntica** à chamada original, somente para confirmar o fingerprint.
+  Não existe caminho de escrita, retry, mudança de `request_id` ou gravação
+  de `OPEN/PENDING` nesse endpoint.
+- Para ações isoladas, o servidor deriva novamente o hash do proprietário
+  autenticado + `request_id` e lê apenas seu próprio journal
+  `direct-phone-audit.jsonl`: `not_seen`, `pending_unknown`,
+  `completed_ok`, `completed_unconfirmed` ou `journal_corrupt`.
+  Nem `not_seen` prova que nada aconteceu, nem `completed_ok` prova que
+  a tela **continua** no mesmo estado. Todos retornam
+  `retryable:false` e `requiresFreshObservation:true`.
+  O journal bruto, argumentos, capturas, textos e hash **não** saem pelo MCP.
+- Para `phone_run`, `DirectPhoneBatchCheckpoints.inspect()` não grava
+  novos checkpoints: `checkpointState=not_seen|found`, `completed`,
+  `nextIndex` e `nextJournalState` do primeiro passo ainda não
+  confirmado (derivado do ID determinístico do passo). Fingerprint/total
+  alterados resultam em `checkpoint_mismatch`; truncamento/corrupção
+  resulta em `checkpoint_corrupt`, ambos falha segura. Prefixo confirmado
+  **não** autoriza reexecutar o sufixo automaticamente: Muse observa,
+  reconcilia e decide nova tarefa/ID com base no estado atual.
+- O campo canônico para incerteza passa a ser `executionUnknown` no
+  PR #16 e neste PR, igual ao #17; não confundir com `executed:false`,
+  que é ausência de confirmação, não prova de ausência de efeito.
+- `phone_status` e `phone_reconcile` são metadados e podem ser
+  consultados mesmo durante `launchInFlight`; `phone_observe`/
+  `phone_screenshot` permanecem protegidos durante o Binder não resolvido
+  na implementação do #17. **Não** isentar leituras que possam retornar
+  tela inconsistente/tardia antes da conclusão do lançamento.
+  `phone_list_apps` também mantém a guarda atual, para não abrir um
+  caminho paralelo sem teste de sensibilidade/estado.
+
+### Procedimento do cliente (timeout MCP ≈ 45 s)
+
+O cliente MCP externo do Muse **não está versionado neste fork Android**.
+`gpt-muse-bridge` é uma caixa postal GitHub Issues, e não o processo MCP
+que controla a tela. Por isso este PR não pode alterar o hook real de
+reconexão da sessão do Muse sem o código daquele cliente. Entrega uma
+interface Android e o helper executável de leitura
+`tools/mika/scripts/muse_phone_recover.py`, que o cliente Muse pode invocar
+depois de reconectar. O helper usa a API MCP JSON-RPC existente sobre HTTP,
+somente `phone_status`, `phone_reconcile` e, quando
+`launchInFlight=false`, `phone_observe`. Nunca envia `phone_run`,
+`phone_launch_app` ou outro comando de escrita e não imprime conteúdo da
+tela, senha ou token.
+
+Exemplo seguro, com o token no ambiente do processo (não nos argumentos,
+documentos ou histórico do terminal):
+
+```sh
+export MUSE_MCP_TOKEN='(definido no cofre; não colar no chat)'
+python3 tools/mika/scripts/muse_phone_recover.py \
+  --url http://100.64.1.2:8765/mcp \
+  --kind action --request-id ger_spotify_A_20261108
+```
+
+O endereço é **exemplo**. Para lote, usar `--kind batch` e
+`--commands-file` com o array JSON original. A saída sempre declara
+`safeToReplay:false` e `decision:manual_reconciliation_required`.
+O helper é invocado **sob demanda**: não altera o timeout de 45 segundos
+do cliente existente, não reconecta o SDK automaticamente e não tenta
+reexecutar a solicitação. Seu uso no hook do Muse exige adaptação no
+ambiente real do cliente.
+
+### Roteiro E2E no POCO (sob revisão do Muse)
+
+1. Com Spotify em primeiro plano e tocando, chamar
+   `phone_launch_app(package="com.spotify.music", request_id="ger_reconnect_A_20261108")`.
+   Confirmar `pendingIntents=1` e nenhum toque na tela do usuário.
+2. Deixar a ponte MCP do Muse expirar em ~45 s, sem gerar nova ID;
+   manter o Spotify no primeiro plano por mais tempo e depois liberar.
+   Reconectar, chamar `phone_status` e
+   `phone_reconcile(kind="action",request_id="ger_reconnect_A_20261108")`.
+   Esperado: sem lançamento adicional; `journalState` informa apenas
+   a marca que realmente existe. Se `not_seen`, **não** concluir que o
+   app jamais executou; se `pending_unknown`, nenhuma repetição.
+3. Se `launchInFlight=true`, consultar `phone_status` e
+   `phone_reconcile` novamente, sem `phone_observe` (a tela poderia
+   mudar depois). Após `launchInFlight=false`, chamar `phone_observe`.
+   Esperado: observação atual, proteção de tela sensível intacta.
+4. Após um retorno de `launch_timeout_unknown`, reconectar e
+   reconciliar a **mesma** ID; confirmar `retryable:false`,
+   `requiresFreshObservation:true`, nenhum segundo `startApp`.
+5. Em um `phone_run` seguro de dois passos, forçar perda da conexão
+   depois de um passo `OK`, antes do seguinte. Reabrir MCP, chamar
+   `phone_status`, `phone_reconcile(kind="batch",request_id=<ID>,
+   commands=<array ORIGINAL>)`. Esperado: `completed=1`,
+   `nextIndex=1`; o próximo passo não é executado sozinho.
+   Trocar os comandos com a mesma ID: `checkpoint_mismatch` e nenhum
+   efeito. Verificar marca `reconciliation_required` no fluxo antigo.
+6. Repetir para ação após PENDING, mas antes de OK: consulta retorna
+   `pending_unknown`/estado incerto, sem retry, mesmo que a tela
+   pareça não ter mudado.
+7. Executar com outra credencial/proprietário MCP válido: a mesma
+   `request_id` não pode revelar o journal de outro proprietário
+   (`not_seen`/checkpoint ausente). Verificar também journal corrompido,
+   kill switch, bloqueio de senha/OTP, tela física apagada e
+   `phone_cancel` sem afetar a tela física.
+
+**Critérios de aprovação:** CI JVM/Python/Android/Go **4/4 verde**, testes
+de isolamento e falha segura, revisão independente Muse, E2E com a build
+**integrada**, autorização explícita do Darlison antes de qualquer merge.

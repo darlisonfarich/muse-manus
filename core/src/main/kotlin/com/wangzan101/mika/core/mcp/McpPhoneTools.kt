@@ -55,6 +55,9 @@ class McpPhoneTools(private val host: DirectPhoneHost, private val owner: String
     val tools: List<McpTaskTools.Tool> = listOf(
         McpTaskTools.Tool("phone_status", "Read session state and whether the local kill switch permits writes.", schema(), true),
         McpTaskTools.Tool("phone_get_state", "Alias for phone_status: session, write controls and current task contention.", schema(), true),
+        McpTaskTools.Tool("phone_reconcile", "Read-only lookup of prior request_id in the owner's durable audit journal, or a phone_run checkpoint. Never executes or retries; use phone_status then fresh phone_observe.", schema(listOf("request_id", "kind"),
+            "request_id" to id.second, "kind" to string("action or batch"),
+            "commands" to array("For batch only: exact original ordered commands, compared by fingerprint; never executed.", 30)), true),
         McpTaskTools.Tool("phone_observe", "Read sanitized Android accessibility elements and current application. Password screens require the user.", schema(), true),
         McpTaskTools.Tool("phone_screenshot", "Read a protected-screen-aware screenshot, compressed to under 1 MiB; password screens are denied.", schema(), true),
         McpTaskTools.Tool("phone_list_apps", "List installed application package names and labels.", schema(), true),

@@ -7,7 +7,7 @@ package com.wangzan101.mika.mcp
  * sensitive-screen checks; writes keep ready() and STRICT approvals.
  */
 internal object DirectPhoneScreenPolicy {
-    val reads = setOf("phone_observe", "phone_list_apps", "phone_screenshot")
+    val reads = setOf("phone_observe", "phone_list_apps", "phone_screenshot", "phone_reconcile")
 
     fun requiresInteractivePhysicalScreen(name: String): Boolean = name !in reads
 }
