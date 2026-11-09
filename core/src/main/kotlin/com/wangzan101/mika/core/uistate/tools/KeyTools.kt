@@ -46,7 +46,7 @@ internal class PressKey(f: ScreenFamily) : ScreenTool(f, "press_key") {
 
     override suspend fun execute(a: Args, ctx: ToolContext): ToolExecution {
         val k = a.str("key")!!.trim()
-        val code = PressKeys.resolve(k)
+        val code = PressKeys.resolve(k, family.keyScope)
             ?: throw ArgError("key", "key '$k' is not allowed; only navigation/editing keys: ${keyNames(family)}")
         family.keys?.let { if (code !in it) throw ArgError("key", family.keysHint ?: "key '$k' is not allowed here") }
         return ctx.action(ctx.screen.pressKey(code))

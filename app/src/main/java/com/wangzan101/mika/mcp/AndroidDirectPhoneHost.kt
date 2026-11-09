@@ -290,12 +290,30 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
      * presented token). The issuance is audited digest-only; the token is
      * redeemed by the approval gate at execution time, never here.
      */
+    /** GER PR-7: the scoped KEYCODE a volume/media tool executes as, or null when its argument is invalid. */
+    private fun scopedKeyFor(external: String, args: JsonObject): String? = when (external) {
+        "phone_volume" -> when ((args["direction"] as? JsonPrimitive)?.contentOrNull) {
+            "up" -> "KEYCODE_VOLUME_UP"; "down" -> "KEYCODE_VOLUME_DOWN"
+            "mute" -> "KEYCODE_VOLUME_MUTE"; else -> null
+        }
+        "phone_media" -> when ((args["action"] as? JsonPrimitive)?.contentOrNull) {
+            "play_pause" -> "KEYCODE_MEDIA_PLAY_PAUSE"; "stop" -> "KEYCODE_MEDIA_STOP"
+            "next" -> "KEYCODE_MEDIA_NEXT"; "previous" -> "KEYCODE_MEDIA_PREVIOUS"; else -> null
+        }
+        else -> null
+    }
+
     private fun issueApproval(owner: String, args: JsonObject): JsonObject {
         val external = (args["tool"] as? JsonPrimitive)?.contentOrNull
             ?: return fail("invalid_tool")
         val internal = ACTIONS[external] ?: return fail("invalid_tool")
         val raw = args["arguments"] as? JsonObject ?: return fail("invalid_arguments")
-        val binding = JsonObject(raw.filterKeys { it != "request_id" && it != "approval_token" })
+        // Volume/media bind the translated {key} object the executor will
+        // actually judge, not the caller-facing direction/action arguments.
+        val binding = if (external == "phone_volume" || external == "phone_media") {
+            val keyName = scopedKeyFor(external, raw) ?: return fail("invalid_arguments")
+            buildJsonObject { put("key", keyName) }
+        } else JsonObject(raw.filterKeys { it != "request_id" && it != "approval_token" })
         val token = chatApprovalStore.tokens.issue(directOwner(owner), internal, binding, "direct")
         audit(digest("issue|" + owner + "|" + internal), "approval_issue", internal)
         return buildJsonObject {
@@ -651,6 +669,21 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         // from the exact-args digest the token was bound to at issuance.
         val presentedToken = (args["approval_token"] as? JsonPrimitive)?.contentOrNull
         val clean = JsonObject(args.filterKeys { it != "request_id" && it != "approval_token" })
+        // GER PR-7: volume/media execute as one scoped phone_press_key whose
+        // arguments are the translated {key} object — the same shape the
+        // token issuer binds for those tools.
+        val actualTool: String
+        val executorTool: JsonObject
+        if (external == "phone_volume" || external == "phone_media") {
+            val keyName = scopedKeyFor(external, args)
+                ?: return GerIntentAttempt.Done(fail(
+                    if (external == "phone_volume") "invalid_volume_direction" else "invalid_media_action"))
+            actualTool = "phone_press_key"
+            executorTool = buildJsonObject { put("key", keyName) }
+        } else {
+            actualTool = tool
+            executorTool = clean
+        }
         // Recheck physical app ownership at the LAST pre-PENDING boundary.
         // Previously displayOfPackage() always missed the user's display 0,
         // then startApp returned app_in_use_by_user AFTER markOnce had already
@@ -672,7 +705,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                     val actual = try {
                         chatApprovalSlot.token = presentedToken
                         try {
-                            s.executor.run(Part.ToolCall(request, tool, clean.toString()), Origin.McpTool(sequence))
+                            s.executor.run(Part.ToolCall(request, actualTool, executorTool.toString()), Origin.McpTool(sequence))
                                 .execution().content
                         } finally { chatApprovalSlot.token = null }
                     } catch (_: Exception) {
@@ -698,7 +731,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         val result = try {
             chatApprovalSlot.token = presentedToken
             try {
-                s.executor.run(Part.ToolCall(request, tool, clean.toString()), Origin.McpTool(sequence))
+                s.executor.run(Part.ToolCall(request, actualTool, executorTool.toString()), Origin.McpTool(sequence))
                     .execution().content
             } finally { chatApprovalSlot.token = null }
         } catch (e: CancellationException) { throw e }
@@ -758,6 +791,8 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             "phone_swipe" to "phone_swipe",
             "phone_gesture" to "phone_gesture",
             "phone_key" to "phone_press_key",
+            "phone_volume" to "phone_press_key",
+            "phone_media" to "phone_press_key",
             "phone_back" to "phone_back",
         )
     }

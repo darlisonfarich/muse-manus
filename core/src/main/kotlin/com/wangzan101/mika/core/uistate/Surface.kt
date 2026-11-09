@@ -14,6 +14,8 @@ class ScreenFamily(
     val placeKey: String = APP_PLACE,
     /** press_key 能按的键;null 不限。 */
     val keys: Set<Int>? = null,
+    /** Scope applied by the key policy; phone-agent surfaces are virtual only. */
+    val keyScope: PressKeys.Scope = PressKeys.Scope.AnyDisplay,
     /** [keys] 不允许时给模型的说明。 */
     val keysHint: String? = null,
     /** 经验路线记它的动作、回放它们。 */

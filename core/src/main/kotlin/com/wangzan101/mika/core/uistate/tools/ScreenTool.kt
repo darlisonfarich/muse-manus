@@ -26,7 +26,7 @@ internal abstract class ScreenTool(val family: ScreenFamily, val base: String) :
 
     /** 说明全文:模板里的 {{动词}} 换成这一套里的工具名,{{keys}} 是这块屏能按的键。 */
     protected fun describe(vararg vars: Pair<String, Any?>): String =
-        Prompts.tool(promptFile, *(MIRRORED.map { it to family.tool(it) } + ("keys" to keyNames(family)) + vars).toTypedArray())
+        Prompts.tool(promptFile, *(MIRRORED.map { it to family.tool(it) } + ("keys" to keyNames(family)) + ("rejected" to rejectedKeys(family)) + vars).toTypedArray())
 
     override fun toString() = name
 
@@ -39,9 +39,14 @@ internal abstract class ScreenTool(val family: ScreenFamily, val base: String) :
             "tap", "scroll", "swipe", "type_text", "clear_text", "back", "press_key", "diagnose",
         )
 
+        /** press_key 在这块屏上拒绝的键类:虚拟屏放行音量/主页/最近/媒体键,只剩电源/搜索/助手/相机。 */
+        fun rejectedKeys(f: ScreenFamily): String =
+            if (f.keyScope == PressKeys.Scope.VirtualDisplay) "Power, search, assistant and camera"
+            else "Volume, power, home, recents, search, assistant, camera and media"
+
         /** 一块屏上 press_key 能按的键名。 */
         fun keyNames(f: ScreenFamily): String =
-            PressKeys.BY_NAME.filterValues { f.keys == null || it in f.keys }.keys.joinToString()
+            PressKeys.BY_NAME.filterValues { (f.keys == null || it in f.keys) && PressKeys.isAllowed(it, f.keyScope) }.keys.joinToString()
 
         /** 一块屏的那一套屏幕工具,按 [MIRRORED] 的顺序。 */
         fun of(f: ScreenFamily): List<AgentTool> = listOf(
