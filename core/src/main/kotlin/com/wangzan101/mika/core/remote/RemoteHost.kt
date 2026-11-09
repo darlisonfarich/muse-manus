@@ -18,9 +18,10 @@ class RemoteHost(
     private val token: () -> String?,
     private val port: Int,
     private val allowAllInterfaces: Boolean,
-    serverVersion: String,
+    private val serverVersion: String,
     private val clock: () -> Long = System::currentTimeMillis,
     private val onError: (Throwable) -> Unit = {},
+    private val onVoiceEvent: (String) -> Unit = {},
     loopbackToken: () -> String? = { null },
     device: DeviceAccess? = null,
     history: RemoteHistory? = null,
@@ -33,13 +34,18 @@ class RemoteHost(
 
     val boundPort: Int get() = server?.port ?: -1
 
-    fun handle(req: HttpRequest): HttpResponse = access.handle(req, endpoints::handle)
+    fun handle(req: HttpRequest): HttpResponse = access.handle(req) { authenticated ->
+        if (authenticated.path == VoiceChannelProbe.PATH) VoiceChannelProbe.handshake(authenticated, serverVersion)
+        else endpoints.handle(authenticated)
+    }
 
     /** 开始监听;端口被占等绑定失败时抛出异常。 */
     fun start() {
         val s = MiniHttpServer(bindAddress(allowAllInterfaces, port), ::handle, accept = { local, remote ->
             RemoteAccess.privateAddress(local) && RemoteAccess.privateAddress(remote)
-        }, onError = onError)
+        }, onError = onError, onUpgrade = { request, input, output ->
+            if (request.path == VoiceChannelProbe.PATH) VoiceChannelProbe.serve(input, output, serverVersion, onVoiceEvent)
+        })
         s.start()
         server = s
     }
