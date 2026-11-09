@@ -222,6 +222,7 @@ class RunTimelineViewModelTest {
             JsonObject(mapOf("ok" to JsonPrimitive(true), "guard" to JsonArray(v.map { it.toJson() }))).toString()
         val warn = withGuard(GuardVerdict("no_progress", Severity.Warn, buildJsonObject { put("same", 3) }))
         val stop = withGuard(GuardVerdict("repeating_action", Severity.Stop, buildJsonObject { put("code", "x"); put("n", 3) }))
+        assertTrue(warn.contains("\"cause\""))
         // 键的顺序换了也认得
         val reordered = """{"ok":true,"guard":[{"evidence":{"a":1},"severity":"warn","code":"too_many_failures"},{"severity":"warn","code":"brand_new"}]}"""
         val id = run("发消息") {
@@ -245,6 +246,7 @@ class RunTimelineViewModelTest {
         assertEquals(listOf(Tag("核查没通过", TagTone.Bad)), ui.steps.single { it.step == 3 }.tags)
         val four = ui.steps.single { it.step == 4 }
         assertEquals(listOf(Tag("守卫提醒:操作连续失败", TagTone.Warn), Tag("守卫提醒", TagTone.Warn)), four.tags)
+        // Step 4 came from the old verdict shape without `cause`.
         assertEquals("出错了", ui.steps.single { it.step == 5 }.result)
         assertFalse(ui.toString().contains("brand_new") || ui.toString().contains("some_new_code"))
         assertEquals("核查没通过", ui.header.verdict)

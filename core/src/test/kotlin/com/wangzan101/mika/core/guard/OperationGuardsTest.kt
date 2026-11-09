@@ -16,6 +16,38 @@ import org.junit.Test
 class OperationGuardsTest {
     private fun obj(s: String) = Json.parseToJsonElement(s).jsonObject
 
+    @Test fun everyStoppingGuardSerializesAStableCauseWithEvidenceAndRecovery() {
+        val noProgress = OperationGuards().also { g -> repeat(3) { g.effect("no_effect", treeBlind = true) } }.stop!!
+        val readLoopGuards = OperationGuards()
+        var readStop: GuardVerdict? = null
+        repeat(12) { readStop = readLoopGuards.read("phone_observe", false).lastOrNull() ?: readStop }
+        val failureGuards = OperationGuards()
+        var failureStop: GuardVerdict? = null
+        repeat(8) { failureStop = failureGuards.result("phone_tap", obj("""{"ok":false,"error":"failed"}""")).lastOrNull() ?: failureStop }
+        // same_state/state_cycle stops are dormant by design in this codebase:
+        // frame() routes revisits to no_new_state warnings and never arms the
+        // arrived()/cycle() ladders (see backAndForthBetweenTwoStatesDoesNotStopProgress
+        // and cycleStopFollowsTheStepBudget). GER PR-9 changes serialization
+        // only, not guard semantics — so their causes are checked on verdicts
+        // built with representative evidence instead of driven end-to-end.
+        val sameState = GuardVerdict("same_state", Severity.Stop,
+            obj("""{"visits":10,"threshold":6,"stopThreshold":10}"""))
+        val stateCycle = GuardVerdict("state_cycle", Severity.Stop,
+            obj("""{"states":2,"rounds":6,"threshold":6,"stopThreshold":6}"""))
+
+        listOf(noProgress, readStop!!, failureStop!!, sameState, stateCycle).forEach { verdict ->
+            val serialized = verdict.toJson()
+            val cause = serialized["cause"]!!.jsonObject
+            assertEquals("guard_${verdict.code}", cause["code"]!!.jsonPrimitive.content)
+            assertEquals(verdict.code, cause["guard"]!!.jsonPrimitive.content)
+            assertTrue(cause["counters"]!!.jsonObject.isNotEmpty())
+            assertTrue(cause["thresholds"]!!.jsonObject.isNotEmpty())
+            assertTrue(cause["clear_when"]!!.jsonPrimitive.content.isNotBlank())
+        }
+        assertEquals(setOf("no_progress", "read_loop", "same_state", "state_cycle", "too_many_failures"),
+            listOf(noProgress, readStop!!, failureStop!!, sameState, stateCycle).map { it.code }.toSet())
+    }
+
     @Test fun coordinateBucketing() {
         // 坐标按 50 取整、忽略 reason 和键顺序、滑动只记方向。
         assertEquals(
@@ -73,8 +105,11 @@ class OperationGuardsTest {
         val warned = g.effect("no_effect", treeBlind = true).single()
         assertEquals(Severity.Warn, warned.severity)
         assertEquals("no_progress", warned.code)
+        // 原因里的阶梯要和树盲路径一致:第 2 次提醒、停在 3,不是普通阶梯 3/6/9。
+        assertEquals(obj("""{"warn":[2],"stop":3}"""), warned.cause()["thresholds"]!!.jsonObject)
         val stopped = g.effect("no_effect", treeBlind = true).single()
         assertEquals(Severity.Stop, stopped.severity)
+        assertEquals(obj("""{"warn":[2],"stop":3}"""), stopped.cause()["thresholds"]!!.jsonObject)
         assertEquals(3, stopped.evidence["unchanged"]!!.jsonPrimitive.int)
         assertEquals("true", stopped.evidence["treeBlind"]!!.jsonPrimitive.content)
         assertEquals("no_progress", g.stop?.code)
@@ -265,7 +300,7 @@ class OperationGuardsTest {
 
     @Test fun verdictJsonForModel() {
         val v = GuardVerdict("repeating_action", Severity.Warn, JsonObject(emptyMap()))
-        assertEquals("""{"code":"repeating_action","severity":"warn","evidence":{}}""", v.toJson().toString())
+        assertEquals("""{"code":"repeating_action","severity":"warn","evidence":{},"cause":{"code":"guard_repeating_action","guard":"repeating_action","counters":{},"thresholds":{},"clear_when":"make real progress or end this run"}}""", v.toJson().toString())
     }
 
     // 页面没变、换着工具和参数反复读:读不出新东西,5、8 次提醒,12 次停;读到新内容、画面变了都从头算

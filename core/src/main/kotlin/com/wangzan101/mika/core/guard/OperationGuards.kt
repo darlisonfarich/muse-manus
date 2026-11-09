@@ -18,9 +18,45 @@ enum class Severity(val wire: String) { Warn("warn"), Stop("stop") }
  * 守卫的一条结论。提醒([Severity.Warn])带 [nudge]:说清卡在哪、给几条出路的一段话(发给模型);叫停的没有。
  */
 data class GuardVerdict(val code: String, val severity: Severity, val evidence: JsonObject, val nudge: String? = null) {
+    /** Stable machine-readable explanation. Evidence is already bounded counters, never screen contents. */
+    fun cause(): JsonObject = buildJsonObject {
+        put("code", "guard_${code}")
+        put("guard", code)
+        put("counters", evidence)
+        put("thresholds", thresholds(code))
+        put("clear_when", clearWhen(code))
+    }
+
     fun toJson(): JsonObject = buildJsonObject {
         put("code", code); put("severity", severity.wire); put("evidence", evidence)
+        put("cause", cause())
         nudge?.let { put("nudge", it) }
+    }
+
+    private fun thresholds(code: String): JsonObject = buildJsonObject {
+        when (code) {
+            "no_progress" -> {
+                // 树盲路径在第 2 次无效果就提醒、第 3 次叫停,阶梯和普通路径不同,如实写。
+                if ((evidence["treeBlind"] as? JsonPrimitive)?.booleanOrNull == true) {
+                    put("warn", JsonArray(listOf(JsonPrimitive(2)))); put("stop", evidence["stopThreshold"] ?: JsonPrimitive(3))
+                } else {
+                    put("warn", JsonArray(listOf(3, 6, 9).map(::JsonPrimitive))); put("stop", evidence["stopThreshold"] ?: JsonPrimitive(12))
+                }
+            }
+            "read_loop" -> { put("warn", JsonArray(listOf(5, 8).map(::JsonPrimitive))); put("stop", evidence["stopThreshold"] ?: JsonPrimitive(12)) }
+            "same_state" -> { put("warn", JsonArray(listOf(3, 6).map(::JsonPrimitive))); put("stop", evidence["stopThreshold"] ?: JsonPrimitive(10)) }
+            "state_cycle" -> { put("warn", JsonArray(listOf(2, 4).map(::JsonPrimitive))); put("stop", evidence["stopThreshold"] ?: JsonPrimitive(6)) }
+            "too_many_failures" -> { put("consecutiveStop", 8); put("unrecoverableStop", 3); put("warnConsecutive", 2); put("warnUnrecoverable", 1) }
+            else -> Unit
+        }
+    }
+
+    private fun clearWhen(code: String): String = when (code) {
+        "no_progress" -> "real_progress: an effective action or a genuinely new page/content fingerprint"
+        "read_loop" -> "real_progress: read fresh content or change the page"
+        "same_state", "state_cycle" -> "end this run and start a new run after changing the route"
+        "too_many_failures" -> "end this run and start a new run after resolving the failing condition"
+        else -> "make real progress or end this run"
     }
 }
 
@@ -154,12 +190,12 @@ class OperationGuards(private val stepBudget: Int? = null) {
     private fun noProgress(): List<GuardVerdict> {
         if (treeBlindActions >= 2) {
             return verdict("no_progress", if (unchanged >= 3) Severity.Stop else Severity.Warn, buildJsonObject {
-                put("unchanged", unchanged); put("treeBlind", true); put("treeBlindActions", treeBlindActions)
+                put("unchanged", unchanged); put("treeBlind", true); put("treeBlindActions", treeBlindActions); put("stopThreshold", 3)
             }, unchanged)
         }
         val rung = GuardRules.climb(unchanged, GuardRules.NO_EFFECT_LADDER, unchangedWarnedAt, canStop = true) ?: return emptyList()
         unchangedWarnedAt = rung.threshold
-        return verdict("no_progress", rung.severity, buildJsonObject { put("unchanged", unchanged) }, unchanged)
+        return verdict("no_progress", rung.severity, buildJsonObject { put("unchanged", unchanged); put("threshold", rung.threshold); put("stopThreshold", GuardRules.NO_EFFECT_LADDER.last()) }, unchanged)
     }
 
     /**
@@ -195,7 +231,7 @@ class OperationGuards(private val stepBudget: Int? = null) {
         if (GuardRules.cycle(trail.toList()) != null) return emptyList()
         val rung = GuardRules.climb(n, GuardRules.sameStateLadder(stepBudget), visitsWarnedAt[hash] ?: 0, canStop = true) ?: return emptyList()
         visitsWarnedAt[hash] = rung.threshold
-        return verdict("same_state", rung.severity, buildJsonObject { put("visits", n) }, n)
+        return verdict("same_state", rung.severity, buildJsonObject { put("visits", n); put("threshold", rung.threshold); put("stopThreshold", GuardRules.sameStateLadder(stepBudget).last()) }, n)
     }
 
     private fun cycle(): List<GuardVerdict> {
@@ -203,7 +239,7 @@ class OperationGuards(private val stepBudget: Int? = null) {
         if (c == null) { cycleWarnedAt = 0; return emptyList() }
         val rung = GuardRules.climb(c.rounds, GuardRules.cycleLadder(stepBudget), cycleWarnedAt, canStop = true) ?: return emptyList()
         cycleWarnedAt = rung.threshold
-        return verdict("state_cycle", rung.severity, buildJsonObject { put("states", c.period); put("rounds", c.rounds) }, c.rounds, period = c.period)
+        return verdict("state_cycle", rung.severity, buildJsonObject { put("states", c.period); put("rounds", c.rounds); put("threshold", rung.threshold); put("stopThreshold", GuardRules.cycleLadder(stepBudget).last()) }, c.rounds, period = c.period)
     }
 
     private fun noNewState(): List<GuardVerdict> {
@@ -229,7 +265,7 @@ class OperationGuards(private val stepBudget: Int? = null) {
         val rung = GuardRules.climb(n, GuardRules.REREAD_LADDER, window.warnedAt, window.canStop) ?: return emptyList()
         window.warnedAt = rung.threshold
         return verdict("read_loop", rung.severity, buildJsonObject {
-            put("tool", tool); put("rereadsOfUnchangedPage", n)
+            put("tool", tool); put("rereadsOfUnchangedPage", n); put("threshold", rung.threshold); put("stopThreshold", GuardRules.REREAD_LADDER.last())
         }, n)
     }
 
@@ -271,6 +307,7 @@ class OperationGuards(private val stepBudget: Int? = null) {
         return verdict("too_many_failures", severity, buildJsonObject {
             put("consecutive", consecutiveFailures)
             put("unrecoverable", unrecoverableFailures)
+            put("stopConsecutive", GuardRules.FAILURE_LADDER.last()); put("stopUnrecoverable", GuardRules.UNRECOVERABLE_LADDER.last())
             put("recent", JsonArray(recentFailures.toList().takeLast(5)))
         }, consecutiveFailures, waysOut = consecutiveFailures >= GuardRules.FAILURE_WAYS_OUT || unrecoverableFailures > 0)
     }

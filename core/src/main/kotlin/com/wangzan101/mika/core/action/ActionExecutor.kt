@@ -334,8 +334,11 @@ class ActionExecutor(
         return ActionOutcome.Refused(Refusals.OWN_APP, content, before)
     }
 
-    private fun refuse(code: String, origin: Origin, before: List<GuardVerdict>) =
-        ActionOutcome.Refused(code, Refusals.content(code, origin.policy.refusals, before, null, null), before)
+    private fun refuse(code: String, origin: Origin, before: List<GuardVerdict>): ActionOutcome.Refused {
+        val content = Refusals.content(code, origin.policy.refusals, before, null, null)
+        val withVerdicts = if (before.isEmpty()) content else JsonObject(content + ("guard" to JsonArray(before.map { it.toJson() })))
+        return ActionOutcome.Refused(code, withVerdicts, before)
+    }
 
     private suspend fun paymentHandoff(
         call: Part.ToolCall, args: JsonObject, origin: Origin, before: List<GuardVerdict>,
