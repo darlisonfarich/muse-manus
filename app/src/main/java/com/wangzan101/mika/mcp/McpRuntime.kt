@@ -57,6 +57,7 @@ class McpRuntime(
     private var hostListen = McpModes.Listen.Off
     private val records: RunExportSource? = (tasks as? RemoteTaskHub)?.let { hub -> RemoteRunExport(hub) { RunStore(context) } }
     private val directHost = AndroidDirectPhoneHost(context, settings)
+    val voiceHub = com.wangzan101.mika.core.remote.VoiceA2Hub()
     private val endpoints = RemoteEndpoints(tasks, BuildConfig.VERSION_NAME, device = device.access, history = history, records = records, directPhone = directHost)
     private val relayAccess = RemoteAccess(token = { if (relaySettings.config.value.enabled) settings.token() else null })
     // 经网关来的请求要另开「允许经网关唤醒和解锁」才看得到屏幕能力;手机上的远程亮屏与解锁许可照样要开。
@@ -156,7 +157,7 @@ class McpRuntime(
         val network = want == McpModes.Listen.PrivateNetworks
         val h = RemoteHost(tasks, { if (settings.enabled.value) settings.token() else null }, settings.port, allowAllInterfaces = network,
             serverVersion = BuildConfig.VERSION_NAME, onError = { Log.w(TAG, "computer access server error", it) },
-            onVoiceEvent = { Log.i(TAG, it) },
+            onVoiceEvent = { Log.i(TAG, it) }, voiceHub = voiceHub,
             loopbackToken = usb::token, device = device.access, endpoints = endpoints)
         return try {
             h.start()

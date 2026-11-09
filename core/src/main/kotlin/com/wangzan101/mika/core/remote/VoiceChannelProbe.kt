@@ -39,7 +39,12 @@ object VoiceChannelProbe {
     }
 
     /** One connection, one worker. Reads masked client frames, echoes binary and answers ping. */
-    fun serve(input: InputStream, output: OutputStream, version: String, event: (String) -> Unit = {}) {
+    fun serve(input: InputStream, output: OutputStream, version: String,
+        event: (String) -> Unit = {}, hub: VoiceA2Hub = VoiceA2Hub()) {
+        val writer = VoiceA2Sender { opcode, payload ->
+            synchronized(output) { writeFrame(output, opcode, payload) }
+        }
+        if (!hub.attach(writer)) return
         event("voice WebSocket probe opened")
         try {
             while (true) {
@@ -75,18 +80,20 @@ object VoiceChannelProbe {
                                 put("type", "probe_ok")
                                 put("server_version", version)
                             }.toString()
-                            else -> """{"type":"probe_unknown"}"""
+                            else -> null
                         }
-                        writeFrame(output, 1, answer.toByteArray(Charsets.UTF_8))
+                        if (answer != null) writer.send(1, answer.toByteArray(Charsets.UTF_8))
+                        else hub.onText(value)
                     }
-                    2 -> writeFrame(output, 2, payload)
-                    8 -> { writeFrame(output, 8, payload); return }
-                    9 -> writeFrame(output, 10, payload)
+                    2 -> if (hub.state.value.ready) hub.onBinary(payload) else writer.send(2, payload)
+                    8 -> { writer.send(8, payload); return }
+                    9 -> writer.send(10, payload)
                     10 -> Unit
                     else -> throw IOException("unsupported opcode")
                 }
             }
         } finally {
+            hub.detach(writer)
             event("voice WebSocket probe closed")
         }
     }

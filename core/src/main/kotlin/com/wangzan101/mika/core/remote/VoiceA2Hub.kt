@@ -2,6 +2,7 @@ package com.wangzan101.mika.core.remote
 
 import java.io.IOException
 import java.util.UUID
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
