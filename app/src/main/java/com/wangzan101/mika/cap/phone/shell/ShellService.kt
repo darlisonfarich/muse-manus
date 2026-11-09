@@ -1085,8 +1085,9 @@ class ShellService(
     }
 
     override fun injectKey(displayId: Int, keyCode: Int): Boolean {
-        // 与 press_key 同一张白名单:即便调用方出错,也不从这里发出音量、电源、Home 之类的整机按键
-        if (!PressKeys.isAllowed(keyCode)) {
+        // Scoped keys additionally require a display owned by this agent shell.
+        if (!PressKeys.isAllowed(keyCode) ||
+            (!PressKeys.isAllowed(keyCode, PressKeys.Scope.AnyDisplay) && !ownDisplay(displayId))) {
             Log.w(TAG, "refused key $keyCode")
             return false
         }

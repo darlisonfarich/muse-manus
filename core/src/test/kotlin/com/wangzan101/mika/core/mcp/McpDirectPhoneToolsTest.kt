@@ -35,6 +35,8 @@ class McpDirectPhoneToolsTest {
         assertTrue(tools.has("phone_observe"))
         assertTrue(tools.has("phone_run"))
         assertTrue(tools.has("phone_reconcile"))
+        assertTrue(tools.has("phone_volume"))
+        assertTrue(tools.has("phone_media"))
         val call = tools.call("phone_tap", buildJsonObject {
             put("request_id", "01b0cfee-3b7d-4924-bd36-3d0454e30662")
             put("x", 500); put("y", 500)
@@ -45,10 +47,21 @@ class McpDirectPhoneToolsTest {
             put("kind", "action"); put("request_id", "01b0cfee-3b7d-4924-bd36-3d0454e30662")
         })
         assertEquals("owner-a", reconciliation["owner"]?.jsonPrimitive?.content)
-        assertEquals(listOf("owner-a" to "phone_tap", "owner-a" to "phone_reconcile"), host.calls)
+        tools.call("phone_volume", buildJsonObject {
+            put("direction", "up"); put("request_id", "request-volume")
+        })
+        tools.call("phone_media", buildJsonObject {
+            put("action", "next"); put("request_id", "request-media")
+        })
+        assertEquals(listOf("owner-a" to "phone_tap", "owner-a" to "phone_reconcile",
+            "owner-a" to "phone_volume", "owner-a" to "phone_media"), host.calls)
         val names = tools.definitions().map { it.jsonObject["name"]!!.jsonPrimitive.content }
         assertTrue("mika_run_task" in names)
         assertTrue("phone_tap" in names)
+        assertTrue("phone_volume" in names)
+        assertTrue("phone_media" in names)
+        assertFalse(tools.tools.first { it.name == "phone_volume" }.readOnly)
+        assertFalse(tools.tools.first { it.name == "phone_media" }.readOnly)
     }
 
     @Test fun noArbitraryCommandsAreExported() {

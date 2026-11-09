@@ -32,11 +32,13 @@ class McpDirectPhoneSafetyTest {
         assertTrue(remote.stopOnGuardWarning)
     }
 
-    @Test fun deviceWideKeysStayOutOfTheSharedAllowlist() {
+    @Test fun scopedKeysAreVirtualOnlyAndPowerRemainsBlocked() {
         for (key in listOf("KEYCODE_HOME", "KEYCODE_APP_SWITCH", "KEYCODE_VOLUME_UP",
-                "KEYCODE_VOLUME_DOWN", "KEYCODE_POWER")) {
-            assertEquals(key, null, PressKeys.resolve(key))
+                "KEYCODE_VOLUME_DOWN", "KEYCODE_MEDIA_NEXT")) {
+            assertEquals(key, null, PressKeys.resolve(key, PressKeys.Scope.AnyDisplay))
+            assertTrue(key, PressKeys.resolve(key, PressKeys.Scope.VirtualDisplay) != null)
         }
+        assertEquals(null, PressKeys.resolve("KEYCODE_POWER", PressKeys.Scope.VirtualDisplay))
         assertEquals(4, PressKeys.resolve("KEYCODE_BACK"))
     }
 }
