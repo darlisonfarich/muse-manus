@@ -1,6 +1,7 @@
 package com.wangzan101.mika.core.remote
 
-import java.io.IOException
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.UUID
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +25,8 @@ fun interface VoiceA2Sender { fun send(opcode: Int, payload: ByteArray) }
 
 class VoiceA2Hub {
     private val lock = Any()
+    private data class Pending(val conversationId: String, val turnId: String, val generationId: String, val wav: ByteArray)
+    private val outgoing = ArrayBlockingQueue<Pending>(1)
     private val mutable = MutableStateFlow(VoiceA2State())
     val state = mutable.asStateFlow()
     private var sender: VoiceA2Sender? = null
@@ -39,13 +42,16 @@ class VoiceA2Hub {
         generation = null
         mp3 = null
         resultAudio = null
+        outgoing.clear()
         mutable.value = VoiceA2State(connected = true, status = "Aguardando HELLO da VM")
+        Thread({ pump(next) }, "voice-a2-outgoing").apply { isDaemon = true }.start()
         true
     }
 
     fun detach(connectedSender: VoiceA2Sender) = synchronized(lock) {
         if (sender !== connectedSender) return@synchronized
         sender = null
+        outgoing.clear()
         current = null
         generation = null
         mp3 = null
@@ -53,10 +59,10 @@ class VoiceA2Hub {
         mutable.value = VoiceA2State()
     }
 
+    /** Exactly one queued outbound WAV at a time, drained by a connection-owned worker. */
     fun submit(conversationId: String, turnId: String, generationId: String, wav: ByteArray): Boolean =
         synchronized(lock) {
-            val out = sender ?: return@synchronized false
-            if (!mutable.value.ready || current != null || wav.isEmpty() ||
+            if (sender == null || !mutable.value.ready || current != null || wav.isEmpty() ||
                 wav.size > VoiceA2Protocol.MAX_WAV_BYTES) return@synchronized false
             UUID.fromString(conversationId)
             UUID.fromString(turnId)
@@ -66,34 +72,60 @@ class VoiceA2Hub {
             mp3 = null
             resultAudio = null
             mutable.value = mutable.value.copy(turnId = turnId, generationId = generationId,
-                status = "Enviando áudio", transcript = "", reply = "", audio = null,
+                status = "Áudio na fila de saída", transcript = "", reply = "", audio = null,
                 resultId = null, error = null)
-            try {
-                sendText(out, VoiceA2Protocol.control("TURN_START",
-                    "conversation_id" to conversationId, "turn_id" to turnId,
-                    "generation_id" to generationId, "format" to "wav_pcm16_16000_mono",
-                    "total_bytes" to wav.size.toString()))
-                var seq = 0
-                for (start in wav.indices step VoiceA2Protocol.CHUNK_BYTES) {
-                    val block = wav.copyOfRange(start, minOf(start + VoiceA2Protocol.CHUNK_BYTES, wav.size))
-                    out.send(2, VoiceA2Protocol.encode(VoiceA2Protocol.WAV, turnId, seq++, block))
-                }
-                sendText(out, VoiceA2Protocol.control("AUDIO_END",
-                    "turn_id" to turnId, "generation_id" to generationId, "kind" to "wav"))
-                mutable.value = mutable.value.copy(status = "Aguardando resposta do Muse")
-                true
-            } catch (_: Exception) {
+            if (!outgoing.offer(Pending(conversationId, turnId, generationId, wav))) {
                 current = null
                 generation = null
-                mutable.value = mutable.value.copy(status = "Muse desconectado",
-                    error = "Falha ao enviar o áudio")
-                false
+                mutable.value = mutable.value.copy(turnId = null, generationId = null,
+                    status = "Fila de voz ocupada", error = "Fila de voz ocupada")
+                return@synchronized false
+            }
+            true
+        }
+
+    private fun active(task: Pending, link: VoiceA2Sender): Boolean = synchronized(lock) {
+        sender === link && current == task.turnId && generation == task.generationId
+    }
+
+    private fun pump(link: VoiceA2Sender) {
+        while (synchronized(lock) { sender === link }) {
+            val task = outgoing.poll(250, TimeUnit.MILLISECONDS) ?: continue
+            if (!active(task, link)) continue
+            try {
+                sendText(link, VoiceA2Protocol.control("TURN_START",
+                    "conversation_id" to task.conversationId, "turn_id" to task.turnId,
+                    "generation_id" to task.generationId, "format" to "wav_pcm16_16000_mono",
+                    "total_bytes" to task.wav.size.toString()))
+                var seq = 0
+                for (start in task.wav.indices step VoiceA2Protocol.CHUNK_BYTES) {
+                    if (!active(task, link)) break
+                    val block = task.wav.copyOfRange(start, minOf(start + VoiceA2Protocol.CHUNK_BYTES, task.wav.size))
+                    link.send(2, VoiceA2Protocol.encode(VoiceA2Protocol.WAV, task.turnId, seq++, block))
+                }
+                if (!active(task, link)) continue
+                sendText(link, VoiceA2Protocol.control("AUDIO_END",
+                    "turn_id" to task.turnId, "generation_id" to task.generationId, "kind" to "wav"))
+                synchronized(lock) {
+                    if (active(task, link)) mutable.value = mutable.value.copy(status = "Aguardando resposta do Muse")
+                }
+            } catch (_: Exception) {
+                synchronized(lock) {
+                    if (active(task, link)) {
+                        current = null
+                        generation = null
+                        mutable.value = mutable.value.copy(turnId = null, generationId = null,
+                            status = "Falha ao transmitir WAV", error = "Conexão interrompida")
+                    }
+                }
             }
         }
+    }
 
     fun cancel(): Unit = synchronized(lock) {
         val turn = current ?: return@synchronized
         val gen = generation ?: return@synchronized
+        outgoing.clear()
         runCatching { sender?.let { sendText(it, VoiceA2Protocol.control("CANCEL",
             "turn_id" to turn, "generation_id" to gen)) } }
         current = null
