@@ -276,6 +276,14 @@ ponte do Muse e é independente da remoção OTLP.
 - Tarefas admitidas continuam prioritárias. O `TaskRun` usa a arbitragem de apps do `ResourceScheduler` também quando o paralelismo padrão está desligado mas há uma sessão MCP viva; o `awaitApp` já existente permite esperar a liberação do pacote sem roubar a sessão. Não há nova permissão Android, escrita em senha, aprovação remota, controle de wake/unlock nem multiplas telas MCP.
 - **Validação obrigatória:** JVM para fila/FIFO/limite, cancelamento, timeout com causa, duplicidade, kill switch, retomada após tarefa e sessão suspensa; CI 4/4; E2E do Muse no POCO verificando execução após liberação da tarefa, timeout quando o usuário mantém app em uso e cancelamento durante espera. Revisão Muse e evidência E2E **antes de merge**.
 
+## GER / PR-8 — slots MCP e governador de admissão
+
+- O GER aloca slots numerados para sessões diretas MCP (padrão: três); cada proprietário tem sua sessão/display, e encerramento, falha de criação e expiração liberam app e slot. A sessão retém o slot enquanto suspensa por tarefa até o TTL de inatividade (15 min por padrão). Lotação entra na fila de intenções e termina pelo timeout já existente com causa `slot_budget_exhausted`.
+- O display principal do usuário não integra o conjunto de slots. Sessões MCP não iniciam nem movem conteúdo nele; tarefas admitidas suspendem ações nos slots até poderem prosseguir.
+- `GlobalExecutionRegistry.Budgets` define máximo de tarefas (3), tarefas por conversa (1), slots (3), TTL de sessão (15 min) e TTL nominal de tarefa (1 h). A capacidade do TaskCenter permanece o limite efetivo mais baixo. Erros de orçamento de tarefa são códigos estáveis (`task_budget_exhausted`, `owner_budget_exhausted`); a fila de intenções preserva chamadas em espera, sem descarte silencioso.
+- Limites desta entrega: o TTL de sessão é aplicado pelo host; TTL de tarefa é orçamento configurável para integração ao ciclo de execução e não força cancelamento de uma tarefa em andamento. O governador não estima memória/bateria em tempo real. São necessários testes em dispositivo para validar estabilidade/custo de três displays e coexistência real de apps.
+- Testes JVM cobrem alocação/reuso, esgotamento sem roubo de slot, orçamento de tarefas e prioridade de tarefa sobre execução MCP.
+
 ## Limites de telas: computador do Muse vs navegação pessoal no POCO (decisão do usuário)
 
 **Regra de produto confirmada (2026-11-08):** qualquer limite configurável de **até três janelas/sessões** que o Muse possa escolher é um **orçamento de janelas de trabalho no computador virtual do Muse**, não uma restrição sobre a navegação física do usuário no POCO. O usuário pode abrir quantos aplicativos e janelas o Android/HyperOS suportar. A fila e o GER não podem restringir a abertura, a alternância, o uso em tela dividida ou o primeiro plano da tela física do usuário.

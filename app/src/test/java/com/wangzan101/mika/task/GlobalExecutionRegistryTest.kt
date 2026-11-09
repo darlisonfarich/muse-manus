@@ -9,6 +9,63 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GlobalExecutionRegistryTest {
+    @Test fun slotsAllocateIndependentlyAndReleaseForReuse() {
+        val ger = GlobalExecutionRegistry()
+        val a = ger.claimSlot("mcp-a")
+        val b = ger.claimSlot("mcp-b")
+        assertTrue(a.admitted); assertTrue(b.admitted)
+        assertTrue(a.slot != b.slot)
+        assertTrue(ger.isActiveOwner("mcp-a"))
+        assertTrue(ger.releaseSlot("mcp-a"))
+        assertEquals(a.slot, ger.claimSlot("mcp-c").slot)
+    }
+
+    @Test fun slotExhaustionReturnsStableBudgetCodeAndDoesNotSteal() {
+        val ger = GlobalExecutionRegistry()
+        ger.budgets = GlobalExecutionRegistry.Budgets(maxDisplaySlots = 2)
+        assertTrue(ger.claimSlot("a").admitted)
+        assertTrue(ger.claimSlot("b").admitted)
+        val refused = ger.claimSlot("c")
+        assertEquals(GlobalExecutionRegistry.Refusal.slot_budget_exhausted, refused.refusal)
+        assertEquals(setOf("a", "b"), ger.slotOwners().values.toSet())
+    }
+
+    @Test fun taskGovernorRefusesBeyondConfiguredBudgetButAllowsUserDisplayOutsideSlots() {
+        val ger = GlobalExecutionRegistry()
+        ger.budgets = GlobalExecutionRegistry.Budgets(maxTasks = 1)
+        ger.taskStarted("task-a")
+        try {
+            ger.taskStarted("task-b")
+            throw AssertionError("expected stable budget refusal")
+        } catch (e: IllegalArgumentException) {
+            assertEquals(GlobalExecutionRegistry.Refusal.task_budget_exhausted.name, e.message)
+        }
+        assertTrue(ger.claimSlot("mcp-a").admitted)
+        assertFalse(ger.canUseSlot("mcp-a")) // admitted tasks take priority over Muse slots
+    }
+
+    @Test fun taskGovernorEnforcesPerOwnerConcurrencyAndTaskTtl() {
+        val ger = GlobalExecutionRegistry()
+        ger.budgets = GlobalExecutionRegistry.Budgets(maxTasks = 3, maxTasksPerOwner = 1, taskTtlMs = 0)
+        ger.taskStarted("run-a", "conversation-a")
+        try {
+            ger.taskStarted("run-b", "conversation-a")
+            throw AssertionError("expected owner budget refusal")
+        } catch (e: IllegalArgumentException) {
+            assertEquals(GlobalExecutionRegistry.Refusal.owner_budget_exhausted.name, e.message)
+        }
+        ger.taskEnded("run-a")
+        ger.budgets = ger.budgets.copy(taskTtlMs = 60_000)
+        ger.taskStarted("run-b", "conversation-a")
+        ger.budgets = ger.budgets.copy(taskTtlMs = 0)
+        try {
+            ger.taskStarted("run-c", "conversation-b")
+            throw AssertionError("expected task TTL admission refusal")
+        } catch (e: IllegalArgumentException) {
+            assertEquals(GlobalExecutionRegistry.Refusal.task_ttl_exhausted.name, e.message)
+        }
+    }
+
     @Test fun existingTaskBlocksDirectHostWithoutChangingTaskCapacity() {
         val ger = GlobalExecutionRegistry()
         ger.taskStarted("task-a")

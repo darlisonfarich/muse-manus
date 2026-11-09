@@ -83,9 +83,9 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
     private val checkpoints = DirectPhoneBatchCheckpoints(File(context.filesDir, "direct-phone-batches.log"))
     private val seen = HashSet<String>()
     private var loaded = false
-    private var current: Session? = null
+    private val sessions = LinkedHashMap<String, Session>()
     private var step = 0
-    private val ttlMs = 15 * 60_000L
+    private val ttlMs get() = app.resources.ger.budgets.sessionTtlMs
 
     private class Session(
         val owner: String,
@@ -122,9 +122,10 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
 
     private fun directOwner(owner: String): String = "mcp:" + digest(owner)
 
-    private fun closeActive() {
-        val session = current ?: return
-        current = null
+    private fun closeActive(owner: String? = null) {
+        if (owner == null) { sessions.keys.toList().forEach(::closeActive); return }
+        val session = sessions[owner] ?: return
+        sessions.remove(session.owner)
         val key = directOwner(session.owner)
         try {
             session.close()
@@ -132,6 +133,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             // Release every package held by this screen before revoking its GER lease.
             app.resources.releaseOwner(key)
             app.resources.ger.releaseDirect(key)
+            app.resources.ger.releaseSlot(key)
         }
     }
 
@@ -161,10 +163,10 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         if (name == "phone_cancel") {
             val cancelled = scheduler.ger.intentions.cancelOwner(sessionOwner)
             return lock.withLock {
-                val hadSession = current?.owner == owner
+                val hadSession = sessions.containsKey(owner)
                 val deferredClose = hadSession && launchBoundary.isInFlight()
                 if (deferredClose) closeAfterLaunch = true
-                else if (hadSession) closeActive()
+                else if (hadSession) closeActive(owner)
                 if (!hadSession && cancelled == 0) fail("session_not_found")
                 else buildJsonObject {
                     put("ok", true); put("closed", hadSession && !deferredClose)
@@ -175,7 +177,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         }
         if (name == "phone_status" || name == "phone_get_state") return lock.withLock {
             buildJsonObject {
-                put("ok", true); put("active", current?.owner == owner)
+                put("ok", true); put("active", sessions.containsKey(owner))
                 put("writeEnabled", settings.enabled.value && settings.directWritesEnabled.value)
                 put("busy", busy()); put("sessionTtlMs", ttlMs)
                 put("pendingIntents", scheduler.ger.intentions.pendingCount(sessionOwner))
@@ -206,24 +208,20 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                 if (name !in READS && !settings.directWritesEnabled.value)
                     return@attempt GerIntentAttempt.Done(fail("write_disabled"))
                 val now = System.currentTimeMillis()
-                if (current != null && now - current!!.lastUsed > ttlMs) closeActive()
+                sessions.values.filter { now - it.lastUsed > ttlMs }.map { it.owner }.forEach(::closeActive)
                 if (busy()) return@attempt GerIntentAttempt.Blocked("task_running")
-                if (current != null && current!!.owner != owner)
-                    return@attempt GerIntentAttempt.Blocked("direct_session_busy")
-                if (!scheduler.ger.claimDirect(sessionOwner))
-                    return@attempt GerIntentAttempt.Blocked(
-                        if (scheduler.ger.hasRunningTasks()) "task_running" else "direct_session_busy"
-                    )
+                val admission = scheduler.ger.claimSlot(sessionOwner)
+                if (!admission.admitted) return@attempt GerIntentAttempt.Blocked("slot_budget_exhausted")
                 val s = try {
-                    current ?: create(owner, now).also { current = it }
+                    sessions[owner] ?: create(owner, now).also { sessions[owner] = it }
                 } catch (e: CancellationException) {
-                    if (current == null) scheduler.ger.releaseDirect(sessionOwner)
+                    if (owner !in sessions) scheduler.ger.releaseSlot(sessionOwner)
                     throw e
                 } catch (_: Exception) {
-                    if (current == null) scheduler.ger.releaseDirect(sessionOwner)
+                    if (owner !in sessions) scheduler.ger.releaseSlot(sessionOwner)
                     return@attempt GerIntentAttempt.Done(fail("phone_unavailable"))
                 }
-                if (!scheduler.ger.canUseDirect(sessionOwner))
+                if (!scheduler.ger.canUseSlot(sessionOwner))
                     return@attempt GerIntentAttempt.Blocked("task_running")
                 if (isCancelled()) return@attempt GerIntentAttempt.Done(fail("cancelled"))
                 s.lastUsed = now
@@ -239,7 +237,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                             else {
                                 val observed = s.tools.executeRead(Part.ToolCall(UUID.randomUUID().toString(), name, "{}")).content
                                 when {
-                                    !scheduler.ger.canUseDirect(sessionOwner) -> GerIntentAttempt.Blocked("task_running")
+                                    !scheduler.ger.canUseSlot(sessionOwner) -> GerIntentAttempt.Blocked("task_running")
                                     sensitive(s) -> GerIntentAttempt.Done(fail("needs_user"))
                                     else -> GerIntentAttempt.Done(observed)
                                 }
@@ -247,7 +245,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                         }
                         "phone_screenshot" -> {
                             val result = screenshot(s)
-                            if (!scheduler.ger.canUseDirect(sessionOwner)) GerIntentAttempt.Blocked("task_running")
+                            if (!scheduler.ger.canUseSlot(sessionOwner)) GerIntentAttempt.Blocked("task_running")
                             else GerIntentAttempt.Done(result)
                         }
                         "phone_run" -> batch(s, args, progress, isCancelled)
@@ -426,7 +424,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         return lock?.isDeviceLocked != true && lock?.isKeyguardLocked != true &&
             power?.isInteractive != false && s.binding.shell.value != null &&
             ScreenAccessibility.instance.value != null &&
-            app.resources.ger.canUseDirect(directOwner(s.owner))
+            app.resources.ger.canUseSlot(directOwner(s.owner))
     }
 
     private fun readyForGate(binding: ShellBinding): Boolean {
@@ -460,15 +458,15 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                 AndroidScreen(a11y, shell, display,
                     checkOtherTasks = true,
                     reserve = { pkg ->
-                        !busy() && scheduler.ger.canUseDirect(sessionOwner) &&
+                        !busy() && scheduler.ger.canUseSlot(sessionOwner) &&
                             scheduler.reserveApp(pkg, sessionOwner, scheduler.ger::isActiveOwner, { true })
                     },
                     reserveCopy = { pkg, user ->
-                        !busy() && scheduler.ger.canUseDirect(sessionOwner) &&
+                        !busy() && scheduler.ger.canUseSlot(sessionOwner) &&
                             scheduler.reserveApp(claimKey(pkg, user), sessionOwner, scheduler.ger::isActiveOwner, { true })
                     },
                     appFree = { pkg, user ->
-                        !busy() && scheduler.ger.canUseDirect(sessionOwner) &&
+                        !busy() && scheduler.ger.canUseSlot(sessionOwner) &&
                             scheduler.appFree(claimKey(pkg, user), sessionOwner, scheduler.ger::isActiveOwner, { true })
                     },
                     appAccess = app.appAccess,
@@ -490,7 +488,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             val executor = ActionExecutor(
                 tools, OperationGuards(400), confirmations = null,
                 gate = { check(settings.directWritesEnabled.value && settings.enabled.value && !busy() &&
-                    scheduler.ger.canUseDirect(sessionOwner) && readyForGate(binding)) },
+                    scheduler.ger.canUseSlot(sessionOwner) && readyForGate(binding)) },
                 recorder = ActionRecorder(sink), approvals = ApprovalSettings.STRICT,
                 // Bridge origin is STRICT in ApprovalPolicy; generic Mcp runs only use ASK.
                 // Origin.McpTool never consumes a remote approval/grant.
@@ -598,7 +596,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         }
         while (progress.index < commands.size) {
             if (cancelled()) return GerIntentAttempt.Done(fail("cancelled"))
-            if (busy() || !app.resources.ger.canUseDirect(directOwner(s.owner)))
+            if (busy() || !app.resources.ger.canUseSlot(directOwner(s.owner)))
                 return GerIntentAttempt.Blocked("task_running")
             val raw = commands[progress.index]
             val cmd = raw as? JsonObject ?: return GerIntentAttempt.Done(fail("invalid_commands"))
@@ -660,7 +658,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         val tool = ACTIONS[external] ?: return GerIntentAttempt.Done(fail("unknown_tool"))
         if (!settings.enabled.value || !settings.directWritesEnabled.value)
             return GerIntentAttempt.Done(fail("write_disabled"))
-        if (busy() || !app.resources.ger.canUseDirect(directOwner(s.owner)))
+        if (busy() || !app.resources.ger.canUseSlot(directOwner(s.owner)))
             return GerIntentAttempt.Blocked("task_running")
         if (!ready(s) || sensitive(s)) return GerIntentAttempt.Done(fail("needs_user"))
         val request = requestId(args) ?: return GerIntentAttempt.Done(fail("request_id_required"))
