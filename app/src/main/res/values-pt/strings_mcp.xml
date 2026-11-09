@@ -65,4 +65,24 @@
     <string name="mcp_cli_connection_check">connect verifica a conexão. Uma solicitação bem-sucedida atualiza o horário acima.</string>
     <string name="mcp_history_title">Permitir que computadores vejam o histórico</string>
     <string name="mcp_history_detail">Os computadores conectados podem ler todas as conversas, os registros de execução e o conteúdo dos Trace gravados, incluindo solicitações e respostas do modelo com dados confidenciais ocultos. Aplica-se a USB e a conexões por redes privadas.</string>
+    <string name="mcp_scoped_title">Concessões temporárias</string>
+    <string name="mcp_scoped_new">Nova concessão local</string>
+    <string name="mcp_scoped_package">Aplicativo</string>
+    <string name="mcp_scoped_account">Conta</string>
+    <string name="mcp_scoped_account_hint">Identificador exato da conta</string>
+    <string name="mcp_scoped_navigate">Navegação rotineira</string>
+    <string name="mcp_scoped_edit">Edição rotineira</string>
+    <string name="mcp_scoped_5min">5 minutos</string>
+    <string name="mcp_scoped_15min">15 minutos</string>
+    <string name="mcp_scoped_issue">Conceder localmente</string>
+    <string name="mcp_scoped_created">Concessão criada</string>
+    <string name="mcp_scoped_audit_failed">Não foi possível auditar; nenhuma permissão concedida.</string>
+    <string name="mcp_scoped_invalid">Verifique pacote, conta e duração.</string>
+    <string name="mcp_scoped_warning">Apenas local e válida até o fim do processo. Não libera envios, exclusões, compras ou pagamentos, não ativa escritas remotas e não contorna o interruptor de segurança nem aprovações de uso único. A conta precisa ser verificada antes de aplicar a concessão a uma ação remota.</string>
+    <string name="mcp_scoped_active">Concessões ativas</string>
+    <string name="mcp_scoped_empty">Nenhuma concessão ativa</string>
+    <string name="mcp_scoped_revoke">Revogar</string>
+    <string name="mcp_scoped_revoke_all">Revogar todas</string>
+    <string name="mcp_scoped_entry">Gerenciar concessões</string>
+    <string name="mcp_scoped_entry_detail">Revisar e revogar concessões rotineiras temporárias</string>
 </resources>

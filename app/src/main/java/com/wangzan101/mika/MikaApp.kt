@@ -240,6 +240,19 @@ class MikaApp : Application(), WebOwner, SandboxOwner, TaskEnvironment.Owner, Ph
     /** 全局的询问 / 自主和各任务自己的那一份;开发者选项里的「自主模式」经它改。 */
     val approvalControl: ApprovalControl by lazy { ApprovalControl(approvals) }
 
+    /**
+     * Explicit local short-lived scopes; not loaded after process death.
+     * They cannot authorize payment, outward send/delete, MCP write or override
+     * the existing Strict/kill-switch/physical-screen protections.
+     */
+    val scopedGrants: com.wangzan101.mika.core.gate.ScopedGrantRegistry by lazy {
+        val audit = com.wangzan101.mika.settings.ScopedGrantAudit(
+            java.io.File(filesDir, "settings/scoped-grants-audit.log"))
+        com.wangzan101.mika.core.gate.ScopedGrantRegistry(
+            onAudit = audit::record,
+        )
+    }
+
     /** 各 Run 的队列与展示状态跟 App 进程走，Service 重建时继续使用同一份。 */
     val taskState = TaskCenterState()
 

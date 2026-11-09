@@ -65,4 +65,24 @@
     <string name="mcp_cli_connection_check">connect verifica la conexión. Una solicitud correcta actualiza la hora de arriba.</string>
     <string name="mcp_history_title">Permitir que los equipos vean el historial</string>
     <string name="mcp_history_detail">Los equipos conectados pueden leer todas las conversaciones, los registros de ejecución y el contenido de los Trace grabados, incluidas las solicitudes y respuestas del modelo con los datos sensibles ocultos. Se aplica a USB y a las conexiones por redes privadas.</string>
+    <string name="mcp_scoped_title">Permisos temporales limitados</string>
+    <string name="mcp_scoped_new">Nuevo permiso local</string>
+    <string name="mcp_scoped_package">Aplicación</string>
+    <string name="mcp_scoped_account">Cuenta</string>
+    <string name="mcp_scoped_account_hint">Identificador exacto de cuenta</string>
+    <string name="mcp_scoped_navigate">Navegación rutinaria</string>
+    <string name="mcp_scoped_edit">Edición rutinaria</string>
+    <string name="mcp_scoped_5min">5 minutos</string>
+    <string name="mcp_scoped_15min">15 minutos</string>
+    <string name="mcp_scoped_issue">Conceder localmente</string>
+    <string name="mcp_scoped_created">Permiso creado</string>
+    <string name="mcp_scoped_audit_failed">No se pudo registrar el permiso. No se concedió acceso.</string>
+    <string name="mcp_scoped_invalid">Comprueba la aplicación, la cuenta y la duración.</string>
+    <string name="mcp_scoped_warning">Solo local y válido mientras dure el proceso. No permite enviar, borrar, comprar ni pagar; tampoco habilita escrituras remotas ni evita los controles de seguridad o las aprobaciones de un solo uso. Es necesario verificar la identidad de la cuenta antes de usarlo en remoto.</string>
+    <string name="mcp_scoped_active">Permisos activos</string>
+    <string name="mcp_scoped_empty">No hay permisos activos</string>
+    <string name="mcp_scoped_revoke">Revocar</string>
+    <string name="mcp_scoped_revoke_all">Revocar todos</string>
+    <string name="mcp_scoped_entry">Gestionar permisos limitados</string>
+    <string name="mcp_scoped_entry_detail">Revisar y revocar permisos temporales</string>
 </resources>

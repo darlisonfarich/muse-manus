@@ -499,3 +499,39 @@ ambiente real do cliente.
 **Critérios de aprovação:** CI JVM/Python/Android/Go **4/4 verde**, testes
 de isolamento e falha segura, revisão independente Muse, E2E com a build
 **integrada**, autorização explícita do Darlison antes de qualquer merge.
+
+
+## MUSE MANUS NEXT — GER PR-5 (concessões de rotina com escopo, locais)
+
+**Defesa em profundidade:** o novo `ScopedGrantRegistry` mantém concessões
+**somente em memória de processo**, com app pelo package name exato,
+identificador de conta explícito, classe de ação restrita a
+`Navigate`/`Edit`, duração entre 1 ms e **15 min** e revogação imediata.
+Usa relógio monotônico; relógio revertido invalida concessões. Em
+reinício do app, **todas** as concessões expiram (não são recarregadas).
+Emissão exige ação do usuário na tela local de gerenciamento, sob
+**Conectar computador → Gerenciar concessões**. Não há endpoint MCP
+para criar/alterar grants. Tentativa de emissão sem fsync do log privado
+resulta em **nenhuma concessão**; revogar/expirar remove permissões mesmo
+com erro de disco. O log não guarda pacote, conta, senha, captura ou
+argumentos, apenas ID aleatória, classe, prazo e tipo de evento.
+
+**Limite deliberado desta etapa:** uma etiqueta de conta digitada pelo
+usuário **não é prova** da identidade logada num aplicativo Android.
+O registry ainda **não autoriza** ações do executor; o PR-6 terá de
+adicionar um canal de consentimento autenticado e uma vinculação
+verificável de conta/sessão antes que as concessões possam ser
+consultadas por decisões de risco. Esta separação é a forma segura de
+evitar que texto no screenshot, arguments MCP ou o próprio agente
+imitem a identidade de conta. Regras de `ConfirmationGate` de uso único,
+`ApprovalPolicy` (pagamentos remotos sempre `Deny`), proteção de
+senha/OTP, `directWritesEnabled` e permissões STRICT permanecem
+**inalteradas**. Não interpretar a existência de uma concessão como
+aprovação efetiva para enviar, postar, excluir, comprar ou pagar.
+
+**Testes:** JVM `ScopedGrantsTest` verifica limite 15 min, expiração no
+instante exato, rollback do relógio, pacote/conta/classe diferentes,
+revogação, ausência de persistência entre processos e
+`ApprovalPolicy.pay` negado remotamente. UI deve permitir criar,
+listar, expirar e revogar, sem conceder privilégios remotos; conferir
+FORK.md e CI 4/4 antes do merge. Sem instalação automática no POCO.

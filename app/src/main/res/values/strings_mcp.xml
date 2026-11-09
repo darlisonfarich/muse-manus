@@ -65,4 +65,24 @@
     <string name="mcp_cli_connection_check">connect verifies the connection. A successful request updates the time above.</string>
     <string name="mcp_history_title">Allow computers to view history</string>
     <string name="mcp_history_detail">Connected computers can read all conversations, run records and recorded Trace bodies, including redacted model requests and replies. Applies to USB and private-network connections.</string>
+    <string name="mcp_scoped_title">Temporary scoped grants</string>
+    <string name="mcp_scoped_new">New local grant</string>
+    <string name="mcp_scoped_package">App</string>
+    <string name="mcp_scoped_account">Account</string>
+    <string name="mcp_scoped_account_hint">Exact account label</string>
+    <string name="mcp_scoped_navigate">Routine navigation</string>
+    <string name="mcp_scoped_edit">Routine editing</string>
+    <string name="mcp_scoped_5min">5 minutes</string>
+    <string name="mcp_scoped_15min">15 minutes</string>
+    <string name="mcp_scoped_issue">Grant locally</string>
+    <string name="mcp_scoped_created">Grant created</string>
+    <string name="mcp_scoped_audit_failed">Could not audit grant. No permission issued.</string>
+    <string name="mcp_scoped_invalid">Check the package, account and duration.</string>
+    <string name="mcp_scoped_warning">Local-only and process-lifetime limited. These grants do NOT permit sending, deletion, purchases or payments, do not enable remote writes, and never override the kill switch or one-use approvals. Account identity must be verified before applying a grant to a remote action.</string>
+    <string name="mcp_scoped_active">Active grants</string>
+    <string name="mcp_scoped_empty">No active grants</string>
+    <string name="mcp_scoped_revoke">Revoke</string>
+    <string name="mcp_scoped_revoke_all">Revoke all</string>
+    <string name="mcp_scoped_entry">Manage scoped grants</string>
+    <string name="mcp_scoped_entry_detail">Review and revoke short-lived routine grants</string>
 </resources>
