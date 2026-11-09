@@ -1097,6 +1097,15 @@ class ShellService(
         return injectPair(down, up, displayId) { exec("input", "-d", "$displayId", "keyevent", "$keyCode") == 0 }
     }
 
+    override fun musicVolumeState(): Bundle? = runCatching {
+        val audio = context.getSystemService(AudioManager::class.java)
+        Bundle().apply {
+            putInt("current", audio.getStreamVolume(AudioManager.STREAM_MUSIC))
+            putInt("max", audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC))
+            putBoolean("muted", audio.isStreamMute(AudioManager.STREAM_MUSIC))
+        }
+    }.getOrNull()
+
     /** 自有虚拟屏上的 Ctrl+A / Ctrl+V,同时发送修饰键按下和抬起;松开修饰键失败不会把已经发出的正文判成未发送。 */
     override fun injectCtrlKey(displayId: Int, keyCode: Int): Int {
         if (!ownDisplay(displayId)) return AsciiTextKeys.NOT_SENT

@@ -266,6 +266,11 @@ ponte do Muse e é independente da remoção OTLP.
   globais do sistema, mesmo quando o evento é endereçado a um display virtual.
   O código impede injeção destinada ao display principal; o efeito isolado no
   hardware/ROM precisa ser confirmado no aparelho. Power não está incluído.
+- A verificação distingue falha de injeção de falta de mudança visual. HOME e
+  Recentes usam a tarefa/atividade no topo; volume usa leitura do stream de
+  música quando disponível (aceitando o limite); mídia aceita a injeção porque
+  seu efeito global não é observável na árvore do display. As demais teclas
+  continuam exigindo a verificação normal da tela.
 
 ## Fase 2 / PR-A — proteção de OTP em observações ao vivo
 
