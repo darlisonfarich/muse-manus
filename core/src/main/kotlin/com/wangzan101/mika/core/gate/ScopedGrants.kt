@@ -34,7 +34,11 @@ class ScopedGrantRegistry(
     private val grants = LinkedHashMap<String, ScopedGrant>()
     private fun prune(now: Long) {
         val expired = grants.values.filter { now >= it.expiresAtMs || now < it.issuedAtMs }
-        expired.forEach { grants.remove(it.id); onAudit("expired", it) }
+        expired.forEach {
+            grants.remove(it.id)
+            // Expiration/revocation must fail closed even when storage is full.
+            runCatching { onAudit("expired", it) }
+        }
     }
 
     /** Only the local, user-operated management screen may call this. */
@@ -71,13 +75,13 @@ class ScopedGrantRegistry(
     @Synchronized fun revoke(id: String): Boolean {
         prune(clockMs())
         val grant = grants.remove(id) ?: return false
-        onAudit("revoked", grant)
+        runCatching { onAudit("revoked", grant) }
         return true
     }
 
     @Synchronized fun revokeAll() {
         val old = grants.values.toList()
         grants.clear()
-        old.forEach { onAudit("revoked", it) }
+        old.forEach { runCatching { onAudit("revoked", it) } }
     }
 }
