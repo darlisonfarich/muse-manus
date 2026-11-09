@@ -91,6 +91,8 @@ jobs:
     name: app (Android)
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      MUSE_MANUS_SIGNING_CONFIGURED: ${{ secrets.MUSE_MANUS_KEYSTORE_B64 != '' && secrets.MUSE_MANUS_KEYSTORE_PASSWORD != '' && secrets.MUSE_MANUS_KEY_ALIAS != '' && secrets.MUSE_MANUS_KEY_PASSWORD != '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -128,6 +130,40 @@ jobs:
         with:
           name: muse-manus-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+          retention-days: 7
+          if-no-files-found: ignore
+      # The project key is optional so fork PRs and repositories without secrets retain the debug flow.
+      - name: Build and check project-signed update APKs
+        if: ${{ env.MUSE_MANUS_SIGNING_CONFIGURED == 'true' }}
+        env:
+          MUSE_MANUS_KEYSTORE_B64: ${{ secrets.MUSE_MANUS_KEYSTORE_B64 }}
+          MUSE_MANUS_KEYSTORE_PASSWORD: ${{ secrets.MUSE_MANUS_KEYSTORE_PASSWORD }}
+          MUSE_MANUS_KEY_ALIAS: ${{ secrets.MUSE_MANUS_KEY_ALIAS }}
+          MUSE_MANUS_KEY_PASSWORD: ${{ secrets.MUSE_MANUS_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keystore="$RUNNER_TEMP/muse-manus-project.jks"
+          cleanup() { rm -f "$keystore"; }
+          trap cleanup EXIT
+          printf '%s' "$MUSE_MANUS_KEYSTORE_B64" | base64 --decode > "$keystore"
+          chmod 600 "$keystore"
+          export MUSE_MANUS_KEYSTORE_FILE="$keystore"
+          ./gradlew :app:assembleRelease -PmuseManusVersionCode=38 --stacktrace
+          mkdir -p "$RUNNER_TEMP/apk-update-check"
+          cp app/build/outputs/apk/release/*-universal-release.apk "$RUNNER_TEMP/apk-update-check/older.apk"
+          ./gradlew :app:assembleRelease -PmuseManusVersionCode=39 --stacktrace
+          cp app/build/outputs/apk/release/*-universal-release.apk "$RUNNER_TEMP/apk-update-check/newer.apk"
+          bash tools/ci/check-apk-update-compatibility.sh \
+            "$RUNNER_TEMP/apk-update-check/older.apk" \
+            "$RUNNER_TEMP/apk-update-check/newer.apk" \
+            app/build/outputs/apk/debug/app-debug.apk
+          rm -f "$RUNNER_TEMP/apk-update-check/older.apk" "$RUNNER_TEMP/apk-update-check/newer.apk"
+      - name: Upload project-signed release APK
+        if: ${{ env.MUSE_MANUS_SIGNING_CONFIGURED == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: muse-manus-project-signed-release-apk
+          path: app/build/outputs/apk/release/*-universal-release.apk
           retention-days: 7
           if-no-files-found: ignore
 
