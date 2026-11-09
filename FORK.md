@@ -371,3 +371,18 @@ desconexão do chamador e lançamento normal em segundo plano. Executar também
 
 **Gate:** PR em rascunho empilhado na branch #15; revisão independente Muse,
 CI 4/4 e E2E no POCO antes de integrar. Não fazer merge automático.
+
+## GER / PR 3 — checkpoints duráveis do `phone_run` (etapa 3, primeira entrega)
+
+- Branch dependente do PR #15, sem merge. O journal pré-existente `direct-phone-audit.jsonl` permanece a **autoridade contra reexecução**: marca `PENDING` com `fsync` antes de executar qualquer ação.
+- `DirectPhoneBatchCheckpoints` registra em `direct-phone-batches.log`, também com `fsync`, o manifesto de cada lote (`owner + request_id` transformados em hash SHA-256, hash dos comandos e quantidade de passos) e um evento `OK` somente após o executor retornar sucesso. **Nenhum argumento, texto de tela, senha, captura, token ou resultado de ação é salvo.**
+- Enquanto uma chamada MCP continua viva, `BatchProgress` retoma os passos seguintes após esperas da fila exatamente como na etapa 2. Após desconexão/reinício, o mesmo `request_id` e comandos idênticos recuperam o **prefixo de sucessos duráveis**. Um lote com passos já confirmados devolve `reconciliation_required`, `completed`, `nextIndex` e `requiresFreshObservation=true`, sem disparar novas ações.
+- Isso é deliberadamente **fail-closed**: a tela pode ter mudado durante uma queda. O Muse precisa usar `phone_observe`, comparar o estado atual ao objetivo e decidir a continuação com **nova** `request_id` para os passos ainda necessários. O Android não inventa a reconciliação nem executa toques cegamente. Se houve uma ação depois do `PENDING`, mas sem sucesso durável, o journal existente a impede de repetir; a resposta também exige reconciliação.
+- Um `request_id` repetido com comandos diferentes retorna `checkpoint_mismatch`. Corrupção do journal retorna `checkpoint_corrupt` sem execução. Falha de gravação depois de um passo retorna `checkpoint_unavailable` com indicação de ação incerta. Os registros são isolados por proprietário.
+- **Ainda fora do escopo:** transporte que reconecta automaticamente pelo lado Muse, resolução semântica das alterações da tela, recuperação da fila de intenções ainda não iniciadas após morte do processo, reinício automático do serviço Android e aprovação de ações sensíveis. Esta entrega permite a recuperação segura do estado e sua reconciliação, **não** promete autonomia integral após reboot.
+- **Testes requeridos antes de merge:** JVM para prefixo persistido/reabertura, mudança de comandos, sequência fora de ordem, isolamento, arquivo parcial e ausência de credenciais; CI 4/4. E2E no POCO: executar passos 0–1, interromper transporte ou processo, repetir com a mesma ID, conferir ausência de replay e retorno `reconciliation_required`; observar tela fresca, concluir somente ações realmente faltantes sob nova ID. Também testar perda entre `PENDING` e `OK`, tela física em uso, cancelamento, tela protegida, kill switch e regressões da etapa 2. Revisão independente Muse e autorização expressa continuam obrigatórias.
+
+
+### Integração com a retomada limitada do PR #17
+
+Após integrar os dois caminhos em `AndroidDirectPhoneHost.batch`, `phone_run` reconhece **ambos** `delivery_unknown` e `launch_timeout_unknown` como efeitos incertos. Não soma o passo em `completed`, não grava um evento `OK` em `DirectPhoneBatchCheckpoints`, não avança para o próximo comando e devolve `reconciliation_required`, `executionUnknown=true`, `uncertainStepIndex` e `requiresFreshObservation=true`. O `startApp` pendente permanece em execução única sob o journal do PR #17; nenhum caminho faz replay para contornar o timeout. Confirmar essas invariantes novamente na CI do diff rebaseado e no E2E integrado.
