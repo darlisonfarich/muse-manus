@@ -39,6 +39,7 @@ class WakeWordLogicTest {
         assertTrue(machine.answer())
         assertEquals(WakePhase.Playing, machine.phase)
         assertFalse(machine.detectorListening)
+        assertFalse(machine.resumeDetectorAfterPlayback())
 
         // Playback begins: the detector is explicitly gated off, not merely expected
         // to ignore the TTS hypothesis.
@@ -47,7 +48,6 @@ class WakeWordLogicTest {
         assertFalse(machine.detectorListening)
         assertFalse(machine.detected())
         assertFalse(machine.pauseDetectorForPlayback())
-        assertFalse(machine.resumeDetectorAfterPlayback() && machine.resumeDetectorAfterPlayback())
 
         // MediaPlayer completion/error/timeout-stop is the only point that reopens listening.
         assertTrue(machine.resumeDetectorAfterPlayback())
