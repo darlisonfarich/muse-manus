@@ -734,7 +734,12 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             } finally { chatApprovalSlot.token = null }
         } catch (e: CancellationException) { throw e }
         catch (_: Exception) { fail("delivery_unknown") }
-        audit(key, "completed", if (result["ok"] == JsonPrimitive(true)) "ok" else "not_applied")
+        val guardCauseDigest = directPhoneGuardCauseDigest(result, ::digest)
+        val completion = buildString {
+            append(if (result["ok"] == JsonPrimitive(true)) "ok" else "not_applied")
+            guardCauseDigest?.let { append("|guardCauseSha256=").append(it) }
+        }
+        audit(key, "completed", completion)
         return GerIntentAttempt.Done(result)
     }
 

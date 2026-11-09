@@ -525,6 +525,33 @@ de isolamento e falha segura, revisão independente Muse, E2E com a build
 **integrada**, autorização explícita do Darlison antes de qualquer merge.
 
 
+## MUSE MANUS NEXT — GER PR-9 (guard verdicts com causas estruturadas)
+
+Cada `GuardVerdict` agora carrega `cause` com código estável (`guard_<tipo>`),
+tipo da guarda, contadores observados, limiares aplicáveis e condição de
+recuperação. A causa acompanha as etiquetas de guarda nos resultados de
+ferramenta e nas gravações do run; recusas por `guard_stopped` também incluem
+a lista estruturada, inclusive para chamadas diretas MCP. O journal MCP
+continua sem conteúdo de tela, parâmetros ou credenciais: registra somente
+SHA-256 da causa serializada na conclusão da ação.
+
+Compatibilidade: leitores continuam aceitando resultados antigos que só
+tenham `code`, `severity` e `evidence`; o campo `cause` é adicional e pode ser
+ignorado por consumidores antigos. Códigos de guarda e semântica dos limiares
+não mudam. `no_progress` e `read_loop` indicam progresso real como condição de
+limpeza; `same_state`, `state_cycle` e `too_many_failures` persistem pelo run,
+portanto sua recuperação requer encerrar e iniciar um novo run após mudar a
+condição/rota. Nenhuma guarda passa a tentar novamente ou esperar.
+
+Limite: a causa explica os sinais internos disponíveis (contadores e
+limiares), não diagnostica se o usuário está usando o app nem inclui árvore,
+texto, imagem ou argumentos da ferramenta. A serialização legado continua
+válida quando `cause` não existe.
+
+**Testes:** JVM `OperationGuardsTest` cobre causa para as cinco guardas de
+parada e os campos estruturados. Execução local não foi possível nesta sessão
+porque não há Java/JAVA_HOME instalado.
+
 ## MUSE MANUS NEXT — GER PR-5 (concessões de rotina com escopo, locais)
 
 **Defesa em profundidade:** o novo `ScopedGrantRegistry` mantém concessões
