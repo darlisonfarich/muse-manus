@@ -53,4 +53,7 @@ jobs:
                   if 'longTaskStaysUnderBudget' not in test.get('name',''):continue
                   for f in test.findall('failure'):
                       print('MUSE_BUDGET_FAILURE',f.attrib.get('message','')[:1500],flush=True)
+                  for systemout in root.findall('system-out'):
+                      if systemout.text and 'MUSE_DIAGNOSTIC_OBSERVATION:' in systemout.text:
+                          print('MUSE_TEST_STDOUT',systemout.text[:2000],flush=True)
           PY
