@@ -12,7 +12,7 @@ data class WakeUiState(
 ) {
     val active: Boolean get() = phase in setOf(
         WakePhase.Preparing, WakePhase.Listening, WakePhase.Capturing,
-        WakePhase.Waiting, WakePhase.Playing, WakePhase.Paused,
+        WakePhase.Waiting, WakePhase.Playing, WakePhase.PausedForPlayback, WakePhase.Paused,
     )
 }
 

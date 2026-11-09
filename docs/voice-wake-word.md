@@ -23,7 +23,7 @@ O usuário pode reativar ao abrir o Modo voz.
 
 O detector e o TTS são **half-duplex por construção**: o AudioRecord/Vosk é fechado
 ao reconhecer a wake word; só depois da resposta A2 iniciar, o player toca o TTS
-com o detector explicitamente em `Paused`. O detector só volta a `Listening`
+com o detector explicitamente em `PausedForPlayback`. O detector só volta a `Listening`
 depois do callback de conclusão/erro do MediaPlayer, ou depois de timeout e
 parada explícita do player. Uma guarda impede abrir o microfone fora da fase
 `Listening`. Assim, a voz sintetizada do Muse não pode ser capturada pelo

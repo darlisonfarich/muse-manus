@@ -4,7 +4,7 @@ import java.text.Normalizer
 import java.util.Locale
 
 /** Pure state machine. Unexpected events never silently move the service forward. */
-enum class WakePhase { Off, Preparing, Listening, Capturing, Waiting, Playing, Paused, PermissionDenied, Error }
+enum class WakePhase { Off, Preparing, Listening, Capturing, Waiting, Playing, PausedForPlayback, Paused, PermissionDenied, Error }
 
 class WakeStateMachine {
     var phase: WakePhase = WakePhase.Off
@@ -24,19 +24,21 @@ class WakeStateMachine {
     fun answer(): Boolean = move(WakePhase.Waiting, WakePhase.Playing)
 
     /** Hard half-duplex gate: only a Playing turn may pause the wake detector. */
-    fun pauseDetectorForPlayback(): Boolean = move(WakePhase.Playing, WakePhase.Paused)
+    fun pauseDetectorForPlayback(): Boolean = move(WakePhase.Playing, WakePhase.PausedForPlayback)
 
     /** Called only after MediaPlayer completion/error/stop; listening may then resume. */
-    fun resumeDetectorAfterPlayback(): Boolean = move(WakePhase.Paused, WakePhase.Listening)
+    fun resumeDetectorAfterPlayback(): Boolean = move(WakePhase.PausedForPlayback, WakePhase.Listening)
 
     fun finished(): Boolean {
-        if (phase !in setOf(WakePhase.Capturing, WakePhase.Waiting, WakePhase.Playing)) return false
+        // Playing must use the dedicated pause/resume handshake; no shortcut may
+        // reopen the detector while the TTS player is still active.
+        if (phase !in setOf(WakePhase.Capturing, WakePhase.Waiting)) return false
         phase = WakePhase.Listening
         return true
     }
 
     fun pause(): Boolean {
-        if (phase == WakePhase.Off || phase == WakePhase.PermissionDenied) return false
+        if (phase !in setOf(WakePhase.Preparing, WakePhase.Listening, WakePhase.Capturing, WakePhase.Waiting, WakePhase.Error)) return false
         phase = WakePhase.Paused
         return true
     }
