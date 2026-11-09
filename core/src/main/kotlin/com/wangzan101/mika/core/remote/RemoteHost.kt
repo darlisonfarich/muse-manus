@@ -22,6 +22,7 @@ class RemoteHost(
     private val clock: () -> Long = System::currentTimeMillis,
     private val onError: (Throwable) -> Unit = {},
     private val onVoiceEvent: (String) -> Unit = {},
+    private val voiceHub: VoiceA2Hub = VoiceA2Hub(),
     loopbackToken: () -> String? = { null },
     device: DeviceAccess? = null,
     history: RemoteHistory? = null,
@@ -44,7 +45,7 @@ class RemoteHost(
         val s = MiniHttpServer(bindAddress(allowAllInterfaces, port), ::handle, accept = { local, remote ->
             RemoteAccess.privateAddress(local) && RemoteAccess.privateAddress(remote)
         }, onError = onError, onUpgrade = { request, input, output ->
-            if (request.path == VoiceChannelProbe.PATH) VoiceChannelProbe.serve(input, output, serverVersion, onVoiceEvent)
+            if (request.path == VoiceChannelProbe.PATH) VoiceChannelProbe.serve(input, output, serverVersion, onVoiceEvent, voiceHub)
         })
         s.start()
         server = s

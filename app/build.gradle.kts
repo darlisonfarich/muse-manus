@@ -106,6 +106,7 @@ dependencies {
     implementation(libs.androidx.webkit)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
+    implementation("androidx.datastore:datastore-preferences:1.1.4")
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.xz)
     implementation(libs.commonmark)
