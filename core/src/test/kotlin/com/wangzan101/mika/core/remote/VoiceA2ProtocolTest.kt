@@ -54,7 +54,7 @@ class VoiceA2ProtocolTest {
 
     @Test fun stateMachineRejectsOldTurnAndCompletesExactCurrentGeneration() {
         val hub = VoiceA2Hub()
-        val sent = mutableListOf<Pair<Int, ByteArray>>()
+        val sent = java.util.Collections.synchronizedList(mutableListOf<Pair<Int, ByteArray>>())
         val sender = VoiceA2Sender { op, data -> sent += op to data }
         assertTrue(hub.attach(sender))
         assertFalse(hub.state.value.ready)
@@ -63,6 +63,9 @@ class VoiceA2ProtocolTest {
         assertTrue(hub.submit(conversation, turn, generation, byteArrayOf(1, 2, 3)))
         assertFalse(hub.submit(conversation, UUID.randomUUID().toString(),
             UUID.randomUUID().toString(), byteArrayOf(9)))
+        val deadline = System.nanoTime() + 2_000_000_000L
+        while (sent.size < 2 && System.nanoTime() < deadline) Thread.sleep(10)
+        assertTrue("outbound worker did not send", sent.size >= 2)
         assertEquals("TURN_START", VoiceA2Protocol.field(VoiceA2Protocol.parseControl(String(sent[1].second)), "type"))
         val oldId = UUID.randomUUID().toString()
         hub.onText(VoiceA2Protocol.control("TRANSCRIPT", "turn_id" to oldId,
