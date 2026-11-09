@@ -535,3 +535,21 @@ revogação, ausência de persistência entre processos e
 `ApprovalPolicy.pay` negado remotamente. UI deve permitir criar,
 listar, expirar e revogar, sem conceder privilégios remotos; conferir
 FORK.md e CI 4/4 antes do merge. Sem instalação automática no POCO.
+
+## MUSE MANUS NEXT — GER PR-6 (base de tokens de aprovação)
+
+O core agora contém `ChatApprovalTokens`: tokens HMAC-SHA256 versionados
+vinculam proprietário, ferramenta, digest canônico dos argumentos, escopo,
+expiração curta e ID aleatório. A API de consumo registra o ID por meio de
+`ConsumedApprovalIds` antes de aprovar; o adaptador precisa persistir esse
+registro de forma durável. Token inválido, expirado, repetido ou incompatível
+tem resultado distinto e nunca é aprovado.
+
+**Limite desta entrega:** chave Android Keystore, journal de IDs com `fsync`,
+emissão pela conversa e verificação no host direto ainda não estão conectados.
+O executor não consome esses tokens nesta etapa, portanto nenhuma ação remota
+ganhou permissão. STRICT, pagamento remoto negado e grants PR-5 permanecem
+inalterados.
+
+**Testes JVM:** caminho feliz e replay, expiração, mismatch de argumentos e
+adulteração da assinatura em `ChatApprovalTokensTest`.
