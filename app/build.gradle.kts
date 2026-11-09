@@ -18,7 +18,7 @@ android {
         applicationId = "com.darlisonfarich.musemanus"
         minSdk = 30
         targetSdk = 35
-        versionCode = 39
+        versionCode = providers.gradleProperty("museManusVersionCode").orNull?.toInt() ?: 39
         versionName = "0.1.38"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GIT_HASH", "\"$gitHash\"")
@@ -67,6 +67,22 @@ android {
             isProfileable = true
             matchingFallbacks += "release"
         }
+    }
+
+    // Release builds use the project key only when CI supplies all signing inputs.
+    // Debug builds keep their normal Android debug certificate for fork/PR safety.
+    val projectKeystore = providers.environmentVariable("MUSE_MANUS_KEYSTORE_FILE").orNull
+    val projectStorePassword = providers.environmentVariable("MUSE_MANUS_KEYSTORE_PASSWORD").orNull
+    val projectKeyAlias = providers.environmentVariable("MUSE_MANUS_KEY_ALIAS").orNull
+    val projectKeyPassword = providers.environmentVariable("MUSE_MANUS_KEY_PASSWORD").orNull
+    if (listOf(projectKeystore, projectStorePassword, projectKeyAlias, projectKeyPassword).all { !it.isNullOrBlank() }) {
+        signingConfigs.create("project") {
+            storeFile = file(projectKeystore!!)
+            storePassword = projectStorePassword
+            keyAlias = projectKeyAlias
+            keyPassword = projectKeyPassword
+        }
+        buildTypes.getByName("release").signingConfig = signingConfigs.getByName("project")
     }
 
     buildFeatures {

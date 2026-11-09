@@ -36,11 +36,44 @@ os arquivos alterados em relação ao projeto original estão listados abaixo.
    oficial adaptada à URL do fork; a URL do repositório original agora é testada como rejeitada.
 6. **`FORK.md`** — este arquivo, novo e atualizado com as correções do PR nº 1.
 
+Esta branch acrescenta o GER PR-10: configuração de assinatura release opcional
+em `app/build.gradle.kts`, verificação de compatibilidade em
+`tools/ci/check-apk-update-compatibility.sh` e integração condicional na CI,
+descritas na seção de assinatura abaixo.
+
 ## Observação de instalação
 
 Como o `applicationId` mudou, o Muse Manus é um **app novo** para o Android: ele não
 atualiza nem herda os dados de uma instalação do Mika original — os dois podem coexistir
 instalados no mesmo aparelho.
+
+## Assinatura da CI e compatibilidade de atualização (GER PR-10)
+
+Para builds release assinados com o certificado fixo do projeto, o proprietário do
+repositório deve cadastrar estes GitHub Actions repository secrets:
+
+- `MUSE_MANUS_KEYSTORE_B64` — conteúdo da keystore codificado em Base64.
+- `MUSE_MANUS_KEYSTORE_PASSWORD` — senha da keystore.
+- `MUSE_MANUS_KEY_ALIAS` — alias da chave de assinatura.
+- `MUSE_MANUS_KEY_PASSWORD` — senha da chave.
+
+Gere o payload Base64 localmente a partir do arquivo `.jks`/`.keystore` mantido
+fora do repositório: `base64 -w 0 caminho/para/keystore.jks`. Cadastre a saída
+diretamente como o valor do secret `MUSE_MANUS_KEYSTORE_B64`; não a salve no
+repositório. A CI decodifica o secret em arquivo temporário com permissão restrita
+e o apaga ao terminar o job. Sem os quatro secrets, o build e artefato debug
+continuam disponíveis, mas nenhum APK release é produzido nessa etapa.
+
+Quando os secrets estão disponíveis, a CI compila dois APKs release com o mesmo
+certificado e versionCodes 38 e 39, confere ambos com `apksigner`, compara os
+SHA-256 dos certificados e confirma que a versão nova tem versionCode maior.
+Também compara o certificado do APK debug para confirmar que é diferente. Isso
+verifica os pré-requisitos Android para atualização por cima, rejeição por
+certificado diferente e rejeição de downgrade sem override. **Não instala** os
+APK: instalação efetiva por cima de uma versão anterior, preservação dos dados
+do usuário e comportamento do PackageInstaller ainda precisam de validação em
+dispositivo/emulador. A checagem CI é de assinatura e metadados, não um ensaio
+de instalação ou rollback em runtime.
 
 
 ## Segurança P0 — mascaramento de capturas e OCR (PR separado, em revisão)
