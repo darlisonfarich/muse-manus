@@ -270,6 +270,8 @@ class ToolDispatcherTest {
         assertTrue(spec.description, "KEYCODE_VOLUME_UP" in spec.description)
         assertTrue(spec.description, "KEYCODE_MEDIA_PLAY_PAUSE" in spec.description)
         assertFalse(spec.description, "KEYCODE_POWER" in spec.description)
+        // 拒绝句要和放行表一致:虚拟屏只拒绝电源/搜索/助手/相机
+        assertTrue(spec.description, "Power, search, assistant and camera keys are rejected" in spec.description)
     }
 
     @Test fun observeAttachesImageOnlyWithVision() = runTest {
