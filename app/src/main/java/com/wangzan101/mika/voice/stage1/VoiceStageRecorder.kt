@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import com.wangzan101.mika.voice.Wav
 import kotlinx.coroutines.Dispatchers
@@ -45,7 +46,8 @@ class VoiceStageRecorder {
             val limit = Wav.RATE * 30
             var countTotal = 0
             recorder.startRecording()
-            while (!stopRequested.get() && countTotal < limit) {
+            val deadline = SystemClock.elapsedRealtime() + 30_000L
+            while (!stopRequested.get() && countTotal < limit && SystemClock.elapsedRealtime() < deadline) {
                 val n = recorder.read(data, 0, minOf(data.size, limit - countTotal), AudioRecord.READ_NON_BLOCKING)
                 if (n < 0) throw IOException("Falha ao gravar áudio")
                 if (n == 0) { delay(12); continue }
