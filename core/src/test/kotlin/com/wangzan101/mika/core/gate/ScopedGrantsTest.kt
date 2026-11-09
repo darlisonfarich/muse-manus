@@ -66,6 +66,21 @@ class ScopedGrantsTest {
         assertEquals(two.id, two.id)
     }
 
+    @Test fun onlyRoutineReadAndChangeRiskAreCoverable() {
+        val grants = ScopedGrantRegistry(clockMs = { 50L })
+        grants.issueFromLocalUi("com.example.app", "account", ScopedActionClass.Navigate, 5_000)
+        grants.issueFromLocalUi("com.example.app", "account", ScopedActionClass.Edit, 5_000)
+        fun covers(level: ActionRisk) = grants.coversRoutineRisk("com.example.app", "account", Risk(level))
+        assertTrue(covers(ActionRisk.Read))
+        assertTrue(covers(ActionRisk.Change))
+        assertFalse(covers(ActionRisk.External))
+        assertFalse(covers(ActionRisk.Irreversible))
+        assertFalse(covers(ActionRisk.Unknown))
+        assertFalse(grants.coversRoutineRisk("com.example.app", "account", Risk(ActionRisk.Change, payment = true)))
+        assertFalse(grants.coversRoutineRisk("com.example.app", "account", Risk(ActionRisk.Change, action = IrrevAction.send)))
+        assertFalse(grants.coversRoutineRisk("com.example.app", "other", Risk(ActionRisk.Change)))
+    }
+
     @Test fun grantsDoNotWeakenRemotePaymentDenial() {
         val grants = ScopedGrantRegistry(clockMs = { 100L })
         grants.issueFromLocalUi("com.bank.app", "personal", ScopedActionClass.Navigate, 10_000L)
