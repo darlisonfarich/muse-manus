@@ -106,6 +106,8 @@ dependencies {
     implementation(libs.androidx.webkit)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
+    // Offline wake-word recognition; the pt-BR model is downloaded after user opt-in.
+    implementation("com.alphacephei:vosk-android:0.3.75")
     implementation("androidx.datastore:datastore-preferences:1.1.4")
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.xz)
