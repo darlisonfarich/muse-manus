@@ -202,23 +202,49 @@ class ToolDispatcherTest {
         assertEquals("invalid_arguments", d.execute(call("end_not_done", """{"message":"m","subtype":"x"}""")).content.s("error"))
     }
 
-    @Test fun pressKeyAllowsOnlyNavigationAndEditingKeys() = runTest {
+    @Test fun pressKeyPermitsVirtualScopedNavigationVolumeAndMediaButNeverPower() = runTest {
         val s = FakeScreen(); val d = toolDispatcher(s)
-        for (k in listOf("KEYCODE_DPAD_UP", "KEYCODE_DPAD_CENTER", "KEYCODE_ENTER", "KEYCODE_NUMPAD_ENTER", "KEYCODE_DEL",
-            "KEYCODE_FORWARD_DEL", "KEYCODE_TAB", "KEYCODE_SPACE", "KEYCODE_ESCAPE", "KEYCODE_PAGE_DOWN",
-            "KEYCODE_MOVE_HOME", "KEYCODE_MOVE_END", "KEYCODE_BACK", "KEYCODE_MENU", "66", "160", "4")) {
-            assertTrue(k, d.execute(call("phone_press_key", """{"key":"$k"}""")).content["ok"]!!.jsonPrimitive.boolean)
+        val unrestricted = listOf(
+            "KEYCODE_DPAD_UP" to 19, "KEYCODE_DPAD_CENTER" to 23,
+            "KEYCODE_ENTER" to 66, "KEYCODE_NUMPAD_ENTER" to 160,
+            "KEYCODE_DEL" to 67, "KEYCODE_FORWARD_DEL" to 112,
+            "KEYCODE_TAB" to 61, "KEYCODE_SPACE" to 62,
+            "KEYCODE_ESCAPE" to 111, "KEYCODE_PAGE_DOWN" to 93,
+            "KEYCODE_MOVE_HOME" to 122, "KEYCODE_MOVE_END" to 123,
+            "KEYCODE_BACK" to 4, "KEYCODE_MENU" to 82,
+            "66" to 66, "160" to 160, "4" to 4,
+        )
+        val virtualOnly = listOf(
+            "KEYCODE_HOME" to 3, "KEYCODE_APP_SWITCH" to 187,
+            "KEYCODE_VOLUME_UP" to 24, "KEYCODE_VOLUME_DOWN" to 25,
+            "KEYCODE_VOLUME_MUTE" to 164,
+            "KEYCODE_MEDIA_PLAY_PAUSE" to 85, "KEYCODE_MEDIA_STOP" to 86,
+            "KEYCODE_MEDIA_NEXT" to 87, "KEYCODE_MEDIA_PREVIOUS" to 88,
+            "3" to 3, "187" to 187, "24" to 24, "25" to 25, "85" to 85,
+        )
+        for ((key, _) in unrestricted + virtualOnly) {
+            val result = d.execute(call("phone_press_key", """{"key":"$key"}"""))
+            assertTrue(key, result.content["ok"]!!.jsonPrimitive.boolean)
         }
-        assertEquals(listOf(19, 23, 66, 160, 67, 112, 61, 62, 111, 93, 122, 123, 4, 82, 66, 160, 4).map { "key $it" }, s.calls)
+        assertEquals((unrestricted + virtualOnly).map { "key ${it.second}" }, s.calls)
         s.calls.clear()
-        for (k in listOf("KEYCODE_VOLUME_UP", "KEYCODE_VOLUME_DOWN", "KEYCODE_POWER", "KEYCODE_SLEEP", "KEYCODE_WAKEUP",
-            "KEYCODE_APP_SWITCH", "KEYCODE_HOME", "KEYCODE_SEARCH", "KEYCODE_ASSIST", "KEYCODE_CAMERA",
-            "KEYCODE_MEDIA_PLAY_PAUSE", "24", "25", "26", "223", "224", "3", "187", "-1", "99999")) {
-            val r = d.execute(call("phone_press_key", """{"key":"$k"}"""))
-            assertEquals(k, "invalid_arguments", r.content.s("error"))
+        for (key in listOf(
+            "KEYCODE_POWER", "KEYCODE_SLEEP", "KEYCODE_WAKEUP",
+            "KEYCODE_SEARCH", "KEYCODE_ASSIST", "KEYCODE_CAMERA",
+            "26", "223", "224", "-1", "99999",
+        )) {
+            val result = d.execute(call("phone_press_key", """{"key":"$key"}"""))
+            assertEquals(key, "invalid_arguments", result.content.s("error"))
         }
         assertTrue(s.calls.isEmpty())
-        assertTrue(PressKeys.isAllowed(66)); assertFalse(PressKeys.isAllowed(26)); assertFalse(PressKeys.isAllowed(3))
+        assertTrue(PressKeys.isAllowed(66, PressKeys.Scope.AnyDisplay))
+        assertTrue(PressKeys.isAllowed(3, PressKeys.Scope.VirtualDisplay))
+        assertTrue(PressKeys.isAllowed(24, PressKeys.Scope.VirtualDisplay))
+        assertTrue(PressKeys.isAllowed(85, PressKeys.Scope.VirtualDisplay))
+        assertFalse(PressKeys.isAllowed(3, PressKeys.Scope.AnyDisplay))
+        assertFalse(PressKeys.isAllowed(24, PressKeys.Scope.AnyDisplay))
+        assertFalse(PressKeys.isAllowed(85, PressKeys.Scope.AnyDisplay))
+        assertFalse(PressKeys.isAllowed(26, PressKeys.Scope.VirtualDisplay))
     }
 
     @Test fun typeTextReportsAppSwitchAndSkipsEnter() = runTest {
@@ -239,7 +265,11 @@ class ToolDispatcherTest {
     @Test fun pressKeyDescriptionNamesTheAllowlist() {
         val spec = toolDispatcher(FakeScreen()).definitions().first { it.name == "phone_press_key" }
         assertTrue(spec.description, "KEYCODE_NUMPAD_ENTER" in spec.description)
-        assertFalse(spec.description, "VOLUME" in spec.description)
+        assertTrue(spec.description, "KEYCODE_HOME" in spec.description)
+        assertTrue(spec.description, "KEYCODE_APP_SWITCH" in spec.description)
+        assertTrue(spec.description, "KEYCODE_VOLUME_UP" in spec.description)
+        assertTrue(spec.description, "KEYCODE_MEDIA_PLAY_PAUSE" in spec.description)
+        assertFalse(spec.description, "KEYCODE_POWER" in spec.description)
     }
 
     @Test fun observeAttachesImageOnlyWithVision() = runTest {
