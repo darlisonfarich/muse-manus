@@ -89,7 +89,8 @@ class VoiceA2ProtocolTest {
         assertEquals(turn, hub.state.value.resultId)
         assertEquals("pedido correto", hub.state.value.transcript)
         assertEquals("resposta real", hub.state.value.reply)
-        assertArrayEquals(byteArrayOf(1, 2, 3, 4, 5), hub.state.value.audio)
+        assertArrayEquals(byteArrayOf(1, 2, 3, 4, 5), hub.takeAudio(turn))
+        assertNull(hub.takeAudio(turn))
         assertNull(hub.state.value.turnId)
         hub.onText(VoiceA2Protocol.control("REPLY", "turn_id" to turn,
             "generation_id" to generation, "text" to "later duplicate"))
