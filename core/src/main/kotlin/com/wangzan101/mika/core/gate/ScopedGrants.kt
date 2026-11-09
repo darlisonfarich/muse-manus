@@ -49,8 +49,9 @@ class ScopedGrantRegistry(
             ttlMs !in 1L..MAX_TTL_MS || now > Long.MAX_VALUE - ttlMs) return null
         val grant = ScopedGrant(UUID.randomUUID().toString(), a, accountId,
             actionClass, now, now + ttlMs)
-        grants[grant.id] = grant
+        // Durable audit must succeed before permission enters the registry.
         onAudit("issued", grant)
+        grants[grant.id] = grant
         return grant
     }
 
