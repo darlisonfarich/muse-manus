@@ -65,4 +65,24 @@
     <string name="mcp_cli_connection_check">يتحقق connect من الاتصال. يؤدي نجاح الطلب إلى تحديث الوقت أعلاه.</string>
     <string name="mcp_history_title">السماح بعرض السجل</string>
     <string name="mcp_history_detail">السماح لأجهزة الكمبيوتر الموثقة عبر USB والشبكة الخاصة بقراءة المحادثات والتتبع التفصيلي. الإعداد متوقف افتراضيًا.</string>
+    <string name="mcp_scoped_title">أذونات مؤقتة محددة</string>
+    <string name="mcp_scoped_new">إذن محلي جديد</string>
+    <string name="mcp_scoped_package">التطبيق</string>
+    <string name="mcp_scoped_account">الحساب</string>
+    <string name="mcp_scoped_account_hint">معرف الحساب الدقيق</string>
+    <string name="mcp_scoped_navigate">التنقل المعتاد</string>
+    <string name="mcp_scoped_edit">التعديل المعتاد</string>
+    <string name="mcp_scoped_5min">5 دقائق</string>
+    <string name="mcp_scoped_15min">15 دقيقة</string>
+    <string name="mcp_scoped_issue">منح محلي</string>
+    <string name="mcp_scoped_created">تم إنشاء الإذن</string>
+    <string name="mcp_scoped_audit_failed">تعذر تسجيل الإذن؛ لم يتم منح أي صلاحية.</string>
+    <string name="mcp_scoped_invalid">تحقق من التطبيق والحساب والمدة.</string>
+    <string name="mcp_scoped_warning">محلي فقط وينتهي عند إغلاق العملية. لا يسمح بالإرسال أو الحذف أو الشراء أو الدفع ولا يفعّل التحكم عن بعد أو يتجاوز ضوابط الأمان أو الموافقات لمرة واحدة. يجب التحقق من هوية الحساب قبل استخدام الإذن عن بعد.</string>
+    <string name="mcp_scoped_active">الأذونات النشطة</string>
+    <string name="mcp_scoped_empty">لا توجد أذونات نشطة</string>
+    <string name="mcp_scoped_revoke">إلغاء</string>
+    <string name="mcp_scoped_revoke_all">إلغاء الكل</string>
+    <string name="mcp_scoped_entry">إدارة الأذونات المحددة</string>
+    <string name="mcp_scoped_entry_detail">مراجعة وإلغاء الأذونات المؤقتة</string>
 </resources>

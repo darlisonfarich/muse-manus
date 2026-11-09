@@ -65,4 +65,24 @@
     <string name="mcp_cli_connection_check">connect で接続を確認できます。リクエストが成功すると、上の時刻が更新されます。</string>
     <string name="mcp_history_title">コンピューターに履歴の閲覧を許可</string>
     <string name="mcp_history_detail">接続したコンピューターは、すべての会話、実行記録、記録済みの Trace 本文を読み取れます。機密情報を伏せたモデルへのリクエストと応答も含みます。USB とプライベートネットワーク接続に適用されます。</string>
+    <string name="mcp_scoped_title">一時的な範囲限定の許可</string>
+    <string name="mcp_scoped_new">新しいローカル許可</string>
+    <string name="mcp_scoped_package">アプリ</string>
+    <string name="mcp_scoped_account">アカウント</string>
+    <string name="mcp_scoped_account_hint">正確なアカウント識別子</string>
+    <string name="mcp_scoped_navigate">通常の画面移動</string>
+    <string name="mcp_scoped_edit">通常の編集</string>
+    <string name="mcp_scoped_5min">5 分間</string>
+    <string name="mcp_scoped_15min">15 分間</string>
+    <string name="mcp_scoped_issue">端末上で許可</string>
+    <string name="mcp_scoped_created">許可を作成しました</string>
+    <string name="mcp_scoped_audit_failed">監査記録に失敗しました。許可は付与されていません。</string>
+    <string name="mcp_scoped_invalid">アプリ、アカウント、有効期間を確認してください。</string>
+    <string name="mcp_scoped_warning">端末内でのみ有効で、プロセス終了時に失効します。送信、削除、購入、支払いは許可されず、遠隔操作の書き込みや安全スイッチの回避、使い捨て承認の省略もできません。遠隔操作への適用にはアカウント確認が必要です。</string>
+    <string name="mcp_scoped_active">有効な許可</string>
+    <string name="mcp_scoped_empty">有効な許可はありません</string>
+    <string name="mcp_scoped_revoke">取り消す</string>
+    <string name="mcp_scoped_revoke_all">すべて取り消す</string>
+    <string name="mcp_scoped_entry">範囲限定の許可を管理</string>
+    <string name="mcp_scoped_entry_detail">一時的な許可の確認と取り消し</string>
 </resources>

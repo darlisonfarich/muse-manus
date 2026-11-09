@@ -65,4 +65,24 @@
     <string name="mcp_cli_connection_check">connect memverifikasi koneksi. Permintaan yang berhasil akan memperbarui waktu di atas.</string>
     <string name="mcp_history_title">Izinkan komputer melihat riwayat</string>
     <string name="mcp_history_detail">Komputer yang terhubung dapat membaca semua percakapan, catatan proses, dan isi Trace yang direkam, termasuk permintaan serta jawaban model dengan data sensitif disamarkan. Berlaku untuk koneksi USB dan jaringan pribadi.</string>
+    <string name="mcp_scoped_title">Izin terbatas sementara</string>
+    <string name="mcp_scoped_new">Izin lokal baru</string>
+    <string name="mcp_scoped_package">Aplikasi</string>
+    <string name="mcp_scoped_account">Akun</string>
+    <string name="mcp_scoped_account_hint">Identitas akun yang tepat</string>
+    <string name="mcp_scoped_navigate">Navigasi rutin</string>
+    <string name="mcp_scoped_edit">Pengeditan rutin</string>
+    <string name="mcp_scoped_5min">5 menit</string>
+    <string name="mcp_scoped_15min">15 menit</string>
+    <string name="mcp_scoped_issue">Berikan izin lokal</string>
+    <string name="mcp_scoped_created">Izin dibuat</string>
+    <string name="mcp_scoped_audit_failed">Gagal mencatat izin. Tidak ada izin yang diberikan.</string>
+    <string name="mcp_scoped_invalid">Periksa aplikasi, akun, dan durasi.</string>
+    <string name="mcp_scoped_warning">Hanya berlaku secara lokal selama proses aktif. Izin ini tidak membolehkan pengiriman, penghapusan, pembelian, atau pembayaran, tidak mengaktifkan penulisan jarak jauh, dan tidak melewati pengaman atau persetujuan sekali pakai. Identitas akun harus diverifikasi sebelum digunakan dari jarak jauh.</string>
+    <string name="mcp_scoped_active">Izin aktif</string>
+    <string name="mcp_scoped_empty">Tidak ada izin aktif</string>
+    <string name="mcp_scoped_revoke">Cabut</string>
+    <string name="mcp_scoped_revoke_all">Cabut semua</string>
+    <string name="mcp_scoped_entry">Kelola izin terbatas</string>
+    <string name="mcp_scoped_entry_detail">Tinjau dan cabut izin sementara</string>
 </resources>

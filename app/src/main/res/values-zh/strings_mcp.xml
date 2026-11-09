@@ -65,4 +65,24 @@
     <string name="mcp_cli_connection_check">connect 会验证连接，成功后顶部显示最近请求。</string>
     <string name="mcp_history_title">允许电脑查看历史记录</string>
     <string name="mcp_history_detail">连接的电脑可读取所有对话、运行记录和已录制的 Trace 正文，包括脱敏后的模型请求与回复。适用于 USB 和私有网络连接。</string>
+    <string name="mcp_scoped_title">临时范围授权</string>
+    <string name="mcp_scoped_new">新增本地授权</string>
+    <string name="mcp_scoped_package">应用</string>
+    <string name="mcp_scoped_account">账号</string>
+    <string name="mcp_scoped_account_hint">准确的账号标识</string>
+    <string name="mcp_scoped_navigate">常规导航</string>
+    <string name="mcp_scoped_edit">常规编辑</string>
+    <string name="mcp_scoped_5min">5 分钟</string>
+    <string name="mcp_scoped_15min">15 分钟</string>
+    <string name="mcp_scoped_issue">在本地授权</string>
+    <string name="mcp_scoped_created">授权已创建</string>
+    <string name="mcp_scoped_audit_failed">无法写入审核记录，未授予任何权限。</string>
+    <string name="mcp_scoped_invalid">请检查应用、账号和有效期。</string>
+    <string name="mcp_scoped_warning">仅限本地使用，进程结束后失效。不能用于发送、删除、购买或付款，也不会启用远程写入或绕过安全开关及一次性审批。远程使用前必须验证账号身份。</string>
+    <string name="mcp_scoped_active">有效授权</string>
+    <string name="mcp_scoped_empty">没有有效授权</string>
+    <string name="mcp_scoped_revoke">撤销</string>
+    <string name="mcp_scoped_revoke_all">全部撤销</string>
+    <string name="mcp_scoped_entry">管理范围授权</string>
+    <string name="mcp_scoped_entry_detail">查看并撤销临时授权</string>
 </resources>

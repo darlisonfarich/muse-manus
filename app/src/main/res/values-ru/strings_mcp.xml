@@ -65,4 +65,24 @@
     <string name="mcp_cli_connection_check">Команда connect проверяет подключение. После успешного запроса время выше обновится.</string>
     <string name="mcp_history_title">Разрешить компьютерам просмотр истории</string>
     <string name="mcp_history_detail">Подключённые компьютеры смогут читать все диалоги, записи запусков и сохранённые Trace, включая запросы и ответы модели со скрытыми конфиденциальными данными. Действует для USB и подключений через частные сети.</string>
+    <string name="mcp_scoped_title">Временные разрешения с ограничениями</string>
+    <string name="mcp_scoped_new">Новое локальное разрешение</string>
+    <string name="mcp_scoped_package">Приложение</string>
+    <string name="mcp_scoped_account">Учётная запись</string>
+    <string name="mcp_scoped_account_hint">Точный идентификатор учётной записи</string>
+    <string name="mcp_scoped_navigate">Обычная навигация</string>
+    <string name="mcp_scoped_edit">Обычное редактирование</string>
+    <string name="mcp_scoped_5min">5 минут</string>
+    <string name="mcp_scoped_15min">15 минут</string>
+    <string name="mcp_scoped_issue">Разрешить локально</string>
+    <string name="mcp_scoped_created">Разрешение создано</string>
+    <string name="mcp_scoped_audit_failed">Не удалось записать событие аудита. Разрешение не выдано.</string>
+    <string name="mcp_scoped_invalid">Проверьте приложение, учётную запись и срок.</string>
+    <string name="mcp_scoped_warning">Действует только локально до завершения процесса. Не разрешает отправку, удаление, покупки или платежи, не включает удалённую запись и не обходит защитные ограничения или одноразовые подтверждения. Перед удалённым использованием требуется проверить учётную запись.</string>
+    <string name="mcp_scoped_active">Активные разрешения</string>
+    <string name="mcp_scoped_empty">Нет активных разрешений</string>
+    <string name="mcp_scoped_revoke">Отозвать</string>
+    <string name="mcp_scoped_revoke_all">Отозвать все</string>
+    <string name="mcp_scoped_entry">Управление ограниченными разрешениями</string>
+    <string name="mcp_scoped_entry_detail">Просмотр и отзыв временных разрешений</string>
 </resources>
