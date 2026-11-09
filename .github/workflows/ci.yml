@@ -37,6 +37,16 @@ jobs:
         run: bash tools/ci/bootstrap-kotlin-compiler.sh
       - name: Unit tests
         run: ./gradlew :core:test --stacktrace
+      - name: Report core test count
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from xml.etree import ElementTree as ET
+          roots = [ET.parse(p).getroot() for p in Path("core/build/test-results/test").glob("TEST-*.xml")]
+          print("CORE_TESTS=" + str(sum(int(r.attrib.get("tests", 0)) for r in roots)))
+          print("CORE_FAILURES=" + str(sum(int(r.attrib.get("failures", 0)) for r in roots)))
+          print("CORE_ERRORS=" + str(sum(int(r.attrib.get("errors", 0)) for r in roots)))
+          PY
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v7
@@ -114,6 +124,19 @@ jobs:
       # assembleDebug validates packaging; assembleDebugAndroidTest compiles instrumented tests, catching removed adapters.
       - name: Unit tests and debug build
         run: ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace
+      - name: Report app tests and debug APK size
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from xml.etree import ElementTree as ET
+          roots = [ET.parse(p).getroot() for p in Path("app/build/test-results/testDebugUnitTest").glob("TEST-*.xml")]
+          print("APP_TESTS=" + str(sum(int(r.attrib.get("tests", 0)) for r in roots)))
+          print("APP_FAILURES=" + str(sum(int(r.attrib.get("failures", 0)) for r in roots)))
+          print("APP_ERRORS=" + str(sum(int(r.attrib.get("errors", 0)) for r in roots)))
+          apk = Path("app/build/outputs/apk/debug/app-debug.apk")
+          print("APK_SIZE_BYTES=" + str(apk.stat().st_size))
+          print("APK_SIZE_MIB=" + format(apk.stat().st_size / 1048576, ".2f"))
+          PY
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v7

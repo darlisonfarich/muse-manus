@@ -17,6 +17,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
@@ -201,6 +202,12 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps user-enabled computer access available through a private-network or USB endpoint, or an outbound connection to the user's remote gateway, so authorized clients can hand tasks to the app" />
         </service>
+
+        <!-- User-enabled, on-device wake-word recognition; never exported. -->
+        <service
+            android:name=".voice.wake.VoiceWakeService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- 后台准备运行环境(解出随 APK 自带的根文件系统),只在准备期间运行 -->
         <service

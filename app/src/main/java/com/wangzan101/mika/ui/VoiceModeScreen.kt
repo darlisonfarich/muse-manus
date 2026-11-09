@@ -26,6 +26,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.wangzan101.mika.core.voice.WakePhase
+import com.wangzan101.mika.voice.wake.VoiceWakeService
+import com.wangzan101.mika.voice.wake.VoiceWakeStatus
 import com.wangzan101.mika.MikaApp
 import com.wangzan101.mika.ui.components.PageScaffold
 import com.wangzan101.mika.voice.stage1.ReverseWebSocketVoiceTransport
@@ -38,7 +41,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-/** Button-based voice UI; no public tunnel, wake-word service or phone-control coupling. */
+/** Voice A2 UI with an explicit, reversible local wake-word opt-in. */
 @Composable
 fun VoiceModeScreen(onBack: () -> Unit) {
     val context = LocalContext.current
@@ -49,6 +52,7 @@ fun VoiceModeScreen(onBack: () -> Unit) {
     val player = remember(context) { VoiceStagePlayer(context.applicationContext) }
     val controller = remember(app) { VoiceChannelController(ReverseWebSocketVoiceTransport(app.mcp.voiceHub)) }
     val channel by controller.state.collectAsState()
+    val wake by VoiceWakeStatus.state.collectAsState()
     var status by remember { mutableStateOf("Pronto") }
     var recording by remember { mutableStateOf(false) }
     var sending by remember { mutableStateOf(false) }
@@ -65,7 +69,8 @@ fun VoiceModeScreen(onBack: () -> Unit) {
         }
     }
 
-    LaunchedEffect(channel.resultId) {
+    LaunchedEffect(channel.resultId, wake.consumedResultId) {
+        if (channel.resultId != null && channel.resultId == wake.consumedResultId) return@LaunchedEffect
         val bytes = channel.audio ?: return@LaunchedEffect
         if (channel.resultId == null) return@LaunchedEffect
         try {
@@ -111,7 +116,14 @@ fun VoiceModeScreen(onBack: () -> Unit) {
         if (granted && channel.ready) start()
         else status = if (granted) "Muse desconectado" else "Microfone sem permissão"
     }
+    val wakePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            try { VoiceWakeService.start(context) }
+            catch (e: Exception) { status = "Não foi possível iniciar escuta: " + (e.message ?: "erro") }
+        } else VoiceWakeStatus.denied()
+    }
     val busy = recording || sending || channel.turnId != null
+    val wakeActive = wake.active
 
     PageScaffold("Modo voz", onBack) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -119,6 +131,25 @@ fun VoiceModeScreen(onBack: () -> Unit) {
             Text(if (channel.ready) "Muse conectado — Tailscale" else "Muse desconectado — aguardando conexão da VM",
                 modifier = Modifier.testTag("voicePrivateConnection"))
             Text("Toque para gravar. Nenhuma conexão pública é necessária.")
+            OutlinedButton(
+                onClick = {
+                    if (wakeActive) VoiceWakeService.stop(context)
+                    else {
+                        val allowed = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                            PackageManager.PERMISSION_GRANTED
+                        if (allowed) {
+                            try { VoiceWakeService.start(context) }
+                            catch (e: Exception) { status = "Não foi possível iniciar escuta: " + (e.message ?: "erro") }
+                        } else wakePermission.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                },
+                enabled = !recording && !sending && channel.turnId == null,
+                modifier = Modifier.fillMaxWidth().testTag("voiceWakeToggle"),
+            ) { Text(if (wakeActive) "Desligar ativação por voz" else "Ativar 'oi Muse' offline") }
+            Text("Escuta local: " + wake.detail, modifier = Modifier.testTag("voiceWakeStatus"))
+            Text("Primeira ativação: download verificado de aproximadamente 31 MiB. Depois, funciona offline. " +
+                "Uma notificação permite desligar; a escuta utiliza o microfone continuamente.")
+            if (wakeActive) Text("Para gravar manualmente, desligue primeiro a ativação por voz.")
             Button(
                 onClick = {
                     if (recording) recorder.stop()
@@ -128,7 +159,7 @@ fun VoiceModeScreen(onBack: () -> Unit) {
                         if (allowed) start() else permission.launch(Manifest.permission.RECORD_AUDIO)
                     }
                 },
-                enabled = recording || (channel.ready && !busy),
+                enabled = !wakeActive && (recording || (channel.ready && !busy)),
                 modifier = Modifier.fillMaxWidth().height(76.dp).testTag("voiceRecordButton"),
             ) { Text(if (recording) "Parar e enviar" else "Gravar pedido") }
 
