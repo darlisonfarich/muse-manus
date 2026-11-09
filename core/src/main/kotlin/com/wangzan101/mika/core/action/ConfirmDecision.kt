@@ -1,5 +1,7 @@
 package com.wangzan101.mika.core.action
 
+import com.wangzan101.mika.core.gate.ChatApprovalChannel
+import com.wangzan101.mika.core.gate.ChatApprovalGate
 import com.wangzan101.mika.core.gate.ConfirmationGate
 import com.wangzan101.mika.core.gate.ConfirmationRequest
 import com.wangzan101.mika.core.risk.IrrevAction
@@ -53,6 +55,8 @@ class ConfirmDecision(
     private val provenance: RunProvenance = RunProvenance(),
     /** 开工就是自主执行(没有确认关卡):付款也不问,界面目标猜测也不阻断动作;中途换成自主看 [ApprovalSettings.autonomous]。 */
     private val autonomous: Boolean = false,
+    /** GER PR-6: chat approval channel (signed single-use tokens). Only the direct phone host injects one; null everywhere else. */
+    private val chatApproval: ChatApprovalChannel? = null,
     /** Mika 自己的包名:作用在它上面的写操作一律不做(不自己给自己点同意、改设置)。 */
     private val selfPackage: String? = null,
 ) {
@@ -88,7 +92,7 @@ class ConfirmDecision(
             return Decision.PasswordTakeover
         }
         tools.approvalRisk(tool, checked)?.let { declared ->
-            return approve(tool, checked, origin, null, declared, null, null, null) ?: Decision.Clear
+            return approve(tool, checked, args, origin, null, declared, null, null, null) ?: Decision.Clear
         }
         if (confirmations == null && !policy.judgeWithoutGate) return Decision.Clear
         val verb = tools.verb(tool)
@@ -105,7 +109,7 @@ class ConfirmDecision(
         val classified = risks.assess(verb, hit) { fresh ?: snap }
         val risk = if (hit == null && unresolved && (provenance.origin == RunOrigin.Bridge || approvals.mode() == ApprovalMode.Strict)) classified.copy(level = ActionRisk.Unknown) else classified
         outwardSite = outward(hit, fresh ?: snap)
-        approve(tool, checked, origin, hit, risk, fresh ?: snap, typing, seen)?.let { return it }
+        approve(tool, checked, args, origin, hit, risk, fresh ?: snap, typing, seen)?.let { return it }
         if (hit != null || !IrreversibleDetector.unresolved(target, checked, snap, fresh)) return Decision.Clear
         return if (policy.refuseUnresolved) Decision.Unresolved else Decision.Traced(unresolvedDetail(args, aim.readAgeMs, fresh != null))
     }
@@ -122,9 +126,9 @@ class ConfirmDecision(
         return listOf("package", "uri").any { k -> (args[k] as? JsonPrimitive)?.contentOrNull?.let { self in it } == true }
     }
 
-    /** 按来源判;要花钱时核对用户的一次性同意。放行为 null。 */
+    /** 按来源判;要花钱时核对用户的一次性同意。放行为 null。[submitted] 是调用方原样提交的参数(未过界面解析),聊天令牌按它核对。 */
     private fun approve(
-        tool: String, checked: JsonObject, origin: Origin, hit: Irreversible?, risk: Risk, screen: ScreenSnapshot?,
+        tool: String, checked: JsonObject, submitted: JsonObject, origin: Origin, hit: Irreversible?, risk: Risk, screen: ScreenSnapshot?,
         typing: String?, seen: String?,
     ): Decision? {
         val policy = origin.policy
@@ -141,12 +145,45 @@ class ConfirmDecision(
             Approval.Ask -> Unit
         }
         val required = Decision.Required(asked, risk.ask)
-        val gate = confirmations?.takeIf { policy.usesGrant } ?: return required.also { audit("required") }
+        val gate = confirmations?.takeIf { policy.usesGrant }
+        if (gate == null) {
+            // GER PR-6: with no local grant gate (the direct phone host), a
+            // presented chat approval token may satisfy this exact step.
+            // Payments are never redeemable: decide() already denies them
+            // above, and the pay guard here keeps that true for any origin.
+            if (risk.action != IrrevAction.pay) {
+                when (val redeemed = redeemChatApproval(tool, submitted)) {
+                    ChatApprovalRedeem.Approved -> return null.also { audit("allowed") }
+                    is ChatApprovalRedeem.Rejected ->
+                        return Decision.Mismatch(asked, redeemed.code).also { audit("mismatch") }
+                    ChatApprovalRedeem.NotApplicable -> Unit
+                }
+            }
+            return required.also { audit("required") }
+        }
         val permit = risk.ask?.let { gate.permitsExactly(it, origin.step) } ?: gate.permits(asked, screen, origin.step, typing, listOfNotNull(seen))
         return when (val p = permit) {
             Permit.Allowed -> null.also { audit("allowed") }
             Permit.NoGrant -> required.also { audit("required") }
             is Permit.Mismatch -> Decision.Mismatch(asked, p.reason).also { audit("mismatch") }
+        }
+    }
+
+    private sealed interface ChatApprovalRedeem {
+        data object NotApplicable : ChatApprovalRedeem
+        data object Approved : ChatApprovalRedeem
+        data class Rejected(val code: String) : ChatApprovalRedeem
+    }
+
+    /** Redeems the token presented with this call, bound to the submitted (pre-resolution) arguments. */
+    private fun redeemChatApproval(tool: String, submitted: JsonObject): ChatApprovalRedeem {
+        val channel = chatApproval ?: return ChatApprovalRedeem.NotApplicable
+        val presented = channel.slot.token ?: return ChatApprovalRedeem.NotApplicable
+        return when (val outcome = ChatApprovalGate.redeem(
+            channel.tokens, presented, channel.owner, tool, submitted, channel.scope)) {
+            ChatApprovalGate.Outcome.Approved -> ChatApprovalRedeem.Approved
+            is ChatApprovalGate.Outcome.Rejected -> ChatApprovalRedeem.Rejected(outcome.failure.code)
+            ChatApprovalGate.Outcome.NotPresented -> ChatApprovalRedeem.NotApplicable
         }
     }
 

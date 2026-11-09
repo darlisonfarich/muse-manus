@@ -545,11 +545,27 @@ expiração curta e ID aleatório. A API de consumo registra o ID por meio de
 registro de forma durável. Token inválido, expirado, repetido ou incompatível
 tem resultado distinto e nunca é aprovado.
 
-**Limite desta entrega:** chave Android Keystore, journal de IDs com `fsync`,
-emissão pela conversa e verificação no host direto ainda não estão conectados.
-O executor não consome esses tokens nesta etapa, portanto nenhuma ação remota
-ganhou permissão. STRICT, pagamento remoto negado e grants PR-5 permanecem
-inalterados.
+**Fiação (commit seguinte, Muse):** a chave vive no Android Keystore
+(`ChatApprovalTokenStore`, alias HMAC próprio) e os IDs consumidos vão para
+um ledger append-only com `fsync` que falha fechado se corromper
+(`chat-approval-consumed.log`). A emissão é a ferramenta MCP
+`phone_approval_issue` (fora da fila de intenções; exige acesso remoto e
+`directWritesEnabled`; registra a emissão no journal de auditoria só com
+digest). A ação-alvo apresenta `approval_token` nos argumentos; o host o
+retira dos argumentos executados e o `ConfirmDecision` o resgata **somente**
+quando a etapa exigiria aprovação e não há gate local de concessões —
+amarrado ao nome interno da ferramenta e aos argumentos **como submetidos**
+(digest canônico), com códigos estáveis `approval_token_invalid`,
+`approval_token_expired`, `approval_token_replay` e
+`approval_token_mismatch` (via `confirmation_mismatch`). Passos de
+`phone_run` apresentam o próprio token nos argumentos de cada passo.
+
+**Limites mantidos:** pagamento **nunca** é destravado por token (a negação
+de `ApprovalPolicy` para `IrrevAction.pay` precede o resgate, e o resgate
+também o exclui explicitamente); STRICT, grants PR-5 e a regra de o remote
+não consumir aprovações locais permanecem inalterados — o token é um canal
+novo e separado, emitido pelo próprio aparelho.
 
 **Testes JVM:** caminho feliz e replay, expiração, mismatch de argumentos e
-adulteração da assinatura em `ChatApprovalTokensTest`.
+adulteração da assinatura em `ChatApprovalTokensTest`; mapeamento de
+resultados e códigos estáveis em `ChatApprovalGateTest`.

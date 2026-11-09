@@ -60,8 +60,10 @@ class ActionExecutor(
     autonomous: Boolean = false,
     /** 同一网站、App 里连着做对外动作(发送、提交)时两次之间的间隔(见 [OutwardPacing]);默认不等。 */
     private val pacing: OutwardPacing = OutwardPacing.Off,
+    /** GER PR-6 chat approval channel; only the direct phone host injects one. */
+    chatApproval: com.wangzan101.mika.core.gate.ChatApprovalChannel? = null,
 ) {
-    private val decision = ConfirmDecision(tools, confirmations, approvals, recorder = recorder, provenance = provenance, selfPackage = selfPackage, autonomous = autonomous)
+    private val decision = ConfirmDecision(tools, confirmations, approvals, recorder = recorder, provenance = provenance, selfPackage = selfPackage, autonomous = autonomous, chatApproval = chatApproval)
     private val pass = ActionPass()
 
     /** 配了确认关卡(付款能经用户同意后做)。 */

@@ -23,6 +23,9 @@ import com.wangzan101.mika.core.action.ApprovalSettings
 import com.wangzan101.mika.core.action.Origin
 import com.wangzan101.mika.core.action.execution
 import com.wangzan101.mika.core.assembly.toolDispatcher
+import com.wangzan101.mika.core.gate.ChatApprovalChannel
+import com.wangzan101.mika.core.gate.ChatApprovalSlot
+import com.wangzan101.mika.core.gate.ChatApprovalTokens
 import com.wangzan101.mika.core.guard.OperationGuards
 import com.wangzan101.mika.core.mcp.DirectPhoneHost
 import com.wangzan101.mika.core.model.Part
@@ -73,6 +76,9 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
     private val launchBoundary = DirectPhoneLaunchBoundary(launchScope, 10_000L, ::onLaunchSettled)
     @Volatile private var closeAfterLaunch = false
     private val journal = File(context.filesDir, "direct-phone-audit.jsonl")
+    // GER PR-6: chat approval tokens (Keystore-held HMAC key + fsync'd consumed-id ledger).
+    private val chatApprovalStore by lazy { ChatApprovalTokenStore(context.filesDir) }
+    private val chatApprovalSlot = ChatApprovalSlot()
     // Append-only fsync’d batch progress; the audit remains the replay gate.
     private val checkpoints = DirectPhoneBatchCheckpoints(File(context.filesDir, "direct-phone-batches.log"))
     private val seen = HashSet<String>()
@@ -143,6 +149,14 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             // Read-only and out of the intention queue: no display/session is
             // created, no action is submitted, no pending marker is written.
             return lock.withLock { reconcile(owner, args) }
+        }
+        if (name == "phone_approval_issue") {
+            if (!settings.enabled.value) return fail("remote_access_disabled")
+            if (!settings.directWritesEnabled.value) return fail("write_disabled")
+            // Minting is out of the intention queue: no display/session is
+            // created and nothing executes. The token only takes effect when
+            // the approval gate consumes it for the exact bound action.
+            return lock.withLock { issueApproval(owner, args) }
         }
         if (name == "phone_cancel") {
             val cancelled = scheduler.ger.intentions.cancelOwner(sessionOwner)
@@ -267,6 +281,26 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             }
             GerIntentOutcome.Duplicate -> fail("delivery_unknown")
             GerIntentOutcome.QueueFull -> fail("intent_queue_full")
+        }
+    }
+
+    /**
+     * GER PR-6: mint a signed, single-use chat approval token bound to the
+     * owner + internal tool name + exact arguments (minus request_id and any
+     * presented token). The issuance is audited digest-only; the token is
+     * redeemed by the approval gate at execution time, never here.
+     */
+    private fun issueApproval(owner: String, args: JsonObject): JsonObject {
+        val external = (args["tool"] as? JsonPrimitive)?.contentOrNull
+            ?: return fail("invalid_tool")
+        val internal = ACTIONS[external] ?: return fail("invalid_tool")
+        val raw = args["arguments"] as? JsonObject ?: return fail("invalid_arguments")
+        val binding = JsonObject(raw.filterKeys { it != "request_id" && it != "approval_token" })
+        val token = chatApprovalStore.tokens.issue(directOwner(owner), internal, binding, "direct")
+        audit(digest("issue|" + owner + "|" + internal), "approval_issue", internal)
+        return buildJsonObject {
+            put("ok", true); put("token", token); put("tool", external)
+            put("expiresInMs", ChatApprovalTokens.DEFAULT_TTL_MS)
         }
     }
 
@@ -443,6 +477,11 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                 // Bridge origin is STRICT in ApprovalPolicy; generic Mcp runs only use ASK.
                 // Origin.McpTool never consumes a remote approval/grant.
                 provenance = RunProvenance(RunOrigin.Bridge, Attendance.Unattended),
+                // GER PR-6: gated steps may be satisfied by a presented chat
+                // approval token (single-use, exact-action bound); payments
+                // remain denied even with a token.
+                chatApproval = ChatApprovalChannel(
+                    chatApprovalStore.tokens, sessionOwner, "direct", chatApprovalSlot),
                 selfPackage = context.packageName,
             )
             return Session(owner, binding, display, safe, tools, executor, services.sharedShell::release, now)
@@ -607,7 +646,11 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             return GerIntentAttempt.Blocked("task_running")
         if (!ready(s) || sensitive(s)) return GerIntentAttempt.Done(fail("needs_user"))
         val request = requestId(args) ?: return GerIntentAttempt.Done(fail("request_id_required"))
-        val clean = JsonObject(args.filterKeys { it != "request_id" })
+        // GER PR-6: a presented chat approval token is gate input, not an
+        // action argument — strip it (and request_id) from what executes and
+        // from the exact-args digest the token was bound to at issuance.
+        val presentedToken = (args["approval_token"] as? JsonPrimitive)?.contentOrNull
+        val clean = JsonObject(args.filterKeys { it != "request_id" && it != "approval_token" })
         // Recheck physical app ownership at the LAST pre-PENDING boundary.
         // Previously displayOfPackage() always missed the user's display 0,
         // then startApp returned app_in_use_by_user AFTER markOnce had already
@@ -627,8 +670,11 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                     // Binder cannot be interrupted safely; the worker records
                     // its eventual outcome even when the MCP caller timed out.
                     val actual = try {
-                        s.executor.run(Part.ToolCall(request, tool, clean.toString()), Origin.McpTool(sequence))
-                            .execution().content
+                        chatApprovalSlot.token = presentedToken
+                        try {
+                            s.executor.run(Part.ToolCall(request, tool, clean.toString()), Origin.McpTool(sequence))
+                                .execution().content
+                        } finally { chatApprovalSlot.token = null }
                     } catch (_: Exception) {
                         uncertain("launch_executor_exception")
                     }
@@ -650,8 +696,11 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             })
         }
         val result = try {
-            s.executor.run(Part.ToolCall(request, tool, clean.toString()), Origin.McpTool(sequence))
-                .execution().content
+            chatApprovalSlot.token = presentedToken
+            try {
+                s.executor.run(Part.ToolCall(request, tool, clean.toString()), Origin.McpTool(sequence))
+                    .execution().content
+            } finally { chatApprovalSlot.token = null }
         } catch (e: CancellationException) { throw e }
         catch (_: Exception) { fail("delivery_unknown") }
         audit(key, "completed", if (result["ok"] == JsonPrimitive(true)) "ok" else "not_applied")

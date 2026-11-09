@@ -49,6 +49,10 @@ class McpPhoneTools(private val host: DirectPhoneHost, private val owner: String
         put("additionalProperties", false)
     }
     private val id = "request_id" to string("Unique UUID idempotency key for this action. Never reuse for a different operation.", 64)
+    private val approval = "approval_token" to string("Single-use chat approval token (GER PR-6) minted by phone_approval_issue for exactly this tool + arguments. Authorizes that one gated action once; never authorizes payment.", 512)
+    private fun obj(description: String): JsonObject = buildJsonObject {
+        put("type", "object"); put("description", description)
+    }
     private val ref = "ref" to string("Element identifier from phone_observe")
     private val sid = "snapshotId" to string("Snapshot identifier corresponding to ref")
 
@@ -61,27 +65,30 @@ class McpPhoneTools(private val host: DirectPhoneHost, private val owner: String
         McpTaskTools.Tool("phone_observe", "Read sanitized Android accessibility elements and current application. Password screens require the user.", schema(), true),
         McpTaskTools.Tool("phone_screenshot", "Read a protected-screen-aware screenshot, compressed to under 1 MiB; password screens are denied.", schema(), true),
         McpTaskTools.Tool("phone_list_apps", "List installed application package names and labels.", schema(), true),
+        McpTaskTools.Tool("phone_approval_issue", "Mint a signed, single-use chat approval token (GER PR-6) bound to one exact phone action (tool + arguments). Redeemed by the action gate at execution; expires in minutes; never authorizes payment. Minting executes nothing.", schema(listOf("tool", "arguments"),
+            "tool" to string("External phone action tool name, e.g. phone_tap"),
+            "arguments" to obj("The exact arguments the action will be called with (without request_id).")), false),
         McpTaskTools.Tool("phone_launch_app", "Open an installed application in the agent's virtual display.", schema(listOf("package", "request_id"),
-            "package" to string("Exact Android application package name"), "cold" to bool(), id), false),
+            "package" to string("Exact Android application package name"), "cold" to bool(), id, approval), false),
         McpTaskTools.Tool("phone_tap", "Tap an element ref/snapshot pair or normalized 0–999 coordinates. Consequential taps are denied by the action gate.", schema(listOf("request_id"),
-            ref, sid, "x" to integer("Normalized X", 0, 999), "y" to integer("Normalized Y", 0, 999), "target" to string("Description of coordinate target", 80), "clicks" to integer("Tap count", 1, 2), id), false),
+            ref, sid, "x" to integer("Normalized X", 0, 999), "y" to integer("Normalized Y", 0, 999), "target" to string("Description of coordinate target", 80), "clicks" to integer("Tap count", 1, 2), id, approval), false),
         McpTaskTools.Tool("phone_type", "Type text in a non-secret field. Enter may submit content; the same local gate still applies.", schema(listOf("text", "request_id"),
             ref, sid, "x" to integer("Normalized X", 0, 999), "y" to integer("Normalized Y", 0, 999), "text" to string("Text to type", 10000),
-            "pressEnter" to bool(), id), false),
+            "pressEnter" to bool(), id, approval), false),
         McpTaskTools.Tool("phone_scroll", "Scroll the virtual screen in a chosen direction.", schema(listOf("direction", "request_id"),
             "direction" to string("up, down, left or right"), "amount" to integer("Amount 1–20 (default 3)", 1, 20),
-            "x" to integer("Normalized X", 0, 999), "y" to integer("Normalized Y", 0, 999), id), false),
+            "x" to integer("Normalized X", 0, 999), "y" to integer("Normalized Y", 0, 999), id, approval), false),
         McpTaskTools.Tool("phone_swipe", "Swipe using 0–999 normalized endpoints.", schema(listOf("request_id"),
             "startX" to integer("Start X", 0, 999), "startY" to integer("Start Y", 0, 999),
             "endX" to integer("End X", 0, 999), "endY" to integer("End Y", 0, 999),
-            "durationMs" to integer("Gesture duration ms", 50, 5000), id), false),
+            "durationMs" to integer("Gesture duration ms", 50, 5000), id, approval), false),
         McpTaskTools.Tool("phone_gesture", "Perform a preplanned multipoint gesture with existing phone_gesture safety gates.", schema(listOf("paths", "request_id"),
             "paths" to gesturePaths(),
-            "durationMs" to integer("Gesture duration ms", 50, 5000), id), false),
+            "durationMs" to integer("Gesture duration ms", 50, 5000), id, approval), false),
         McpTaskTools.Tool("phone_key", "Press an allowed navigation/editing key. System-wide HOME/POWER/VOLUME/RECENTS remain blocked by the shared shell allowlist.", schema(listOf("key", "request_id"),
-            "key" to string("Allowed KEYCODE_* name"), id), false),
-        McpTaskTools.Tool("phone_back", "Go back in the virtual display.", schema(listOf("request_id"), id), false),
-        McpTaskTools.Tool("phone_run", "Run an ordered batch of at most 30 predefined atomic actions, verified individually. No autonomous decisions.", schema(listOf("commands", "request_id"),
+            "key" to string("Allowed KEYCODE_* name"), id, approval), false),
+        McpTaskTools.Tool("phone_back", "Go back in the virtual display.", schema(listOf("request_id"), id, approval), false),
+        McpTaskTools.Tool("phone_run", "Run an ordered batch of at most 30 predefined atomic actions, verified individually. No autonomous decisions. A step's arguments may carry its own approval_token.", schema(listOf("commands", "request_id"),
             "commands" to array("Array of {name, arguments} (without individual request_id).", 30), id), false),
         McpTaskTools.Tool("phone_cancel", "End the owner's control session and release its virtual display.", schema(), false),
     )
