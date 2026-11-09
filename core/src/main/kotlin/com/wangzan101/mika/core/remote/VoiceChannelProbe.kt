@@ -39,7 +39,7 @@ object VoiceChannelProbe {
     }
 
     /** One connection, one worker. Reads masked client frames, echoes binary and answers ping. */
-    fun serve(input: InputStream, output: OutputStream, event: (String) -> Unit = {}) {
+    fun serve(input: InputStream, output: OutputStream, version: String, event: (String) -> Unit = {}) {
         event("voice WebSocket probe opened")
         try {
             while (true) {
@@ -73,7 +73,7 @@ object VoiceChannelProbe {
                             "ping" -> "pong"
                             "probe" -> buildJsonObject {
                                 put("type", "probe_ok")
-                                put("server_version", "probe")
+                                put("server_version", version)
                             }.toString()
                             else -> """{"type":"probe_unknown"}"""
                         }
