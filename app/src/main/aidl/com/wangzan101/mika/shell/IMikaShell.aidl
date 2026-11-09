@@ -120,6 +120,9 @@ interface IMikaShell {
     int injectAsciiText(int displayId, int taskId, String packageName, String text) = 50;
     // 当前音乐流音量、最大值和静音状态;读不到为 null。
     Bundle musicVolumeState() = 51;
+    // Global controls run in the owned virtual-display session, but via Android service dispatch.
+    // status=dispatched only after before/after readback; otherwise not_applied/effect_unavailable.
+    Bundle dispatchGlobalKey(int displayId, int keyCode) = 52;
 
     // 沿用早先定下的销毁事务号;AIDL 要求要么全部方法编号要么都不编号
     void destroy() = 16777114;

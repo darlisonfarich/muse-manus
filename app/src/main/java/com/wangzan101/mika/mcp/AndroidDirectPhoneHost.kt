@@ -735,8 +735,10 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         } catch (e: CancellationException) { throw e }
         catch (_: Exception) { fail("delivery_unknown") }
         val guardCauseDigest = directPhoneGuardCauseDigest(result, ::digest)
+        val keyCompletion = if (external in setOf("phone_key", "phone_volume", "phone_media"))
+            DirectPhoneKeyAudit.completion(result) else null
         val completion = buildString {
-            append(if (result["ok"] == JsonPrimitive(true)) "ok" else "not_applied")
+            append(keyCompletion ?: if (result["ok"] == JsonPrimitive(true)) "ok" else "not_applied")
             guardCauseDigest?.let { append("|guardCauseSha256=").append(it) }
         }
         audit(key, "completed", completion)

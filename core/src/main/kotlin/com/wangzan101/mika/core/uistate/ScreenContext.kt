@@ -94,16 +94,30 @@ internal fun ToolContext.action(r: ActionResult): ToolExecution = when (r) {
             r.inProfile?.let { put("inProfile", it) }
             r.profileUser?.let { put("profileUser", it) }
             r.requestedUser?.let { wanted -> r.profileUser?.let { put("requestedCopy", it == wanted) } }
+            r.keyEvidence?.let { e ->
+                put("keyDispatch", e.status); put("keyBefore", e.before); put("keyAfter", e.after)
+            }
             if (hints.isNotEmpty()) put("hint", hints.joinToString(" "))
         }, changed = r.changed)
     }
-    is ActionResult.Failed ->
-        if (r.reason == "ref_expired") refExpired(Feedback["ref_expired"], "element_lost")
+    is ActionResult.Failed -> {
+        val failure = if (r.reason == "ref_expired") refExpired(Feedback["ref_expired"], "element_lost")
         else {
             val code = r.reason.takeIf { Regex("^[a-z][a-z0-9_]*$").matches(it) } ?: "action_failed"
             val message = FAILURE_MESSAGES[code] ?: Feedback.format("action_failed", "reason" to r.reason)
             fail(code, r.hint?.let { "$message $it" } ?: message)
         }
+        val evidence = r.keyEvidence
+        if (evidence == null) failure else ToolExecution(
+            content = JsonObject(failure.content + mapOf(
+                "keyDispatch" to JsonPrimitive(evidence.status),
+                "keyBefore" to JsonPrimitive(evidence.before),
+                "keyAfter" to JsonPrimitive(evidence.after),
+            )),
+            changed = failure.changed, outcome = failure.outcome, frame = failure.frame,
+            images = failure.images, record = failure.record,
+        )
+    }
 }
 
 /**

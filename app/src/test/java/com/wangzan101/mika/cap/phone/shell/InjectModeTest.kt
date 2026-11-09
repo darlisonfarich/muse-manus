@@ -19,6 +19,11 @@ class InjectModeTest {
         assertEquals(waitForResult, ShellService.injectMode(key = true, waitForFinish = false))
     }
 
+    @Test fun ordinaryKeysCanRetryWithExplicitAsync() {
+        assertEquals(async, ShellService.injectMode(key = true, waitForFinish = false, asyncKey = true))
+        assertEquals(waitForFinish, ShellService.injectMode(key = true, waitForFinish = true, asyncKey = true))
+    }
+
     @Test fun touchesStayAsync() {
         assertEquals(async, ShellService.injectMode(key = false, waitForFinish = false))
     }
