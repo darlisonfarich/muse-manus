@@ -75,6 +75,27 @@ class DirectPhoneBatchCheckpointsTest {
         } finally { file.delete() }
     }
 
+    @Test fun inspectionDoesNotWriteMissingOpenAndChecksExactFingerprint() {
+        val file = ledgerFile()
+        try {
+            val ledger = DirectPhoneBatchCheckpoints(file)
+            assertEquals(DirectPhoneBatchCheckpoints.InspectResult.Missing,
+                ledger.inspect(key, signature, 2))
+            assertFalse(file.exists())
+            ledger.open(key, signature, 2)
+            assertTrue(ledger.completed(key, 0))
+            val bytes = file.readBytes().size
+            assertEquals(DirectPhoneBatchCheckpoints.InspectResult.Found(
+                DirectPhoneBatchCheckpoints.Snapshot(1, 2, fresh = false)),
+                DirectPhoneBatchCheckpoints(file).inspect(key, signature, 2))
+            assertEquals(DirectPhoneBatchCheckpoints.InspectResult.Conflict,
+                ledger.inspect(key, "d".repeat(64), 2))
+            assertEquals(DirectPhoneBatchCheckpoints.InspectResult.Missing,
+                ledger.inspect(otherKey, signature, 2))
+            assertEquals(bytes, file.length().toInt())
+        } finally { file.delete() }
+    }
+
     @Test fun ledgerNeverContainsUserInputOrRawRequestId() {
         val file = ledgerFile()
         try {

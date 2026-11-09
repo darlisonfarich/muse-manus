@@ -138,6 +138,12 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         if (owner.isBlank()) return fail("unauthenticated")
         val scheduler = app.resources
         val sessionOwner = directOwner(owner)
+        if (name == "phone_reconcile") {
+            if (!settings.enabled.value) return fail("remote_access_disabled")
+            // Read-only and out of the intention queue: no display/session is
+            // created, no action is submitted, no pending marker is written.
+            return lock.withLock { reconcile(owner, args) }
+        }
         if (name == "phone_cancel") {
             val cancelled = scheduler.ger.intentions.cancelOwner(sessionOwner)
             return lock.withLock {
@@ -261,6 +267,66 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             }
             GerIntentOutcome.Duplicate -> fail("delivery_unknown")
             GerIntentOutcome.QueueFull -> fail("intent_queue_full")
+        }
+    }
+
+    /**
+     * Durable recovery lookup for the authenticated owner only. Every result
+     * explicitly requires fresh observation; it NEVER authorizes automatic
+     * replay or treats a missing journal entry as proof of no execution.
+     */
+    private fun reconcile(owner: String, args: JsonObject): JsonObject {
+        val id = requestId(args) ?: return fail("request_id_required")
+        val kind = (args["kind"] as? JsonPrimitive)?.contentOrNull ?: return fail("invalid_kind")
+        if (kind == "action") {
+            if ("commands" in args) return fail("invalid_commands")
+            val status = DirectPhoneJournalInspection.lookup(journal, digest(owner + "|" + id))
+            return buildJsonObject {
+                put("ok", true); put("kind", "action")
+                put("journalState", status.wire)
+                put("executionUnknown", status != DirectPhoneJournalInspection.State.COMPLETED_OK)
+                put("retryable", false); put("requiresFreshObservation", true)
+            }
+        }
+        if (kind != "batch") return fail("invalid_kind")
+        val commands = args["commands"] as? JsonArray ?: return fail("invalid_commands")
+        if (commands.size !in 1..30) return fail("invalid_commands")
+        val key = digest(owner + "|batch|" + id)
+        return when (val saved = runCatching {
+            checkpoints.inspect(key, digest(commands.toString()), commands.size)
+        }.getOrDefault(DirectPhoneBatchCheckpoints.InspectResult.Corrupt)) {
+            DirectPhoneBatchCheckpoints.InspectResult.Corrupt -> buildJsonObject {
+                put("ok", false); put("error", "checkpoint_corrupt")
+                put("executionUnknown", true); put("retryable", false)
+                put("requiresFreshObservation", true)
+            }
+            DirectPhoneBatchCheckpoints.InspectResult.Conflict -> buildJsonObject {
+                put("ok", false); put("error", "checkpoint_mismatch")
+                put("executionUnknown", true); put("retryable", false)
+                put("requiresFreshObservation", true)
+            }
+            DirectPhoneBatchCheckpoints.InspectResult.Missing -> buildJsonObject {
+                put("ok", true); put("kind", "batch")
+                put("checkpointState", "not_seen")
+                put("executionUnknown", true); put("retryable", false)
+                put("requiresFreshObservation", true)
+            }
+            is DirectPhoneBatchCheckpoints.InspectResult.Found -> {
+                val completed = saved.snapshot.completed
+                val stepState = if (completed == commands.size) null else {
+                    val stepId = UUID.nameUUIDFromBytes((id + ":" + completed).toByteArray()).toString()
+                    DirectPhoneJournalInspection.lookup(journal, digest(owner + "|" + stepId))
+                }
+                buildJsonObject {
+                    put("ok", true); put("kind", "batch")
+                    put("checkpointState", "found")
+                    put("total", commands.size); put("completed", completed)
+                    put("nextIndex", completed)
+                    stepState?.let { put("nextJournalState", it.wire) }
+                    put("executionUnknown", stepState != null)
+                    put("retryable", false); put("requiresFreshObservation", true)
+                }
+            }
         }
     }
 

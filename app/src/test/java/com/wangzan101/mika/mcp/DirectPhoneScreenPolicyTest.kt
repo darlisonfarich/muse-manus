@@ -6,7 +6,7 @@ import org.junit.Test
 
 class DirectPhoneScreenPolicyTest {
     @Test fun virtualDisplayReadsDoNotRequirePhysicalDisplayInteractive() {
-        for (read in listOf("phone_observe", "phone_list_apps", "phone_screenshot")) {
+        for (read in listOf("phone_observe", "phone_list_apps", "phone_screenshot", "phone_reconcile")) {
             assertTrue("Missing read classification: $read", read in DirectPhoneScreenPolicy.reads)
             assertFalse("Read must work with physical screen off: $read",
                 DirectPhoneScreenPolicy.requiresInteractivePhysicalScreen(read))
