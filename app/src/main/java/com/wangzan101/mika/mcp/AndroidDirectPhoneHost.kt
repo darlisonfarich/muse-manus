@@ -43,7 +43,10 @@ import java.security.MessageDigest
 import java.util.Base64
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -66,6 +69,9 @@ import kotlinx.serialization.json.put
 class AndroidDirectPhoneHost(private val context: Context, private val settings: McpSettings) : DirectPhoneHost {
     private val app get() = context.applicationContext as MikaApp
     private val lock = Mutex()
+    private val launchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val launchBoundary = DirectPhoneLaunchBoundary(launchScope, 10_000L, ::onLaunchSettled)
+    @Volatile private var closeAfterLaunch = false
     private val journal = File(context.filesDir, "direct-phone-audit.jsonl")
     private val seen = HashSet<String>()
     private var loaded = false
@@ -87,9 +93,23 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
     }
 
     suspend fun close() {
-        // A stopped MCP listener must never leave requests parked in memory.
+        // A stopped listener cancels queued calls, but an already issued Binder
+        // start cannot safely be interrupted or have its display torn down.
         app.resources.ger.intentions.cancelAll()
-        lock.withLock { closeActive() }
+        lock.withLock {
+            if (launchBoundary.isInFlight()) closeAfterLaunch = true else closeActive()
+        }
+    }
+
+    private fun onLaunchSettled() {
+        launchScope.launch {
+            lock.withLock {
+                if (closeAfterLaunch && !launchBoundary.isInFlight()) {
+                    closeAfterLaunch = false
+                    closeActive()
+                }
+            }
+        }
     }
 
     private fun directOwner(owner: String): String = "mcp:" + digest(owner)
@@ -120,9 +140,15 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             val cancelled = scheduler.ger.intentions.cancelOwner(sessionOwner)
             return lock.withLock {
                 val hadSession = current?.owner == owner
-                if (hadSession) closeActive()
+                val deferredClose = hadSession && launchBoundary.isInFlight()
+                if (deferredClose) closeAfterLaunch = true
+                else if (hadSession) closeActive()
                 if (!hadSession && cancelled == 0) fail("session_not_found")
-                else buildJsonObject { put("ok", true); put("closed", hadSession); put("cancelledIntents", cancelled) }
+                else buildJsonObject {
+                    put("ok", true); put("closed", hadSession && !deferredClose)
+                    put("cancelledIntents", cancelled)
+                    if (deferredClose) put("closePending", true)
+                }
             }
         }
         if (name == "phone_status" || name == "phone_get_state") return lock.withLock {
@@ -131,9 +157,14 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                 put("writeEnabled", settings.enabled.value && settings.directWritesEnabled.value)
                 put("busy", busy()); put("sessionTtlMs", ttlMs)
                 put("pendingIntents", scheduler.ger.intentions.pendingCount(sessionOwner))
+                put("launchInFlight", launchBoundary.isInFlight())
+                put("launchClosePending", closeAfterLaunch)
             }
         }
         if (name !in READS && name != "phone_run" && name !in ACTIONS) return fail("unknown_tool")
+        // Do not queue behind an Android launch whose Binder call can still
+        // complete after its caller timed out. No new journal entry is written.
+        if (launchBoundary.isInFlight() || closeAfterLaunch) return fail("launch_in_flight")
         // A rejected/missing ID must not occupy a queue slot. Read tools have no
         // request_id in the unchanged MCP schema and get a synthetic queue key.
         val request = if (name in READS) UUID.randomUUID().toString() else requestId(args)
@@ -146,6 +177,8 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             // lets phone_cancel revoke queued calls without waiting on its mutex.
             if (!lock.tryLock()) return@attempt GerIntentAttempt.Blocked("host_busy")
             try {
+                if (launchBoundary.isInFlight() || closeAfterLaunch)
+                    return@attempt GerIntentAttempt.Done(fail("launch_in_flight"))
                 if (isCancelled()) return@attempt GerIntentAttempt.Done(fail("cancelled"))
                 if (!settings.enabled.value) return@attempt GerIntentAttempt.Done(fail("remote_access_disabled"))
                 if (name !in READS && !settings.directWritesEnabled.value)
@@ -424,8 +457,16 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                 is GerIntentAttempt.Blocked -> return step
                 is GerIntentAttempt.Done -> step.result
             }
-            if (outcome["error"] == JsonPrimitive("delivery_unknown"))
-                return GerIntentAttempt.Done(fail("delivery_unknown"))
+            if (outcome["error"] == JsonPrimitive("delivery_unknown") ||
+                outcome["error"] == JsonPrimitive("launch_timeout_unknown")) {
+                // The timed-out step reached PENDING: it is NOT a completed
+                // batch step and cannot be replayed after an MCP reconnect.
+                return GerIntentAttempt.Done(buildJsonObject {
+                    outcome.forEach { (k, v) -> put(k, v) }
+                    put("completed", progress.index)
+                    put("results", buildJsonArray { progress.results.forEach { add(it) } })
+                })
+            }
             progress.results += outcome
             progress.index++
             if (outcome["ok"] != JsonPrimitive(true)) break
@@ -456,11 +497,44 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         // then startApp returned app_in_use_by_user AFTER markOnce had already
         // committed this ID, leaving the queue unable to retry it.
         launchBlocker(s, external, args)?.let { return GerIntentAttempt.Blocked(it) }
+        // A still-running launch must not commit another request's PENDING.
+        if (launchBoundary.isInFlight() || closeAfterLaunch)
+            return GerIntentAttempt.Done(fail("launch_in_flight"))
         val key = digest(s.owner + "|" + request)
         if (!markOnce(key, external, clean.keys.sorted().joinToString(",")))
             return GerIntentAttempt.Done(fail("delivery_unknown"))
+        val sequence = ++step
+        if (external == "phone_launch_app") {
+            val result = try {
+                launchBoundary.execute {
+                    // Detached only AFTER the fsync'd PENDING marker. Android
+                    // Binder cannot be interrupted safely; the worker records
+                    // its eventual outcome even when the MCP caller timed out.
+                    val actual = try {
+                        s.executor.run(Part.ToolCall(request, tool, clean.toString()), Origin.McpTool(sequence))
+                            .execution().content
+                    } catch (_: Exception) {
+                        uncertain("launch_executor_exception")
+                    }
+                    audit(key, "completed", when {
+                        actual["ok"] == JsonPrimitive(true) -> "ok"
+                        actual["error"] == JsonPrimitive("delivery_unknown") -> "unknown"
+                        else -> "not_applied"
+                    })
+                    actual
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) {
+                return GerIntentAttempt.Done(uncertain("launch_boundary_exception"))
+            }
+            return GerIntentAttempt.Done(when (result) {
+                is DirectLaunchOutcome.Completed -> result.value
+                DirectLaunchOutcome.TimedOut -> uncertain("start_app_timeout")
+                DirectLaunchOutcome.InFlight -> uncertain("launch_already_running")
+            })
+        }
         val result = try {
-            s.executor.run(Part.ToolCall(request, tool, clean.toString()), Origin.McpTool(++step))
+            s.executor.run(Part.ToolCall(request, tool, clean.toString()), Origin.McpTool(sequence))
                 .execution().content
         } catch (e: CancellationException) { throw e }
         catch (_: Exception) { fail("delivery_unknown") }
@@ -498,6 +572,12 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
 
     private fun digest(s: String): String = MessageDigest.getInstance("SHA-256")
         .digest(s.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+
+    private fun uncertain(cause: String) = buildJsonObject {
+        put("ok", false); put("error", "launch_timeout_unknown")
+        put("cause", cause); put("executed", false)
+        put("executionUnknown", true); put("retryable", false)
+    }
 
     private fun fail(code: String) = buildJsonObject {
         put("ok", false); put("error", code); put("executed", false)

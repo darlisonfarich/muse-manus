@@ -287,3 +287,87 @@ Testes JVM: `DirectPhoneScreenPolicyTest` verifica classificação de todas as f
 A fila continua limitada a 120 segundos por padrão (configurável), é cancelável, FIFO por proprietário e reaplica todos os gates existentes. Uma corrida residual entre a checagem e o lançamento real ainda pode acontecer porque o usuário pode abrir o app a qualquer instante; **após PENDING, a tentativa não é repetida automaticamente**, por segurança. A checagem correta elimina o falso negativo sistemático anterior, sem afirmar atomicidade impossível entre uma leitura e o Android launching.
 
 **Teste JVM de regressão:** `DirectPhoneLaunchPreflightTest` cobre `displayOfPackage == -1` enquanto Spotify está na tela física, classificação da causa, app ocupado em outro display, estado desconhecido, fila acordando após liberação sem executar duas vezes e sem gravar PENDING antes do desbloqueio, timeout com `app_in_use_by_user` e cancelamento. **E2E obrigatório no POCO:** deixar Spotify visível na tela principal, iniciar `phone_launch_app` do mesmo pacote pelo Muse, observar `pendingIntents > 0`, mudar de app, confirmar que a chamada conclui **sem que o Spotify saia da sua tela por ação do robô**; repetir mantendo Spotify visível até `wait_timeout/cause=app_in_use_by_user` e cancelando com `phone_cancel`. Ainda requer revisão Muse e aprovação antes de merge.
+
+
+## GER — correção isolada após PR #15: lançamento retomado com áudio ativo (POCO / HyperOS)
+
+**Evidência de 2026-11-08 (não alterar o que passou):** com Spotify visível no
+display físico, o pedido ficou em fila (`pendingIntents=1`) por cerca de 48 s
+sem roubar a tela do usuário. Após sair da tela do app, uma tentativa consumiu
+`PENDING` e retornou `delivery_unknown` sem abrir o display virtual; outra
+ficou mais de 45 s dentro de `startApp` enquanto pedidos pendentes subiam até
+3. `phone_cancel` removeu as intenções. Spotify ocioso em segundo plano abriu
+duas vezes no display virtual. A causa exata no HyperOS **não está provada**:
+a atividade pode reutilizar uma task do display 0 mesmo com
+`ActivityOptions.setLaunchDisplayId`; um foreground service de áudio é
+distinto da atividade e não prova por si só que a interface está em uso.
+
+**Correção no host, não na fila:** mantém `visibleOnMainScreen`, preflight
+duplicado, `GerIntentQueue`, timeout de espera, gates STRICT e o journal
+`fsync(PENDING)` intactos. Somente o caminho `phone_launch_app` que JÁ passou
+por `PENDING` recebe limite de 10 s para **resposta MCP**, não para o Binder
+Android. O trabalho do Android continua isolado uma única vez, sem ser
+cancelado/reexecutado cegamente. Prazo esgotado devolve
+`{ok:false,error:"launch_timeout_unknown",cause:"start_app_timeout",executed:false,executionUnknown:true,retryable:false}`;
+`executed:false` aqui indica **ausência de sucesso confirmado**, não prova
+que o Android nunca executará a tentativa. Exceção do executor informa
+`cause:"launch_executor_exception"`. O journal continua proibindo usar a
+mesma `request_id` em qualquer replay. A conclusão real, quando houver,
+fica registrada pelo worker no journal; não se grava falsamente "concluído"
+quando apenas o prazo MCP acabou.
+
+**Contenção:** enquanto um Binder `startApp` antigo ainda puder terminar,
+novas ferramentas `phone_*` (exceto `phone_status` e `phone_cancel`) falham
+rápido com `launch_in_flight` **antes de PENDING**, em vez de empilhar
+execuções. `phone_cancel` limpa a fila; se existir um start já emitido,
+a sessão/display só serão liberados após o worker finalizar
+(`closePending:true`, `closed:false`). Não há maneira segura de matar uma
+transação Binder que já entrou no Android sem a possibilidade de efeito tardio.
+Caso nunca termine, mantenha a sessão em quarentena e NÃO force replay:
+a pessoa pode fechar/reiniciar manualmente o serviço após investigar o estado.
+
+**Lote `phone_run`:** erro incerto em `phone_launch_app` não incrementa
+`completed`; informa o prefixo confirmado e não tenta o passo seguinte.
+Os checkpoints duráveis do PR #16 continuarão a registrar apenas passos com
+sucesso. `phone_observe` deve ser feito após a pendência terminar, antes de
+qualquer novo ID de escrita.
+
+**Testes JVM:** `DirectPhoneLaunchBoundaryTest` simula `startApp` bloqueado
+por reprodução, deadline sem sobreposição, conclusão tardia sem replay,
+desconexão do chamador e lançamento normal em segundo plano. Executar também
+`DirectPhoneLaunchPreflightTest`, `GerIntentQueueTest` e a CI 4/4.
+
+**Roteiro E2E para o Muse (o usuário controla a tela física):**
+1. Spotify em primeiro plano, música tocando: Muse chama
+   `phone_launch_app(package="com.spotify.music",request_id=<ID-A>)`,
+   consulta `phone_status` e verifica `pendingIntents=1`, nenhum app
+   removido da tela principal e nenhum PENDING antes de liberar.
+2. Ainda com música tocando, ir à tela inicial ou a outro app sem pausar
+   o áudio: a intenção sai da fila, e o resultado deve ser **ou** abertura
+   confirmada na tela virtual **ou** erro com causa precisa; após no máximo
+   10 s de execução do host, `launch_timeout_unknown/start_app_timeout`
+   se o launch ficar preso. Nenhuma segunda execução com a mesma ID.
+3. Se `launch_timeout_unknown`, tentar outro `phone_launch_app` com ID-B
+   antes da conclusão do Binder: receber `launch_in_flight` imediatamente,
+   com `pendingIntents` não crescendo por causa dessa tentativa. Repetir
+   ID-A nunca deve abrir outra instância; o journal retorna
+   `delivery_unknown` após a operação terminar. Não usar outro ID para
+   tentar vencer uma operação de resultado ainda desconhecido.
+4. `phone_cancel` durante a pendência: intenção cancelada e
+   `pendingIntents=0`; se um lançamento já tiver sido enviado ao Android,
+   `closePending=true` até finalizar, sem tomar a tela física.
+5. Com Spotify pausado/ocioso em segundo plano, após resolução da
+   tentativa anterior, novo ID-C deve abrir na tela virtual uma única vez
+   e preservar o primeiro plano do POCO.
+6. `phone_run` com `phone_launch_app` lento seguido de `phone_tap`:
+   timeout incerto NÃO executa o toque, não conta o lançamento como
+   `completed` e exige observação fresca; repetir o lote não duplica
+   o primeiro passo. Verificar também `phone_observe` com tela física
+   apagada e recusa de `phone_tap` com tela bloqueada.
+7. Se reproduzir a falha, coletar apenas logs técnicos filtrados de
+   `ActivityTaskManager`, `dumpsys activity activities` (task/display) e
+   `dumpsys media_session` (estado da reprodução), sem coletar tokens,
+   textos, credenciais ou conteúdo da tela.
+
+**Gate:** PR em rascunho empilhado na branch #15; revisão independente Muse,
+CI 4/4 e E2E no POCO antes de integrar. Não fazer merge automático.
