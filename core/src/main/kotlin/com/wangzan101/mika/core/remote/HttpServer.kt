@@ -54,7 +54,7 @@ class MiniHttpServer(
     private val maxConnections: Int = 16,
     private val readTimeoutMs: Int = 30_000,
     private val onError: (Throwable) -> Unit = {},
-    private val onUpgrade: ((HttpRequest, InputStream, OutputStream) -> Unit)? = null,
+    private val onUpgrade: ((HttpRequest, InputStream, OutputStream, () -> Unit) -> Unit)? = null,
 ) {
     private val running = AtomicBoolean(false)
     private val slots = Semaphore(maxConnections)
@@ -118,7 +118,7 @@ class MiniHttpServer(
                     ?.any { it.trim().equals("close", ignoreCase = true) } == true
                 write(output, response, close)
                 if (response.status == 101 && onUpgrade != null) {
-                    onUpgrade.invoke(request, input, output)
+                    onUpgrade.invoke(request, input, output) { runCatching { socket.close() } }
                     return
                 }
                 if (close) return

@@ -340,7 +340,7 @@ class VoiceA2Hub(
             }
         }
         // Network writes must never hold the state lock, including HELLO and PING replies.
-        if (response != null) sendBestEffort(link, response!!)
+        if (response != null) runCatching { sendText(link, response!!) }
     }
 
     private fun onBinaryOnLink(link: VoiceA2Sender, data: ByteArray) {

@@ -44,8 +44,8 @@ class RemoteHost(
     fun start() {
         val s = MiniHttpServer(bindAddress(allowAllInterfaces, port), ::handle, accept = { local, remote ->
             RemoteAccess.privateAddress(local) && RemoteAccess.privateAddress(remote)
-        }, onError = onError, onUpgrade = { request, input, output ->
-            if (request.path == VoiceChannelProbe.PATH) VoiceChannelProbe.serve(input, output, serverVersion, onVoiceEvent, voiceHub)
+        }, onError = onError, onUpgrade = { request, input, output, close ->
+            if (request.path == VoiceChannelProbe.PATH) VoiceChannelProbe.serve(input, output, serverVersion, onVoiceEvent, voiceHub, close)
         })
         s.start()
         server = s
