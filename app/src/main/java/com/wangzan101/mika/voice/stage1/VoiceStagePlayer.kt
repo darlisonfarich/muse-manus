@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.MediaPlayer
 import android.util.Base64
 import java.io.File
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -27,7 +28,7 @@ class VoiceStagePlayer(private val context: Context) {
         require(bytes.isNotEmpty() && bytes.size <= 12 * 1024 * 1024) { "MP3 fora do limite" }
         stop()
         val mine = generation
-        val temp = withContext(Dispatchers.IO) {
+        val temp = withContext(Dispatchers.IO + NonCancellable) {
             val newFile = File.createTempFile("voice-stage1-", ".mp3", context.cacheDir)
             try {
                 newFile.writeBytes(bytes)
