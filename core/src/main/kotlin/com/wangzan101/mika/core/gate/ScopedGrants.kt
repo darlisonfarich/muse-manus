@@ -1,5 +1,8 @@
 package com.wangzan101.mika.core.gate
 
+import com.wangzan101.mika.core.action.ActionRisk
+import com.wangzan101.mika.core.action.Risk
+
 import java.util.UUID
 
 /**
@@ -65,6 +68,20 @@ class ScopedGrantRegistry(
         prune(now)
         if (app.isNullOrBlank() || account.isNullOrBlank() || actionClass == null) return false
         return grants.values.any { it.app == app && it.account == account && it.actionClass == actionClass }
+    }
+
+    /**
+     * Strict risk binding: unknown/outward/irreversible/declared approvals
+     * are NEVER covered by scoped grants, even if package/account match.
+     */
+    @Synchronized fun coversRoutineRisk(app: String?, account: String?, risk: Risk): Boolean {
+        if (risk.payment || risk.ask != null || risk.action != null) return false
+        val actionClass = when (risk.level) {
+            ActionRisk.Read -> ScopedActionClass.Navigate
+            ActionRisk.Change -> ScopedActionClass.Edit
+            else -> return false
+        }
+        return matches(app, account, actionClass)
     }
 
     @Synchronized fun active(): List<ScopedGrant> {
