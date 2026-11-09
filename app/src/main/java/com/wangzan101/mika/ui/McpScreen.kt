@@ -39,6 +39,7 @@ import com.wangzan101.mika.ui.components.MikaButton
 import com.wangzan101.mika.ui.components.MikaSwitch
 import com.wangzan101.mika.ui.components.PageScaffold
 import com.wangzan101.mika.ui.components.RadioRow
+import com.wangzan101.mika.ui.components.RowChevron
 import com.wangzan101.mika.ui.components.RowActions
 import com.wangzan101.mika.ui.components.SegmentedControl
 import com.wangzan101.mika.ui.components.TileTone
@@ -65,6 +66,7 @@ fun McpScreen(runtime: McpRuntime, onBack: () -> Unit) {
     var activity by remember { mutableStateOf(RemoteActivity()) }
     var token by remember { mutableStateOf<String?>(null) }
     var confirmRegenerate by remember { mutableStateOf(false) }
+    var showScopedGrants by remember { mutableStateOf(false) }
     LaunchedEffect(enabled, usbOn, relayConfig.enabled, relayConfig.paired) {
         token = if (enabled || relayConfig.paired) withContext(Dispatchers.IO) { runCatching { runtime.settings.token() }.getOrNull() } else null
         if (!enabled) addresses = emptyList()
@@ -75,7 +77,12 @@ fun McpScreen(runtime: McpRuntime, onBack: () -> Unit) {
             delay(2_000)
         }
     }
-    ComputerAccessPage(
+    if (showScopedGrants) {
+        ScopedGrantsScreen(
+            (context.applicationContext as com.wangzan101.mika.MikaApp).scopedGrants,
+            onBack = { showScopedGrants = false },
+        )
+    } else ComputerAccessPage(
         ComputerAccessUi(state, enabled, usbOn, (state as? McpServerState.Listening)?.port ?: runtime.settings.port,
             activity, addresses, token, usbCommand, relayConfig.enabled, relayState),
         onBack, runtime::setUsbEnabled, runtime::setEnabled,
@@ -95,6 +102,13 @@ fun McpScreen(runtime: McpRuntime, onBack: () -> Unit) {
                     onClick = { runtime.settings.setDirectWritesEnabled(!directWritesEnabled) }) {
                     MikaSwitch(directWritesEnabled, runtime.settings::setDirectWritesEnabled,
                         Modifier.testTag("mcp-direct-writes"))
+                }
+            }
+            GroupCard {
+                ListRow(MikaIcons.Gear, stringResource(R.string.mcp_scoped_entry),
+                    stringResource(R.string.mcp_scoped_entry_detail),
+                    first = true, onClick = { showScopedGrants = true }) {
+                    RowChevron()
                 }
             }
             DeviceAccessSection(runtime.device.settings)
