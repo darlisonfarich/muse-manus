@@ -73,6 +73,8 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
     private val launchBoundary = DirectPhoneLaunchBoundary(launchScope, 10_000L, ::onLaunchSettled)
     @Volatile private var closeAfterLaunch = false
     private val journal = File(context.filesDir, "direct-phone-audit.jsonl")
+    // Append-only fsync’d batch progress; the audit remains the replay gate.
+    private val checkpoints = DirectPhoneBatchCheckpoints(File(context.filesDir, "direct-phone-batches.log"))
     private val seen = HashSet<String>()
     private var loaded = false
     private var current: Session? = null
@@ -425,9 +427,10 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         put("sizeBytes", data.size)
     }
 
-    /** Volatile progress survives a wait within one MCP call; process-death recovery is phase 3. */
+    /** Progress for this MCP call; durable success prefix lives in DirectPhoneBatchCheckpoints. */
     private class BatchProgress {
         var index = 0
+        var initialized = false
         val results = mutableListOf<JsonObject>()
     }
 
@@ -437,6 +440,39 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         val id = requestId(args) ?: return GerIntentAttempt.Done(fail("request_id_required"))
         val commands = args["commands"] as? JsonArray ?: return GerIntentAttempt.Done(fail("invalid_commands"))
         if (commands.isEmpty() || commands.size > 30) return GerIntentAttempt.Done(fail("invalid_commands"))
+        val batchKey = digest(s.owner + "|batch|" + id)
+        if (!progress.initialized) {
+            // Reconnect/restart uses the same stable request_id and exact commands.
+            // We can prove which earlier steps succeeded, but we CANNOT assume the
+            // UI is still on the same screen. Muse must observe/reconcile before
+            // issuing the remainder as a new batch. Never replay a tap or send.
+            when (val saved = checkpoints.open(batchKey, digest(commands.toString()), commands.size)) {
+                DirectPhoneBatchCheckpoints.OpenResult.Corrupt ->
+                    return GerIntentAttempt.Done(buildJsonObject {
+                        put("ok", false); put("error", "checkpoint_corrupt")
+                        put("executionUnknown", true); put("requiresFreshObservation", true)
+                    })
+                DirectPhoneBatchCheckpoints.OpenResult.Conflict ->
+                    return GerIntentAttempt.Done(buildJsonObject {
+                        put("ok", false); put("error", "checkpoint_mismatch")
+                        put("executionUnknown", true); put("requiresFreshObservation", true)
+                    })
+                is DirectPhoneBatchCheckpoints.OpenResult.Ready -> {
+                    progress.initialized = true
+                    if (!saved.snapshot.fresh && saved.snapshot.completed > 0) {
+                        return GerIntentAttempt.Done(buildJsonObject {
+                            put("ok", false); put("error", "reconciliation_required")
+                            put("recovered", true); put("executed", true)
+                            put("completed", saved.snapshot.completed)
+                            put("total", commands.size)
+                            put("nextIndex", saved.snapshot.completed)
+                            put("requiresFreshObservation", true)
+                            put("resultsUnavailable", true)
+                        })
+                    }
+                }
+            }
+        }
         while (progress.index < commands.size) {
             if (cancelled()) return GerIntentAttempt.Done(fail("cancelled"))
             if (busy() || !app.resources.ger.canUseDirect(directOwner(s.owner)))
@@ -457,14 +493,28 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                 is GerIntentAttempt.Blocked -> return step
                 is GerIntentAttempt.Done -> step.result
             }
+            // The bounded launch correction (stacked separately after #15)
+            // also reports uncertain delivery when Android Binder outlives the
+            // MCP deadline. Neither case may advance a durable checkpoint.
             if (outcome["error"] == JsonPrimitive("delivery_unknown") ||
-                outcome["error"] == JsonPrimitive("launch_timeout_unknown")) {
-                // The timed-out step reached PENDING: it is NOT a completed
-                // batch step and cannot be replayed after an MCP reconnect.
+                outcome["error"] == JsonPrimitive("launch_timeout_unknown"))
                 return GerIntentAttempt.Done(buildJsonObject {
-                    outcome.forEach { (k, v) -> put(k, v) }
-                    put("completed", progress.index)
-                    put("results", buildJsonArray { progress.results.forEach { add(it) } })
+                    put("ok", false); put("error", "reconciliation_required")
+                    put("executionUnknown", true); put("completed", progress.index)
+                    put("uncertainStepIndex", progress.index)
+                    put("cause", (outcome["cause"] as? JsonPrimitive)?.contentOrNull
+                        ?: (outcome["error"] as? JsonPrimitive)?.contentOrNull.orEmpty())
+                    put("requiresFreshObservation", true)
+                })
+            if (outcome["ok"] == JsonPrimitive(true)) {
+                // Persist only confirmed success, and only AFTER the action's
+                // separate idempotency audit has been fsync'd by action().
+                val stored = runCatching { checkpoints.completed(batchKey, progress.index) }.getOrDefault(false)
+                if (!stored) return GerIntentAttempt.Done(buildJsonObject {
+                    put("ok", false); put("error", "checkpoint_unavailable")
+                    put("executed", true); put("completed", progress.index)
+                    put("uncertainStepIndex", progress.index)
+                    put("requiresFreshObservation", true)
                 })
             }
             progress.results += outcome
