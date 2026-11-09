@@ -472,6 +472,7 @@ private fun MikaRoot(
             val approvalMode by app.approvals.mode.collectAsState()
             SettingsScreen(store, status, release, onFix, onBack = back, onOpenMemory = { nav.push(Route.Memory) },
                 onOpenModels = { nav.push(Route.Models) },
+                onOpenVoice = { nav.push(Route.VoiceMode) },
                 autonomous = autonomous, onAutonomous = app.approvalControl::setAutonomous,
                 approvalMode = approvalMode, onApprovalMode = app.approvalControl::setMode,
                 updateVersion = updateState.update?.version, onOpenAbout = { nav.push(Route.About) },
@@ -480,6 +481,7 @@ private fun MikaRoot(
         Route.Models -> ModelsScreen(store, onBack = back, onOpenSpeech = { nav.push(Route.SpeechModel) }, onOpenUsage = { nav.push(Route.Usage) })
         Route.Usage -> UsageScreen(app.usage, store.providers, onBack = back)
         Route.SpeechModel -> SpeechModelScreen(store, onBack = back)
+        Route.VoiceMode -> VoiceModeScreen(onBack = back)
         Route.About -> AboutScreen(
             versionName = BuildConfig.VERSION_NAME, build = BuildConfig.GIT_HASH, beta = BuildConfig.BETA,
             update = updateState,
