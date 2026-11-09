@@ -41,7 +41,7 @@ internal abstract class ScreenTool(val family: ScreenFamily, val base: String) :
 
         /** 一块屏上 press_key 能按的键名。 */
         fun keyNames(f: ScreenFamily): String =
-            PressKeys.BY_NAME.filterValues { f.keys == null || it in f.keys }.keys.joinToString()
+            PressKeys.BY_NAME.filterValues { (f.keys == null || it in f.keys) && PressKeys.isAllowed(it, f.keyScope) }.keys.joinToString()
 
         /** 一块屏的那一套屏幕工具,按 [MIRRORED] 的顺序。 */
         fun of(f: ScreenFamily): List<AgentTool> = listOf(

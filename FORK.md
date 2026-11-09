@@ -218,6 +218,22 @@ ponte do Muse e é independente da remoção OTLP.
 **PR em rascunho: revisão Muse obrigatória, CI 4/4 verde, sem merge.**
 
 
+## GER / PR-7 — teclas no display virtual e controles de áudio
+
+- A allowlist de teclas agora registra o escopo junto da definição. HOME,
+  Recentes, volume e controles de mídia só são aceitos pela família de tela
+  do agente virtual; a injeção do shell também exige display pertencente ao
+  agente. Power continua bloqueado. A validação padrão/main continua recusando
+  as teclas com escopo virtual.
+- O MCP direto oferece `phone_volume` (um passo para cima/baixo ou mute) e
+  `phone_media` (play/pause, stop, next, previous). Ambos entram na fila por
+  proprietário do GER e usam os mesmos `ready()`/`sensitive()` gates e journal
+  PENDING fsync antes da execução, através da ferramenta de tecla já guardada.
+- Limite: o Android pode tratar volume e transporte de mídia como controles
+  globais do sistema, mesmo quando o evento é endereçado a um display virtual.
+  O código impede injeção destinada ao display principal; o efeito isolado no
+  hardware/ROM precisa ser confirmado no aparelho. Power não está incluído.
+
 ## Fase 2 / PR-A — proteção de OTP em observações ao vivo
 
 - Quando uma tela contiver qualquer campo de senha (também em nós aninhados da árvore), sequências **isoladas de 4 a 8 dígitos** são substituídas por `[OTP REDACTED]` nos nomes dos elementos e nos textos, descrições, dicas e títulos das janelas.
