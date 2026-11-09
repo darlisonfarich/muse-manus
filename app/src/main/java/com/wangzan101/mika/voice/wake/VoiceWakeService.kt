@@ -244,7 +244,8 @@ class VoiceWakeService : Service() {
                 publish("Muse não respondeu a tempo")
                 return
             }
-            if (result.resultId != turn || result.audio == null) {
+            val responseAudio = result.audio
+            if (result.resultId != turn || responseAudio == null) {
                 publish("Muse não entregou uma resposta válida")
                 return
             }
@@ -252,7 +253,7 @@ class VoiceWakeService : Service() {
             publish("Reproduzindo resposta")
             val done = CompletableDeferred<Unit>()
             withContext(Dispatchers.Main.immediate) {
-                player.playBytes(result.audio) { done.complete(Unit) }
+                player.playBytes(responseAudio) { done.complete(Unit) }
             }
             if (withTimeoutOrNull(30_000L) { done.await() } == null) {
                 withContext(Dispatchers.Main.immediate) { player.stop() }
