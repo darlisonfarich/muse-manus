@@ -40,9 +40,12 @@ object VoiceChannelProbe {
 
     /** One connection, one worker. Reads masked client frames, echoes binary and answers ping. */
     fun serve(input: InputStream, output: OutputStream, version: String,
-        event: (String) -> Unit = {}, hub: VoiceA2Hub = VoiceA2Hub()) {
-        val writer = VoiceA2Sender { opcode, payload ->
-            synchronized(output) { writeFrame(output, opcode, payload) }
+        event: (String) -> Unit = {}, hub: VoiceA2Hub = VoiceA2Hub(), close: () -> Unit = {}) {
+        val writer = object : VoiceA2Sender {
+            override fun send(opcode: Int, payload: ByteArray) {
+                synchronized(output) { writeFrame(output, opcode, payload) }
+            }
+            override fun close() { close.invoke() }
         }
         if (!hub.attach(writer)) return
         event("voice WebSocket probe opened")
@@ -83,9 +86,9 @@ object VoiceChannelProbe {
                             else -> null
                         }
                         if (answer != null) writer.send(1, answer.toByteArray(Charsets.UTF_8))
-                        else hub.onText(value)
+                        else hub.onTextFrom(writer, value)
                     }
-                    2 -> if (hub.state.value.ready) hub.onBinary(payload) else writer.send(2, payload)
+                    2 -> if (hub.state.value.ready) hub.onBinaryFrom(writer, payload) else writer.send(2, payload)
                     8 -> { writer.send(8, payload); return }
                     9 -> writer.send(10, payload)
                     10 -> Unit

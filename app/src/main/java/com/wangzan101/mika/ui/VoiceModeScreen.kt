@@ -66,12 +66,12 @@ fun VoiceModeScreen(onBack: () -> Unit) {
     }
 
     LaunchedEffect(channel.resultId) {
-        val bytes = channel.audio ?: return@LaunchedEffect
-        if (channel.resultId == null) return@LaunchedEffect
+        val resultId = channel.resultId ?: return@LaunchedEffect
+        val bytes = controller.takeAudio(resultId) ?: return@LaunchedEffect
         try {
             playing = true
             status = "Reproduzindo resposta"
-            player.playBytes(bytes) {
+            player.playBytesAsync(bytes) {
                 playing = false
                 status = "Resposta concluída"
             }

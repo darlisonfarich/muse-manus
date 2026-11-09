@@ -11,6 +11,7 @@ interface VoiceTransport {
     val state: StateFlow<VoiceA2State>
     suspend fun submit(conversationId: String, turnId: String, generationId: String, wav: ByteArray): Boolean
     fun cancel()
+    fun takeAudio(resultId: String): ByteArray?
 }
 
 /** VM initiates the socket. Android sends back over the authenticated accepted connection. */
@@ -21,6 +22,7 @@ class ReverseWebSocketVoiceTransport(private val hub: VoiceA2Hub) : VoiceTranspo
         withContext(Dispatchers.IO) { hub.submit(conversationId, turnId, generationId, wav) }
 
     override fun cancel() = hub.cancel()
+    override fun takeAudio(resultId: String) = hub.takeAudio(resultId)
 }
 
 class VoiceChannelController(private val transport: VoiceTransport) {
@@ -28,4 +30,5 @@ class VoiceChannelController(private val transport: VoiceTransport) {
     suspend fun send(conversationId: String, turnId: String, generationId: String, wav: ByteArray) =
         transport.submit(conversationId, turnId, generationId, wav)
     fun cancel() = transport.cancel()
+    fun takeAudio(resultId: String): ByteArray? = transport.takeAudio(resultId)
 }
