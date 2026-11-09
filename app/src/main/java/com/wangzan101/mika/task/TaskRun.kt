@@ -621,7 +621,9 @@ class TaskRun(
                 }
                 val screen = AndroidScreen(
                     a11y, shell, agentDisplay, { recovery.markClipHeld(it) },
-                    clipLock = service.clipLock, checkOtherTasks = parallel,
+                    // Even with parallelTasks disabled, respect a parked MCP display.
+                    clipLock = service.clipLock, checkOtherTasks = parallel ||
+                        (service.application as MikaApp).resources.ger.snapshot().directSession,
                     reserve = { pkg -> service.reservePackage(pkg, key, stillUsed(pkg, null)) },
                     reserveCopy = { pkg, user -> service.reservePackage(claimKey(pkg, user), key, stillUsed(pkg, user)) },
                     appFree = { pkg, user -> service.packageFree(claimKey(pkg, user), key, stillUsed(pkg, user)) },

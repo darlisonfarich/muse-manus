@@ -7,6 +7,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.hardware.display.DisplayManager
 import com.wangzan101.mika.MikaApp
+import com.wangzan101.mika.task.GerIntentAttempt
+import com.wangzan101.mika.task.GerIntentOutcome
 import com.wangzan101.mika.cap.phone.PhoneServices
 import com.wangzan101.mika.cap.phone.a11y.AndroidScreen
 import com.wangzan101.mika.cap.phone.a11y.LazyPhoneScreen
@@ -84,7 +86,11 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         fun close() { display.current?.release(); releaseBinding() }
     }
 
-    suspend fun close() = lock.withLock { closeActive() }
+    suspend fun close() {
+        // A stopped MCP listener must never leave requests parked in memory.
+        app.resources.ger.intentions.cancelAll()
+        lock.withLock { closeActive() }
+    }
 
     private fun directOwner(owner: String): String = "mcp:" + digest(owner)
 
@@ -101,49 +107,160 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         }
     }
 
-    override suspend fun call(owner: String, name: String, args: JsonObject): JsonObject = lock.withLock {
-        if (owner.isBlank()) return@withLock fail("unauthenticated")
+    /**
+     * Cancellation/status are out-of-band. All other phone_* calls go through
+     * GER's per-owner FIFO, NOT through TaskCenter's persistent task queue.
+     * The host mutex is held for an atomic attempt, never for parked waiting.
+     */
+    override suspend fun call(owner: String, name: String, args: JsonObject): JsonObject {
+        if (owner.isBlank()) return fail("unauthenticated")
+        val scheduler = app.resources
+        val sessionOwner = directOwner(owner)
         if (name == "phone_cancel") {
-            if (current?.owner != owner) return@withLock fail("session_not_found")
-            closeActive()
-            return@withLock buildJsonObject { put("ok", true); put("closed", true) }
-        }
-        val now = System.currentTimeMillis()
-        if (current != null && now - current!!.lastUsed > ttlMs) closeActive()
-        if (name == "phone_status" || name == "phone_get_state") return@withLock buildJsonObject {
-            put("ok", true); put("active", current?.owner == owner)
-            put("writeEnabled", settings.enabled.value && settings.directWritesEnabled.value)
-            put("busy", busy()); put("sessionTtlMs", ttlMs)
-        }
-        if (!settings.enabled.value) return@withLock fail("remote_access_disabled")
-        if (busy() || current != null && current!!.owner != owner) return@withLock fail("session_conflict")
-        // GER is process-wide: share the admission decision with TaskCenter.
-        val key = directOwner(owner)
-        if (!app.resources.ger.claimDirect(key)) return@withLock fail("session_conflict")
-        val s = try { current ?: create(owner, now).also { current = it } }
-            catch (_: Exception) {
-                if (current == null) app.resources.ger.releaseDirect(key)
-                return@withLock fail("phone_unavailable")
+            val cancelled = scheduler.ger.intentions.cancelOwner(sessionOwner)
+            return lock.withLock {
+                val hadSession = current?.owner == owner
+                if (hadSession) closeActive()
+                if (!hadSession && cancelled == 0) fail("session_not_found")
+                else buildJsonObject { put("ok", true); put("closed", hadSession); put("cancelledIntents", cancelled) }
             }
-        // A task may have been admitted while the virtual screen was being created.
-        if (!app.resources.ger.canUseDirect(key)) return@withLock fail("session_conflict")
-        s.lastUsed = now
-        try {
-            when (name) {
-                "phone_observe", "phone_list_apps" -> {
-                    if (sensitive(s)) fail("needs_user")
-                    else {
-                        val observed = s.tools.executeRead(Part.ToolCall(UUID.randomUUID().toString(), name, "{}")).content
-                        // Do not return a capture if a credential screen appeared during the read.
-                        if (sensitive(s)) fail("needs_user") else observed
-                    }
+        }
+        if (name == "phone_status" || name == "phone_get_state") return lock.withLock {
+            buildJsonObject {
+                put("ok", true); put("active", current?.owner == owner)
+                put("writeEnabled", settings.enabled.value && settings.directWritesEnabled.value)
+                put("busy", busy()); put("sessionTtlMs", ttlMs)
+                put("pendingIntents", scheduler.ger.intentions.pendingCount(sessionOwner))
+            }
+        }
+        if (name !in READS && name != "phone_run" && name !in ACTIONS) return fail("unknown_tool")
+        // A rejected/missing ID must not occupy a queue slot. Read tools have no
+        // request_id in the unchanged MCP schema and get a synthetic queue key.
+        val request = if (name in READS) UUID.randomUUID().toString() else requestId(args)
+            ?: return fail("request_id_required")
+        val progress = BatchProgress()
+        val outcome = scheduler.ger.intentions.dispatch(
+            sessionOwner, request, settings.directWaitTimeoutMs,
+        ) attempt@{ isCancelled ->
+            // Never park waiting for an already-running host action. This also
+            // lets phone_cancel revoke queued calls without waiting on its mutex.
+            if (!lock.tryLock()) return@attempt GerIntentAttempt.Blocked("host_busy")
+            try {
+                if (isCancelled()) return@attempt GerIntentAttempt.Done(fail("cancelled"))
+                if (!settings.enabled.value) return@attempt GerIntentAttempt.Done(fail("remote_access_disabled"))
+                if (name !in READS && !settings.directWritesEnabled.value)
+                    return@attempt GerIntentAttempt.Done(fail("write_disabled"))
+                val now = System.currentTimeMillis()
+                if (current != null && now - current!!.lastUsed > ttlMs) closeActive()
+                if (busy()) return@attempt GerIntentAttempt.Blocked("task_running")
+                if (current != null && current!!.owner != owner)
+                    return@attempt GerIntentAttempt.Blocked("direct_session_busy")
+                if (!scheduler.ger.claimDirect(sessionOwner))
+                    return@attempt GerIntentAttempt.Blocked(
+                        if (scheduler.ger.hasRunningTasks()) "task_running" else "direct_session_busy"
+                    )
+                val s = try {
+                    current ?: create(owner, now).also { current = it }
+                } catch (e: CancellationException) {
+                    if (current == null) scheduler.ger.releaseDirect(sessionOwner)
+                    throw e
+                } catch (_: Exception) {
+                    if (current == null) scheduler.ger.releaseDirect(sessionOwner)
+                    return@attempt GerIntentAttempt.Done(fail("phone_unavailable"))
                 }
-                "phone_screenshot" -> screenshot(s)
-                "phone_run" -> batch(s, args)
-                else -> action(s, name, args)
+                if (!scheduler.ger.canUseDirect(sessionOwner))
+                    return@attempt GerIntentAttempt.Blocked("task_running")
+                if (isCancelled()) return@attempt GerIntentAttempt.Done(fail("cancelled"))
+                s.lastUsed = now
+                try {
+                    // Virtual-display reads must work with the physical screen off.
+                    // Only actions require an unlocked, interactive physical phone.
+                    if (DirectPhoneScreenPolicy.requiresInteractivePhysicalScreen(name) && !ready(s))
+                        return@attempt GerIntentAttempt.Done(fail("needs_user"))
+                    if (sensitive(s)) return@attempt GerIntentAttempt.Done(fail("needs_user"))
+                    when (name) {
+                        "phone_observe", "phone_list_apps" -> {
+                            if (sensitive(s)) GerIntentAttempt.Done(fail("needs_user"))
+                            else {
+                                val observed = s.tools.executeRead(Part.ToolCall(UUID.randomUUID().toString(), name, "{}")).content
+                                when {
+                                    !scheduler.ger.canUseDirect(sessionOwner) -> GerIntentAttempt.Blocked("task_running")
+                                    sensitive(s) -> GerIntentAttempt.Done(fail("needs_user"))
+                                    else -> GerIntentAttempt.Done(observed)
+                                }
+                            }
+                        }
+                        "phone_screenshot" -> {
+                            val result = screenshot(s)
+                            if (!scheduler.ger.canUseDirect(sessionOwner)) GerIntentAttempt.Blocked("task_running")
+                            else GerIntentAttempt.Done(result)
+                        }
+                        "phone_run" -> batch(s, args, progress, isCancelled)
+                        else -> {
+                            val reason = launchBlocker(s, name, args)
+                            if (reason != null) GerIntentAttempt.Blocked(reason)
+                            else if (busy()) GerIntentAttempt.Blocked("task_running")
+                            else action(s, name, args)
+                        }
+                    }
+                } catch (e: CancellationException) { throw e }
+                catch (_: Exception) { GerIntentAttempt.Done(fail("phone_unavailable")) }
+            } finally { lock.unlock() }
+        }
+        return when (outcome) {
+            is GerIntentOutcome.Completed -> outcome.result
+            is GerIntentOutcome.TimedOut -> buildJsonObject {
+                put("ok", false); put("error", "wait_timeout"); put("cause", outcome.cause)
+                put("executed", progress.index > 0)
+                if (name == "phone_run") {
+                    put("completed", progress.index)
+                    put("results", buildJsonArray { progress.results.forEach { add(it) } })
+                }
             }
-        } catch (e: CancellationException) { throw e }
-        catch (_: Exception) { fail("phone_unavailable") }
+            GerIntentOutcome.Cancelled -> buildJsonObject {
+                put("ok", false); put("error", "cancelled"); put("executed", progress.index > 0)
+                if (name == "phone_run") {
+                    put("completed", progress.index)
+                    put("results", buildJsonArray { progress.results.forEach { add(it) } })
+                }
+            }
+            GerIntentOutcome.Duplicate -> fail("delivery_unknown")
+            GerIntentOutcome.QueueFull -> fail("intent_queue_full")
+        }
+    }
+
+    /**
+     * Pure pre-action check, not a launch or a reservation. ShellService's
+     * displayOfPackage() ONLY searches our virtual displays, never display 0:
+     * we must independently query the physical screen via the existing Binder
+     * visibleOnMainScreen(), which matches startApp's actual ownership gate.
+     */
+    private fun launchBlocker(s: Session, name: String, args: JsonObject): String? {
+        if (name != "phone_launch_app") return null
+        val pkg = (args["package"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: return null
+        val shell = s.binding.shell.value ?: return "app_presence_unknown"
+        val userId = android.os.Process.myUid() / 100_000
+        val userVisible = runCatching { shell.visibleOnMainScreen(pkg, userId) }.getOrNull()
+        if (userVisible != false) {
+            return DirectPhoneLaunchPreflight.blockedCause(
+                userVisible = userVisible,
+                reservedByOther = false,
+                agentDisplay = -1,
+                ourDisplay = s.display.current?.displayId,
+            )
+        }
+        val scheduler = app.resources
+        val owner = directOwner(s.owner)
+        val reserved = !scheduler.appFree(pkg, owner, scheduler.ger::isActiveOwner, { true })
+        if (reserved) return "app_busy"
+        val display = runCatching { shell.displayOfPackage(pkg) }.getOrNull()
+            ?: return "app_presence_unknown"
+        return DirectPhoneLaunchPreflight.blockedCause(
+            userVisible = false,
+            reservedByOther = false,
+            agentDisplay = display,
+            ourDisplay = s.display.current?.displayId,
+        )
     }
 
     private fun busy(): Boolean =
@@ -275,44 +392,80 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         put("sizeBytes", data.size)
     }
 
-    private suspend fun batch(s: Session, args: JsonObject): JsonObject {
-        val id = requestId(args) ?: return fail("request_id_required")
-        val commands = args["commands"] as? JsonArray ?: return fail("invalid_commands")
-        if (commands.isEmpty() || commands.size > 30) return fail("invalid_commands")
+    /** Volatile progress survives a wait within one MCP call; process-death recovery is phase 3. */
+    private class BatchProgress {
+        var index = 0
         val results = mutableListOf<JsonObject>()
-        for ((index, raw) in commands.withIndex()) {
-            val cmd = raw as? JsonObject ?: return fail("invalid_commands")
-            val name = (cmd["name"] as? JsonPrimitive)?.contentOrNull ?: return fail("invalid_commands")
-            if (name !in ACTIONS) return fail("invalid_commands")
-            val params = cmd["arguments"] as? JsonObject ?: JsonObject(emptyMap())
-            val key = UUID.nameUUIDFromBytes((id + ":" + index).toByteArray()).toString()
-            val outcome = action(s, name, JsonObject(params + ("request_id" to JsonPrimitive(key))))
-            results += outcome
-            if (outcome["ok"] != JsonPrimitive(true)) break
-        }
-        return buildJsonObject {
-            put("ok", results.size == commands.size && results.all { it["ok"] == JsonPrimitive(true) })
-            put("results", buildJsonArray { results.forEach { add(it) } })
-            put("completed", results.size)
-        }
     }
 
-    private suspend fun action(s: Session, external: String, args: JsonObject): JsonObject {
-        val tool = ACTIONS[external] ?: return fail("unknown_tool")
-        if (!settings.enabled.value || !settings.directWritesEnabled.value) return fail("write_disabled")
-        if (busy()) return fail("session_conflict")
-        if (!ready(s) || sensitive(s)) return fail("needs_user")
-        val request = requestId(args) ?: return fail("request_id_required")
+    private suspend fun batch(
+        s: Session, args: JsonObject, progress: BatchProgress, cancelled: () -> Boolean,
+    ): GerIntentAttempt<JsonObject> {
+        val id = requestId(args) ?: return GerIntentAttempt.Done(fail("request_id_required"))
+        val commands = args["commands"] as? JsonArray ?: return GerIntentAttempt.Done(fail("invalid_commands"))
+        if (commands.isEmpty() || commands.size > 30) return GerIntentAttempt.Done(fail("invalid_commands"))
+        while (progress.index < commands.size) {
+            if (cancelled()) return GerIntentAttempt.Done(fail("cancelled"))
+            if (busy() || !app.resources.ger.canUseDirect(directOwner(s.owner)))
+                return GerIntentAttempt.Blocked("task_running")
+            val raw = commands[progress.index]
+            val cmd = raw as? JsonObject ?: return GerIntentAttempt.Done(fail("invalid_commands"))
+            val name = (cmd["name"] as? JsonPrimitive)?.contentOrNull ?: return GerIntentAttempt.Done(fail("invalid_commands"))
+            if (name !in ACTIONS) return GerIntentAttempt.Done(fail("invalid_commands"))
+            val params = cmd["arguments"] as? JsonObject ?: JsonObject(emptyMap())
+            if (!ready(s) || sensitive(s)) return GerIntentAttempt.Done(fail("needs_user"))
+            launchBlocker(s, name, params)?.let { return GerIntentAttempt.Blocked(it) }
+            // A deterministic ID per step makes a completed step non-replayable,
+            // even if the MCP connection dies after step N and before the reply.
+            val key = UUID.nameUUIDFromBytes((id + ":" + progress.index).toByteArray()).toString()
+            // Only Blocked is guaranteed pre-PENDING; no step may be replayed
+            // after an execution has reached the durable journal.
+            val outcome = when (val step = action(s, name, JsonObject(params + ("request_id" to JsonPrimitive(key))))) {
+                is GerIntentAttempt.Blocked -> return step
+                is GerIntentAttempt.Done -> step.result
+            }
+            if (outcome["error"] == JsonPrimitive("delivery_unknown"))
+                return GerIntentAttempt.Done(fail("delivery_unknown"))
+            progress.results += outcome
+            progress.index++
+            if (outcome["ok"] != JsonPrimitive(true)) break
+        }
+        return GerIntentAttempt.Done(buildJsonObject {
+            put("ok", progress.index == commands.size && progress.results.all { it["ok"] == JsonPrimitive(true) })
+            put("results", buildJsonArray { progress.results.forEach { add(it) } })
+            put("completed", progress.index)
+        })
+    }
+
+    /**
+     * Blocked means no audit marker and NO action attempted. After markOnce's
+     * fsync(PENDING), every result is terminal for this request_id, even when
+     * Android reports no progress; repeating it could otherwise double-send.
+     */
+    private suspend fun action(s: Session, external: String, args: JsonObject): GerIntentAttempt<JsonObject> {
+        val tool = ACTIONS[external] ?: return GerIntentAttempt.Done(fail("unknown_tool"))
+        if (!settings.enabled.value || !settings.directWritesEnabled.value)
+            return GerIntentAttempt.Done(fail("write_disabled"))
+        if (busy() || !app.resources.ger.canUseDirect(directOwner(s.owner)))
+            return GerIntentAttempt.Blocked("task_running")
+        if (!ready(s) || sensitive(s)) return GerIntentAttempt.Done(fail("needs_user"))
+        val request = requestId(args) ?: return GerIntentAttempt.Done(fail("request_id_required"))
         val clean = JsonObject(args.filterKeys { it != "request_id" })
+        // Recheck physical app ownership at the LAST pre-PENDING boundary.
+        // Previously displayOfPackage() always missed the user's display 0,
+        // then startApp returned app_in_use_by_user AFTER markOnce had already
+        // committed this ID, leaving the queue unable to retry it.
+        launchBlocker(s, external, args)?.let { return GerIntentAttempt.Blocked(it) }
         val key = digest(s.owner + "|" + request)
-        if (!markOnce(key, external, clean.keys.sorted().joinToString(","))) return fail("delivery_unknown")
+        if (!markOnce(key, external, clean.keys.sorted().joinToString(",")))
+            return GerIntentAttempt.Done(fail("delivery_unknown"))
         val result = try {
             s.executor.run(Part.ToolCall(request, tool, clean.toString()), Origin.McpTool(++step))
                 .execution().content
         } catch (e: CancellationException) { throw e }
         catch (_: Exception) { fail("delivery_unknown") }
         audit(key, "completed", if (result["ok"] == JsonPrimitive(true)) "ok" else "not_applied")
-        return result
+        return GerIntentAttempt.Done(result)
     }
 
     private fun requestId(args: JsonObject): String? =
@@ -351,6 +504,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
     }
 
     companion object {
+        private val READS = DirectPhoneScreenPolicy.reads
         private val ACTIONS = mapOf(
             "phone_launch_app" to "phone_launch_app",
             "phone_tap" to "phone_tap",

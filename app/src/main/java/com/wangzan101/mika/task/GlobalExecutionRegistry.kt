@@ -10,10 +10,14 @@ package com.wangzan101.mika.task
  * This is not a second queue, a model, or a source of user approval. A task that
  * starts while an MCP session is parked takes priority: the MCP host must check
  * [canUseDirect] before every action, and must not reclaim the session's screen.
- * Multi-slot ownership and fair intention queues belong to later phases.
+ * Multi-slot ownership belongs to later phases; phase 2 adds a separate
+ * nonpersistent per-owner queue for direct calls only.
  */
 class GlobalExecutionRegistry {
     data class Snapshot(val admittedTasks: Int, val directSession: Boolean)
+
+    /** Phase 2: waiting MCP calls; not part of TaskCenter's persistent task queue. */
+    val intentions = GerIntentQueue()
 
     private val taskOwners = LinkedHashSet<String>()
     private var directOwner: String? = null
@@ -21,10 +25,12 @@ class GlobalExecutionRegistry {
     /** Register only tasks actually admitted to TaskCenter.running, never queued tasks. */
     @Synchronized fun taskStarted(owner: String) {
         require(owner.isNotBlank())
-        taskOwners.add(owner)
+        if (taskOwners.add(owner)) intentions.notifyChanged()
     }
 
-    @Synchronized fun taskEnded(owner: String): Boolean = taskOwners.remove(owner)
+    @Synchronized fun taskEnded(owner: String): Boolean = taskOwners.remove(owner).also {
+        if (it) intentions.notifyChanged()
+    }
 
     /**
      * Claim the sole direct-host session. Returns false if any task is running or
@@ -34,8 +40,10 @@ class GlobalExecutionRegistry {
     @Synchronized fun claimDirect(owner: String): Boolean {
         require(owner.isNotBlank())
         if (taskOwners.isNotEmpty()) return false
-        if (directOwner != null && directOwner != owner) return false
+        if (directOwner == owner) return true // No change; do not wake a blocked queue head in a tight loop.
+        if (directOwner != null) return false
         directOwner = owner
+        intentions.notifyChanged()
         return true
     }
 
@@ -46,6 +54,7 @@ class GlobalExecutionRegistry {
     @Synchronized fun releaseDirect(owner: String): Boolean {
         if (directOwner != owner) return false
         directOwner = null
+        intentions.notifyChanged()
         return true
     }
 

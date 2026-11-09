@@ -28,6 +28,9 @@ class McpSettings(private val dir: File, private val cipher: KeyCipher, private 
     private val _historyEnabled: MutableStateFlow<Boolean>
     private val _directWritesEnabled: MutableStateFlow<Boolean>
     @Volatile private var cachedToken: String? = null
+    /** Maximum time a direct phone intention may wait for a transient conflict. */
+    @Volatile var directWaitTimeoutMs: Long = DEFAULT_DIRECT_WAIT_MS
+        private set
 
     /** 监听的端口;文件里没写就用 [DEFAULT_PORT]。 */
     val port: Int
@@ -39,6 +42,8 @@ class McpSettings(private val dir: File, private val cipher: KeyCipher, private 
         // Opt-in; old installs and malformed data always default to observe-only.
         _directWritesEnabled = MutableStateFlow((o?.get("directWritesEnabled") as? JsonPrimitive)?.booleanOrNull ?: false)
         port = (o?.get("port") as? JsonPrimitive)?.intOrNull?.takeIf { it in 1024..65535 } ?: DEFAULT_PORT
+        directWaitTimeoutMs = (o?.get("directWaitTimeoutMs") as? JsonPrimitive)?.intOrNull
+            ?.toLong()?.takeIf { it in MIN_DIRECT_WAIT_MS..MAX_DIRECT_WAIT_MS } ?: DEFAULT_DIRECT_WAIT_MS
     }
 
     val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
@@ -53,6 +58,13 @@ class McpSettings(private val dir: File, private val cipher: KeyCipher, private 
 
     @Synchronized fun setDirectWritesEnabled(on: Boolean) {
         _directWritesEnabled.value = on
+        save()
+    }
+
+    /** Local configuration only: the public phone_* MCP schemas are unchanged. */
+    @Synchronized fun setDirectWaitTimeoutMs(ms: Long) {
+        require(ms in MIN_DIRECT_WAIT_MS..MAX_DIRECT_WAIT_MS)
+        directWaitTimeoutMs = ms
         save()
     }
 
@@ -86,12 +98,16 @@ class McpSettings(private val dir: File, private val cipher: KeyCipher, private 
         tmp.writeText(buildJsonObject {
             put("enabled", _enabled.value); put("port", port); put("historyEnabled", _historyEnabled.value)
             put("directWritesEnabled", _directWritesEnabled.value)
+            put("directWaitTimeoutMs", directWaitTimeoutMs)
         }.toString())
         Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
     }
 
     companion object {
         const val DEFAULT_PORT = 8765
+        const val DEFAULT_DIRECT_WAIT_MS = 120_000L
+        const val MIN_DIRECT_WAIT_MS = 5_000L
+        const val MAX_DIRECT_WAIT_MS = 300_000L
         private const val MIN_TOKEN = 32
     }
 }
