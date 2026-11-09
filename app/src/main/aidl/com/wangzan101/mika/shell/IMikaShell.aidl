@@ -118,6 +118,8 @@ interface IMikaShell {
     // 只在 Mika 的虚拟屏、指定的最前面任务里,把可打印 ASCII 作为键盘事件输入;不发送控制字符
     // 0=未发送 1=全部事件已投递 2=投递不确定(可能只输入了前缀)
     int injectAsciiText(int displayId, int taskId, String packageName, String text) = 50;
+    // 当前音乐流音量、最大值和静音状态;读不到为 null。
+    Bundle musicVolumeState() = 51;
 
     // 沿用早先定下的销毁事务号;AIDL 要求要么全部方法编号要么都不编号
     void destroy() = 16777114;

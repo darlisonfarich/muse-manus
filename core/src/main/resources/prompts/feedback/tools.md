@@ -192,6 +192,9 @@ That element is outside the visible page and could not be scrolled into view. Sc
 ## failure.key_not_allowed
 That key is not allowed here. On a web page only Enter, Backspace, Delete, Tab, arrow and page keys work.
 
+## failure.key_injection_failed
+The key could not be injected into the phone display. The requested key action was not applied.
+
 ## failure.no_tab_open
 No web page is open. Open one with web_navigate first.
 

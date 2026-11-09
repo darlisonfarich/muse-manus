@@ -39,6 +39,7 @@ import com.wangzan101.mika.core.uistate.ScreenCheck
 import com.wangzan101.mika.core.uistate.ScreenDiagnosis
 import com.wangzan101.mika.core.uistate.ScreenFacts
 import com.wangzan101.mika.core.uistate.ScreenPort
+import com.wangzan101.mika.core.uistate.PressKeys
 import com.wangzan101.mika.core.uistate.ScreenEvent
 import com.wangzan101.mika.core.uistate.ScreenSnapshot
 import com.wangzan101.mika.core.uistate.SecretRegions
@@ -546,8 +547,52 @@ class AndroidScreen(
 
     override suspend fun pressKey(keyCode: Int): ActionResult = withContext(Dispatchers.IO) {
         if (!hasDisplay) return@withContext NO_APP_OPEN
-        verified { shell.injectKey(displayId, keyCode) }
+        if (keyCodeName(keyCode)?.let { PressKeys.DEFINITIONS[it]?.scope } == PressKeys.Scope.VirtualDisplay) {
+            pressScopedKey(keyCode)
+        } else {
+            var injected: Boolean? = null
+            val result = verified { shell.injectKey(displayId, keyCode).also { injected = it } }
+            if (injected == false) ActionResult.Failed(PressKeys.keyFailure(false, false)!!) else result
+        }
     }
+
+    private fun keyCodeName(keyCode: Int): String? = PressKeys.DEFINITIONS.entries.firstOrNull { it.value.code == keyCode }?.key
+
+    private suspend fun pressScopedKey(keyCode: Int): ActionResult {
+        lateSpill()?.let { return ActionResult.Failed("opened_elsewhere", hintLateSpill(it.opened)) }
+        val beforeTask = runCatching { shell.topTaskId(displayId) }.getOrDefault(-1)
+        val beforePackage = foregroundTaskPackage()
+        val beforeVolume = musicVolumeState()
+        val w = armSpillWatch()
+        if (!shell.injectKey(displayId, keyCode)) return ActionResult.Failed(PressKeys.keyFailure(false, false)!!)
+        delay(SCOPED_KEY_SETTLE_MS)
+        waitStable(SCOPED_KEY_SETTLE_MS)
+        val afterTask = runCatching { shell.topTaskId(displayId) }.getOrDefault(-1)
+        val afterPackage = foregroundTaskPackage()
+        val changed = when (keyCode) {
+            KeyEvent.KEYCODE_HOME, KeyEvent.KEYCODE_APP_SWITCH ->
+                beforeTask < 0 || beforePackage == null || afterTask != beforeTask || beforePackage != afterPackage || isHomeActivity(runCatching { shell.topActivity(displayId) }.getOrNull())
+            KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE ->
+                PressKeys.volumeVerified(keyCode, beforeVolume, musicVolumeState())
+            else -> true // Media transport effects are global and not observable on this display.
+        }
+        val effect = if (keyCode in MEDIA_KEYS) null else changed
+        PressKeys.scopedKeyFailure(true, effect)?.let { return ActionResult.Failed(it) }
+        val profile = adoptFromAdopted(w)
+        val spill = takeSpill(w)
+        val appChanged = beforePackage != afterPackage
+        return ok(changed = when (keyCode) {
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP, KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_MEDIA_PREVIOUS -> null
+            else -> appChanged || afterTask != beforeTask
+        }, spill = spill, inProfile = profile)
+    }
+
+    private fun isHomeActivity(activity: String?): Boolean = activity?.contains("launcher", true) == true || activity?.contains("home", true) == true
+
+    private fun musicVolumeState(): PressKeys.VolumeState? = runCatching {
+        shell.musicVolumeState()?.let { PressKeys.VolumeState(it.getInt("current", -1), it.getInt("max", -1), it.getBoolean("muted")) }
+            ?.takeIf { it.current >= 0 && it.max >= 0 }
+    }.getOrNull()
 
     override suspend fun typeText(ref: String?, snapshotId: String?, text: String): ActionResult = withContext(Dispatchers.IO) {
         if (!hasDisplay) return@withContext NO_APP_OPEN
@@ -2296,6 +2341,8 @@ class AndroidScreen(
         const val SECOND_LOOK_QUIET_MS = 300L
         const val SECOND_LOOK_CAP_MS = 800L
         const val SETTLE_CAP_MS = 2_000L
+        const val SCOPED_KEY_SETTLE_MS = 700L
+        private val MEDIA_KEYS = setOf(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP, KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_MEDIA_PREVIOUS)
         const val READBACK_QUIET_MS = 200L
         const val READBACK_CAP_MS = 800L
         const val LAUNCH_WAIT_MS = 5_000L

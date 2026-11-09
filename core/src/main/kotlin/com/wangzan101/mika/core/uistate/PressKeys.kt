@@ -31,4 +31,28 @@ object PressKeys {
         val code = k.toIntOrNull() ?: BY_NAME[k] ?: return null
         return code.takeIf { isAllowed(it, scope) }
     }
+
+    /** Scoped-key readback is opportunistic: missing probes leave injection success as the result. */
+    fun volumeVerified(keyCode: Int, before: VolumeState?, after: VolumeState?): Boolean = when (keyCode) {
+        24 -> before == null || after == null || after.current > before.current || after.current == after.max
+        25 -> before == null || after == null || after.current < before.current || after.current == 0
+        164 -> before == null || after == null || before.muted != after.muted || after.muted
+        else -> true
+    }
+
+    data class VolumeState(val current: Int, val max: Int, val muted: Boolean)
+
+    /** Stable tool error for key dispatch; ordinary keys still use the same verified() decision. */
+    fun keyFailure(injected: Boolean, effectVerified: Boolean): String? = when {
+        !injected -> "key_injection_failed"
+        !effectVerified -> "action_failed"
+        else -> null
+    }
+
+    /** A null effect probe means this key has no useful display-local readback. */
+    fun scopedKeyFailure(injected: Boolean, effectVerified: Boolean?): String? = when {
+        !injected -> "key_injection_failed"
+        effectVerified == false -> "action_failed"
+        else -> null
+    }
 }
