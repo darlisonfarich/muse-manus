@@ -18,7 +18,7 @@ import java.util.zip.ZipInputStream
  */
 internal object WakeModelInstaller {
     const val NAME = "vosk-model-small-pt-0.3"
-    const val URL = "https://alphacephei.com/vosk/models/vosk-model-small-pt-0.3.zip"
+    const val MODEL_URL = "https://alphacephei.com/vosk/models/vosk-model-small-pt-0.3.zip"
     const val SHA256 = "6e1ce909032e1afa7a88e68a3d628ecafff302bdf195befab308826c395e93b7"
     private const val MAX_DOWNLOAD_BYTES = 64L * 1024 * 1024
     private const val MAX_EXPANDED_BYTES = 180L * 1024 * 1024
@@ -43,7 +43,7 @@ internal object WakeModelInstaller {
         archive.delete()
         staging.deleteRecursively()
         try {
-            val connection = (URL(URL).openConnection() as HttpURLConnection).apply {
+            val connection = (URL(MODEL_URL).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 20_000
                 readTimeout = 30_000
                 instanceFollowRedirects = true

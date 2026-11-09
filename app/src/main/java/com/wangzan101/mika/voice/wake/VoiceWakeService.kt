@@ -261,6 +261,7 @@ class VoiceWakeService : Service() {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            if (ownTurnId != null && controller.state.value.turnId == ownTurnId) controller.cancel()
             Log.w(TAG, "Wake voice turn failed", e)
             publish("Pedido não concluído: " + (e.message ?: "falha"))
         } finally {
@@ -293,7 +294,7 @@ class VoiceWakeService : Service() {
         scope.cancel()
         player.stop()
         machine.disable()
-        if (VoiceWakeStatus.state.value.phase !in setOf(WakePhase.Error, WakePhase.PermissionDenied))
+        if (VoiceWakeStatus.state.value.phase !in setOf(WakePhase.Error, WakePhase.PermissionDenied, WakePhase.Paused))
             VoiceWakeStatus.publish(WakePhase.Off, "Escuta desligada")
         super.onDestroy()
     }
