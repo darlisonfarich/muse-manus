@@ -10,6 +10,9 @@ class WakeStateMachine {
     var phase: WakePhase = WakePhase.Off
         private set
 
+    /** True only while the Vosk microphone loop is allowed to run. */
+    val detectorListening: Boolean get() = phase == WakePhase.Listening
+
     fun enable(hasPermission: Boolean): WakePhase {
         phase = if (hasPermission) WakePhase.Preparing else WakePhase.PermissionDenied
         return phase
@@ -19,6 +22,13 @@ class WakeStateMachine {
     fun detected(): Boolean = move(WakePhase.Listening, WakePhase.Capturing)
     fun sent(): Boolean = move(WakePhase.Capturing, WakePhase.Waiting)
     fun answer(): Boolean = move(WakePhase.Waiting, WakePhase.Playing)
+
+    /** Hard half-duplex gate: only a Playing turn may pause the wake detector. */
+    fun pauseDetectorForPlayback(): Boolean = move(WakePhase.Playing, WakePhase.Paused)
+
+    /** Called only after MediaPlayer completion/error/stop; listening may then resume. */
+    fun resumeDetectorAfterPlayback(): Boolean = move(WakePhase.Paused, WakePhase.Listening)
+
     fun finished(): Boolean {
         if (phase !in setOf(WakePhase.Capturing, WakePhase.Waiting, WakePhase.Playing)) return false
         phase = WakePhase.Listening

@@ -28,6 +28,34 @@ class WakeWordLogicTest {
         assertEquals(WakePhase.Off, machine.phase)
     }
 
+    @Test fun wakeDetectorIsPausedForWholeTtsPlaybackAndResumesAfterCompletion() {
+        val machine = WakeStateMachine()
+        machine.enable(true)
+        assertTrue(machine.prepared())
+        assertTrue(machine.detectorListening)
+
+        assertTrue(machine.detected())
+        assertTrue(machine.sent())
+        assertTrue(machine.answer())
+        assertEquals(WakePhase.Playing, machine.phase)
+        assertFalse(machine.detectorListening)
+
+        // Playback begins: the detector is explicitly gated off, not merely expected
+        // to ignore the TTS hypothesis.
+        assertTrue(machine.pauseDetectorForPlayback())
+        assertEquals(WakePhase.Paused, machine.phase)
+        assertFalse(machine.detectorListening)
+        assertFalse(machine.detected())
+        assertFalse(machine.pauseDetectorForPlayback())
+        assertFalse(machine.resumeDetectorAfterPlayback() && machine.resumeDetectorAfterPlayback())
+
+        // MediaPlayer completion/error/timeout-stop is the only point that reopens listening.
+        assertTrue(machine.resumeDetectorAfterPlayback())
+        assertEquals(WakePhase.Listening, machine.phase)
+        assertTrue(machine.detectorListening)
+        assertTrue(machine.detected())
+    }
+
     @Test fun rejectedTransitionsDoNotAdvance() {
         val machine = WakeStateMachine()
         assertFalse(machine.detected())

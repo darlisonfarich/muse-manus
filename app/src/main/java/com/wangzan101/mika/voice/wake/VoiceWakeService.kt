@@ -157,6 +157,7 @@ class VoiceWakeService : Service() {
 
     @SuppressLint("MissingPermission")
     private suspend fun listenForWake(model: Model): Boolean {
+        check(machine.detectorListening) { "Detector bloqueado fora da fase de escuta" }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
             throw SecurityException("Microfone sem permissão")
         val min = AudioRecord.getMinBufferSize(Wav.RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -250,14 +251,23 @@ class VoiceWakeService : Service() {
                 return
             }
             machine.answer()
-            publish("Reproduzindo resposta")
+            check(machine.pauseDetectorForPlayback()) { "Não foi possível pausar o detector durante TTS" }
+            publish("Reproduzindo resposta — detector de wake word pausado")
             val done = CompletableDeferred<Unit>()
-            withContext(Dispatchers.Main.immediate) {
-                player.playBytes(responseAudio) { done.complete(Unit) }
-            }
-            if (withTimeoutOrNull(30_000L) { done.await() } == null) {
-                withContext(Dispatchers.Main.immediate) { player.stop() }
-                publish("Reprodução expirou")
+            try {
+                withContext(Dispatchers.Main.immediate) {
+                    player.playBytes(responseAudio) { done.complete(Unit) }
+                }
+                if (withTimeoutOrNull(30_000L) { done.await() } == null) {
+                    withContext(Dispatchers.Main.immediate) { player.stop() }
+                    publish("Reprodução expirou")
+                }
+            } finally {
+                // MediaPlayer has completed, errored, timed out and been stopped, or the
+                // coroutine is being cancelled. Never reopen the microphone mid-playback.
+                if (!stopping && machine.resumeDetectorAfterPlayback()) {
+                    publish("Resposta concluída — detector retomado")
+                }
             }
         } catch (e: CancellationException) {
             throw e

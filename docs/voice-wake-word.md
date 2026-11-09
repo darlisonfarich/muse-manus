@@ -21,8 +21,20 @@ O usuário pode reativar ao abrir o Modo voz.
 5. Somente **depois do wake** o WAV segue pelo controlador A2 já existente.
    A resposta em MP3 é reproduzida no aparelho. O serviço não lança Activities do fundo.
 
-O botão de gravação manual fica desativado enquanto a escuta está ativa para
-impedir dois gravadores concorrendo pelo microfone. Desligue a escuta para gravar manualmente.
+O detector e o TTS são **half-duplex por construção**: o AudioRecord/Vosk é fechado
+ao reconhecer a wake word; só depois da resposta A2 iniciar, o player toca o TTS
+com o detector explicitamente em `Paused`. O detector só volta a `Listening`
+depois do callback de conclusão/erro do MediaPlayer, ou depois de timeout e
+parada explícita do player. Uma guarda impede abrir o microfone fora da fase
+`Listening`. Assim, a voz sintetizada do Muse não pode ser capturada pelo
+detector da wake word. O buffer prévio é descartado; a gravação do pedido começa
+após o bipe. O botão de gravação manual fica desativado enquanto a escuta está
+ativa para impedir dois gravadores concorrendo pelo microfone.
+
+**AEC (AcousticEchoCanceler) não é a defesa primária e não é requisito desta
+implementação.** Poderá ser adicionado como reforço opcional em dispositivos
+compatíveis, mas não substitui a pausa half-duplex: a referência acústica do AEC
+do Android pode não representar o TTS reproduzido localmente.
 
 ## Distribuição do Vosk
 - Biblioteca Android: `com.alphacephei:vosk-android:0.3.75` (via Maven Central).
