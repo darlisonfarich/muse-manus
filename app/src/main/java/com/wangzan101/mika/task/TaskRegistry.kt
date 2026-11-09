@@ -61,10 +61,11 @@ class TaskCenter<R : Any>(
         val run = create(conversationId, goal)
         val record = StoredRun(RunId(keyOf(run)), conversationId, goal, RunPhase.Preparing,
             channelPeer = channelPeer, channelMessageId = channelMessageId, followUpId = followUp?.id)
-        return if (!sameConversation && running.size < limit().max) {
+        return if (!sameConversation && running.size < limit().max &&
+            resources.ger.canAdmitTask(conversationOf(run))) {
             store.save(record)
             running += run
-            resources.ger.taskStarted(keyOf(run))
+            resources.ger.taskStarted(keyOf(run), conversationOf(run))
             StartResult.Started(run)
         } else {
             // 容量队列也保留持久排队项，真正 markRunning 时才移除；进程死亡不会留下无法恢复的空档。
@@ -128,9 +129,11 @@ class TaskCenter<R : Any>(
                     queued.takeWhile { it !== candidate }.none { conversationOf(it) == conversationOf(candidate) }
             }
             if (index < 0) break
+            val candidate = queued[index]
+            if (!resources.ger.canAdmitTask(conversationOf(candidate))) break
             val next = queued.removeAt(index)
             running += next
-            resources.ger.taskStarted(keyOf(next))
+            resources.ger.taskStarted(keyOf(next), conversationOf(next))
             store.get(RunId(keyOf(next)))?.let { store.save(it.copy(phase = RunPhase.Preparing)) }
             started += next
         }
