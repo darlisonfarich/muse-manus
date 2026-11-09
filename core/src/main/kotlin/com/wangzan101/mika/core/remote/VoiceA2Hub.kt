@@ -144,6 +144,7 @@ class VoiceA2Hub {
                             val audio = resultAudio ?: error("audio missing")
                             require(mutable.value.reply.isNotEmpty()) { "reply missing" }
                             mutable.value = mutable.value.copy(audio = audio, resultId = turn,
+                                turnId = null, generationId = null,
                                 status = "Resposta pronta para reprodução")
                             current = null
                             generation = null
@@ -152,7 +153,7 @@ class VoiceA2Hub {
                         }
                         "ERROR" -> {
                             mutable.value = mutable.value.copy(
-                                status = "Muse indisponível",
+                                status = "Muse indisponível", turnId = null, generationId = null,
                                 error = msg["code"]?.jsonPrimitive?.content ?: "Erro no gateway")
                             current = null
                             generation = null
@@ -164,7 +165,7 @@ class VoiceA2Hub {
                             generation = null
                             mp3 = null
                             resultAudio = null
-                            mutable.value = mutable.value.copy(status = "Turno cancelado")
+                            mutable.value = mutable.value.copy(status = "Turno cancelado", turnId = null, generationId = null)
                         }
                     }
                 } catch (_: Exception) {
@@ -173,6 +174,7 @@ class VoiceA2Hub {
                     mp3 = null
                     resultAudio = null
                     mutable.value = mutable.value.copy(status = "Resposta inválida do gateway",
+                        turnId = null, generationId = null,
                         error = "Violação do protocolo A2")
                 }
             }
@@ -187,7 +189,8 @@ class VoiceA2Hub {
             resultAudio = null
             current = null
             generation = null
-            mutable.value = mutable.value.copy(status = "Áudio inválido", error = "Sequência de chunks inválida")
+            mutable.value = mutable.value.copy(status = "Áudio inválido",
+                turnId = null, generationId = null, error = "Sequência de chunks inválida")
         }
     }
 
