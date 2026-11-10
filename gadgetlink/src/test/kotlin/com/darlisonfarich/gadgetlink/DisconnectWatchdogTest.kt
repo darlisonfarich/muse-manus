@@ -152,4 +152,23 @@ class DisconnectWatchdogTest {
         assertTrue("forced off at $total ms", total <= 1_000)
         assertEquals(listOf("AA:BB"), link.forced)
     }
+
+    @Test
+    fun twoRequestsBeforeTheFirstFiresForceOnlyOnce() {
+        // Plausível na integração: erro de decifragem agenda 0,3 s e uma falha de
+        // provisionamento agenda 0,5 s sobre a mesma conexão. Os dois disparos
+        // cancelam (inofensivo), mas a queda forçada é uma só — a segunda
+        // checagem encontra a época trocada pela primeira força.
+        val link = FakeLink("AA:BB")
+        val dog = watchdog(link)
+        dog.request(300)
+        dog.request(500)
+
+        assertEquals(300L, scheduler.runNext()) // dispara o 1º: cancela e agenda a checagem
+        assertEquals(500L, scheduler.runNext()) // dispara o 2º: cancela de novo e agenda outra
+        assertEquals(600L, scheduler.runNext()) // 1ª checagem: ainda lá → força (e vira a época)
+        assertEquals(600L, scheduler.runNext()) // 2ª checagem: época trocada → não força de novo
+        assertEquals(listOf("AA:BB", "AA:BB"), link.cancelled)
+        assertEquals(listOf("AA:BB"), link.forced)
+    }
 }

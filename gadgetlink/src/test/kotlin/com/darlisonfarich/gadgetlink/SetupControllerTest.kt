@@ -385,6 +385,8 @@ class SetupControllerTest {
         threads.forEach(Thread::join)
         val counters = h.transport.messages.filterIsInstance<JsonObject>()
             .filter { it.s("type") == "pairing_encrypted" }.map { it.s("counter").toInt() }
-        assertEquals((0 until counters.size).toList(), counters)
+        // O esperado é o total ENVIADO (8 threads × 25), não o que chegou: derivar
+        // de counters.size deixaria o teste verde com metade dos status perdidos.
+        assertEquals((0 until 200).toList(), counters)
     }
 }

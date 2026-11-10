@@ -143,8 +143,13 @@ class PairingSession(
                 )
                 val transcriptHash = Hash.sha256(transcript.toByteArray())
                 val ecdhSecret = P256.ecdh(deviceKey.private, peer)
-                val keys = Pairing.deriveSessionKeys(ecdhSecret, mobileNonce, deviceNonce, transcriptHash)
-                ecdhSecret.fill(0)
+                // O segredo bruto é zerado mesmo se a derivação lançar (provedor
+                // degradado): a regra do arquivo é não deixar chave na heap.
+                val keys = try {
+                    Pairing.deriveSessionKeys(ecdhSecret, mobileNonce, deviceNonce, transcriptHash)
+                } finally {
+                    ecdhSecret.fill(0)
+                }
 
                 rxKey = keys.mobileTx
                 txKey = keys.mobileRx

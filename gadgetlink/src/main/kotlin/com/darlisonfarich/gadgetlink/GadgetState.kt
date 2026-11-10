@@ -120,7 +120,10 @@ class GadgetState(val dir: File) {
     private fun writeAtomic(name: String, text: String) {
         if (!dir.isDirectory && !dir.mkdirs()) throw IOException("cannot create state dir")
         val target = File(dir, name)
-        val tmp = File(dir, "$name.tmp")
+        // Tmp único por gravação: o @Synchronized é por instância, mas cada
+        // GadgetLink.state(context) cria uma instância nova sobre o mesmo diretório —
+        // com "$name.tmp" fixo, dois escritores moveriam o tmp um do outro.
+        val tmp = File(dir, "$name.tmp-${System.nanoTime().toString(36)}-${Thread.currentThread().id}")
         try {
             FileOutputStream(tmp).use { out ->
                 // só o dono lê (no Android o diretório do app já é privado; na JVM ajuda)

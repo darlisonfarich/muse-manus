@@ -135,6 +135,40 @@ class BleFramingTest {
     }
 
     @Test
+    fun oversizePlainWriteIsDiscarded() {
+        // O teto também vale para pacote cru: no Android, long writes remontados
+        // pelo transporte chegam como um pacote só, maior que qualquer MTU.
+        val assembler = ChunkAssembler(maxBytes = 20)
+        assertNull(assembler.feed(ByteArray(21) { 'p'.code.toByte() }))
+        assertArrayEquals(ByteArray(20) { 'p'.code.toByte() }, assembler.feed(ByteArray(20) { 'p'.code.toByte() }))
+    }
+
+    @Test
+    fun duplicateChunkDiscardsTheMessage() {
+        // Semântica fixada: chunk repetido no meio da montagem perde a mensagem
+        // inteira (o índice não bate com o próximo esperado e tudo é descartado).
+        val chunks = BleFraming.encodeChunks(ByteArray(60) { 'd'.code.toByte() }, 23)
+        val assembler = ChunkAssembler()
+        assertNull(assembler.feed(chunks[0]))
+        assertNull(assembler.feed(chunks[1]))
+        assertNull(assembler.feed(chunks[1]))
+        assertNull(assembler.feed(chunks[2]))
+        assertNull(assembler.feed(chunks[3]))
+    }
+
+    @Test
+    fun plainWriteDuringAssemblyDropsThePartial() {
+        // Pacote cru no meio de uma montagem descarta o parcial: se os chunks
+        // restantes chegarem depois, eles não completam mensagem nenhuma.
+        val chunks = BleFraming.encodeChunks(ByteArray(30) { 'm'.code.toByte() }, 23)
+        val assembler = ChunkAssembler()
+        assertNull(assembler.feed(chunks[0]))
+        val plain = """{"action":"get_device_info"}""".toByteArray()
+        assertArrayEquals(plain, assembler.feed(plain))
+        assertNull(assembler.feed(chunks[1]))
+    }
+
+    @Test
     fun highIndexAndTotalBytesAreUnsigned() {
         val message = ByteArray(17 * 200) { 1 }
         val chunks = BleFraming.encodeChunks(message, 23)

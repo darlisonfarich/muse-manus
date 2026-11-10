@@ -41,7 +41,6 @@ class DisconnectWatchdog<C : Any>(
     fun connectionChanged() {
         synchronized(lock) { epoch++ }
     }
-
     /** Pede a queda do cliente atual daqui a [delayMs]. */
     fun request(delayMs: Long) {
         val (requestedEpoch, requestedClient) = synchronized(lock) { epoch to link.current() }
@@ -76,8 +75,15 @@ class DisconnectWatchdog<C : Any>(
             return
         }
         log("$label still connected $graceMs ms after cancelConnection; forcing it off")
-        runCatching { link.forceOff(client) }.onFailure {
-            log("forced disconnect failed for $label: ${it.javaClass.simpleName}")
-        }
+        runCatching { link.forceOff(client) }.fold(
+            onSuccess = {
+                // A conexão conhecida acabou: qualquer outra checagem agendada para
+                // esta época (ex.: dois request() seguidos) não deve forçar de novo —
+                // no transporte real o forceOff fecha o servidor e o callback de
+                // desconexão faria este papel, mas o watchdog não depende disso.
+                connectionChanged()
+            },
+            onFailure = { log("forced disconnect failed for $label: ${it.javaClass.simpleName}") },
+        )
     }
 }

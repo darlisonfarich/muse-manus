@@ -74,3 +74,74 @@ SDK), `:gadgetlink` (pacote `com.darlisonfarich.gadgetlink`; criado em 2026-11-1
 dependências específicas do Mika para poder ser extraído depois. Este spike começa
 a sonda dentro do módulo `app` (compila já) e só vira módulo próprio quando o
 portão do passo 1 passar.
+
+## Rodada de revisão de código — 2026-11-10 (Muse, 5 frentes)
+
+Revisão somente-leitura de todo o spike (cripto/sessão, SetupController+framing,
+GattTransport, serviço/estado/API, testes) contra o SDK oficial. Cripto e sessão:
+nenhum defeito alto/médio — contadores, nonces, HKDF, validação EC e ciclo de vida
+batem com a referência. Corrigido nesta rodada (com testes):
+
+- `BleFraming.feed`: pacote cru agora respeita `MAX_MESSAGE_BYTES` (long write
+  remontado pelo transporte furava o teto) e descarta montagem parcial em vez de
+  misturá-la com os chunks seguintes (desvio consciente do SDK, fixado em teste).
+- `Pairing.parseCounter`: removida a rejeição de contadores ≥ 2⁶³ (o SDK aceita;
+  o wrap nunca iguala o contador esperado e cai no erro de decifragem).
+- `PairingSession.handleHello`: segredo ECDH zerado em `finally` (antes, uma
+  falha na derivação deixava o segredo na heap).
+- `MuseApi.isUsableApiUrl`: URL de API com userinfo (`https://api…@host/`) não
+  é mais aceita — o bearer iria para o host errado; cai para a API oficial.
+- `GadgetState.writeAtomic`: tmp único por gravação (o `@Synchronized` é por
+  instância e cada `state(context)` cria uma nova sobre o mesmo diretório).
+- `SetupController`: `start()` com guarda contra chamada dupla; `runProvision`
+  só anuncia `auth_ok`/`onComplete` se a geração ainda é a atual; eventos de
+  erro levam só o nome da classe (contrato "sem texto livre" da Diagnostics).
+- `DisconnectWatchdog`: após uma força bem-sucedida a época avança — dois
+  `request()` seguidos cancelam duas vezes (inofensivo) mas forçam uma só.
+- `GattTransport`: status do notify agora é por pacote (nasce FALHA — acordar a
+  trava por fechamento/desconexão não é entrega); timeout limpa o pendente;
+  `notifyCharacteristicChanged` dentro de `runCatching` (revogação de permissão
+  no meio da sessão não emudece os envios); `adopt()` só pelos canais do setup
+  (RX ou CCCD do TX); chunk de prepared write fora de ordem é descartado, não
+  remontado no lugar errado; `onExecuteWrite` só drena para o cliente; reconexão
+  do mesmo cliente sem DISCONNECTED reseta MTU e parcial; trava única do buffer
+  de prepared writes.
+- `GadgetLinkService`: flag `destroyed` confere-se após criar o transporte
+  (corrida `onDestroy` × `openSetup` podia deixar o rádio anunciando sem
+  serviço) e o `catch` da abertura para o transporte criado.
+- Testes: asserções dentro de threads de pool não morrem mais nelas
+  (`concurrentSendersNeverReuseACounter`); total esperado fixo de 200 em
+  `encryptedStatusesStayInCounterOrderUnderConcurrentSenders`; redirect 302 da
+  API não é seguido (teste com dois servidores); chunk duplicado com semântica
+  fixada; pacote cru acima do teto descartado.
+
+Registrado, NÃO corrigido (decisão ou refatoração maior — fila do Claude):
+
+- **Costura testável do GattTransport**: a fiação callback↔watchdog não tem
+  nenhum teste (o teste do watchdog usa um `FakeLink` que chama
+  `connectionChanged()` na mão). Refatoração para uma costura fakeável.
+- **Harness por relógio real** em parte do `SetupControllerTest`
+  (`waitForStatus` com deadlines de 2–3 s): trocar por latch/executor injetável.
+- **Flag `provisioning` através do disconnect** (`SetupController`): cliente
+  que cai no meio do provisionamento segura a flag até a thread terminar; o
+  impacto é limitado pelos timeouts de 15 s da `MuseApi`. Correção sugerida:
+  limpar a flag por geração no `finally`.
+- **`identity.json` corrompido**: o cabeçalho da classe promete "erro, não
+  identidade nova", mas o teste `corruptIdentityIsReplaced` fixa regenerar.
+  As duas semânticas não convivem — escolher uma (decisão de produto).
+- **`pairing.json` velho** sobrevive a um reprovisionamento falho e a
+  Diagnostics afirma pareamento. Apagar ao confirmar um novo pareamento tem o
+  custo oposto: uma falha transitória apagaria um pareamento ainda válido.
+  Escolher a semântica (decisão de produto).
+- **`auth_failed` genérico**: rede fora/HTTP 500 viram `auth_failed` — mas é o
+  comportamento do próprio SDK (o CLI dele distingue só no log). Sem mudança
+  no fio; no máximo detalhar na Diagnostics um dia.
+- **`forceOff` bloqueia a thread do watchdog** por até ~10 s na reabertura
+  (addService + advertising): mover a reabertura para um executor próprio.
+- **Endurecimento menor de testes**: transcript do `RandomKeysTest` montado
+  com as funções de produção (independência repousa no `PairingVectorsTest`);
+  escopo de sessão dos vetores community/official menor que o doc da suíte;
+  `sendResponse` dos callbacks binder sem `runCatching` (mesma classe do
+  notify, menor); `Mobile.open` não confronta a sequência de contadores —
+  considerado e não adotado: `open()` também serve a releituras no harness, e
+  a sequência exata já está fixada no nível do envelope por três testes.

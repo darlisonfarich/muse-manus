@@ -65,6 +65,15 @@ class ChunkAssembler(private val maxBytes: Int = BleFraming.MAX_MESSAGE_BYTES) {
     @Synchronized
     fun feed(packet: ByteArray): ByteArray? {
         if (packet.size < BleFraming.HEADER_BYTES || (packet[0].toInt() and 0xFF) != BleFraming.CHUNK_MAGIC) {
+            // Pacote cru = mensagem completa. O teto vale aqui também: no Android o
+            // transporte remonta long writes, então um pacote cru pode passar de
+            // maxBytes (no SDK cada write chega limitado pelo MTU e o furo não existe).
+            // E um pacote cru no meio de uma montagem descarta o parcial — desviar do
+            // SDK aqui é consciente: misturar prefixo velho com o resto corromperia a
+            // mensagem e derrubaria a sessão na decifragem.
+            val partial = total != 0
+            if (partial) reset()
+            if (packet.size > maxBytes) return null
             return packet.copyOf()
         }
         val index = packet[1].toInt() and 0xFF

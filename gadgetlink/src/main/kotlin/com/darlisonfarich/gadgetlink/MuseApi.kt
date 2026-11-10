@@ -31,6 +31,17 @@ object MuseApi {
     /** api_url_v2, ou a API do Muse. O api_url antigo é ignorado (só firmware velho o lê). */
     fun apiRoot(apiUrlV2: String): String = apiUrlV2.ifEmpty { API_BASE }.trimEnd('/')
 
+    /**
+     * URL de API utilizável: https, com host e SEM userinfo. Sem a checagem de
+     * userinfo, "https://api.muse.ai@outro-host/" passaria no startsWith e o
+     * bearer do device iria para o outro host (o URL do Java aceita a forma).
+     */
+    fun isUsableApiUrl(url: String): Boolean {
+        if (!url.startsWith("https://")) return false
+        val parsed = runCatching { URL(url) }.getOrNull() ?: return false
+        return parsed.userInfo == null && !parsed.host.isNullOrEmpty()
+    }
+
     fun fetchVms(accessToken: String, root: String, timeoutMs: Int = 15_000): VmFetch {
         val connection = try {
             URL(root + FETCH_PATH).openConnection() as HttpURLConnection
@@ -94,8 +105,8 @@ class Provisioner(
     private val nowSeconds: () -> Long = { System.currentTimeMillis() / 1000 },
 ) {
     fun provision(credentials: Credentials, commit: Commit) {
-        val apiUrl = credentials.apiUrl.takeIf { it.startsWith("https://") } ?: ""
-        val apiUrlV2 = credentials.apiUrlV2.takeIf { it.startsWith("https://") } ?: ""
+        val apiUrl = credentials.apiUrl.takeIf { MuseApi.isUsableApiUrl(it) } ?: ""
+        val apiUrlV2 = credentials.apiUrlV2.takeIf { MuseApi.isUsableApiUrl(it) } ?: ""
         val vms = fetch(credentials.accessToken, MuseApi.apiRoot(apiUrlV2))
         if (vms.count == 0) throw ProvisionFailed("auth_failed")
 

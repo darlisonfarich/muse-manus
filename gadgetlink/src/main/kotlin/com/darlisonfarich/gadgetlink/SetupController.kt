@@ -82,6 +82,7 @@ class SetupController(
     private val inbox = LinkedBlockingQueue<Any>()
     private val txLock = Any()
     private val stateLock = Any()
+    private val started = java.util.concurrent.atomic.AtomicBoolean(false)
     private var plaintextBlocked = false
     private var provisioning = false
 
@@ -104,6 +105,8 @@ class SetupController(
     // -- Ciclo de vida -------------------------------------------------------------------
 
     fun start() {
+        // Um consumidor só: dois esvaziando a mesma inbox quebrariam a ordem de chegada.
+        if (!started.compareAndSet(false, true)) return
         Thread({ run() }, "ble-setup").apply { isDaemon = true }.start()
     }
 
@@ -119,7 +122,9 @@ class SetupController(
                 handleMessage(message as ByteArray)
             } catch (e: Exception) {
                 // Uma falha (rádio, provedor) não pode matar o atendimento das próximas mensagens.
-                emit(SetupEvent.ERROR, "${e.javaClass.simpleName}: ${e.message}")
+                // Só o nome da classe: a Diagnostics é copiada para chats e o contrato
+                // do SetupEvent é nunca levar texto livre de camadas inferiores.
+                emit(SetupEvent.ERROR, e.javaClass.simpleName)
             }
         }
     }
@@ -286,11 +291,18 @@ class SetupController(
                 transport.disconnect(DISCONNECT_AFTER_PROVISION_FAILURE_S)
                 return
             }
+            // A sessão pode ter morrido no meio da checagem (disconnect/reset): sem a
+            // geração atual, nada de anunciar sucesso nem concluir o setup — quem
+            // gravou foi o Commit, e ele já recusou se a geração trocou.
+            if (!pairing.isCurrent(generation)) {
+                emit(SetupEvent.PROVISION_FAILED, "session changed during provisioning")
+                return
+            }
             sendStatus("auth_ok", generation)
             emit(SetupEvent.PROVISIONED, "setup complete")
             onComplete()
         } catch (e: Exception) {
-            emit(SetupEvent.ERROR, "${e.javaClass.simpleName}: ${e.message}")
+            emit(SetupEvent.ERROR, e.javaClass.simpleName)
         } finally {
             synchronized(stateLock) { provisioning = false }
         }

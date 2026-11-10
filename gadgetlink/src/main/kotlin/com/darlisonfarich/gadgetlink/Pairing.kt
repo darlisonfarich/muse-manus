@@ -132,15 +132,16 @@ object Pairing {
     }.toString()
 
     /**
-     * Contador do registro: string decimal ASCII, < 2^64. Valores acima de Long
-     * nunca batem com o contador esperado, então são recusados aqui mesmo.
+     * Contador do registro: string decimal ASCII, < 2^64, como o parse_counter do
+     * SDK. Valores ≥ 2^63 convertem com wrap para um Long negativo, que nunca
+     * iguala o contador esperado (≥ 0) — a sessão cai no erro de decifragem,
+     * mesmo desfecho da comparação em BigInteger da referência.
      */
     internal fun parseCounter(element: JsonElement?): Long {
         val text = (element as? JsonPrimitive)?.takeIf { it.isString }?.content
         require(text != null && DECIMAL.matches(text)) { "invalid counter" }
         val value = BigInteger(text)
         require(value < TWO_TO_64) { "counter overflow" }
-        require(value.bitLength() < 64) { "unexpected counter" }
         return value.toLong()
     }
 }

@@ -183,6 +183,39 @@ class GadgetStateTest {
         assertEquals(VmFetch(0, null), MuseApi.fetchVms("t", "http://127.0.0.1:1"))
     }
 
+    @Test
+    fun fetchVmsDoesNotFollowRedirects() {
+        // O bearer não pode ir parar em outro host via 302: a resposta é o próprio
+        // 302 com contagem 0, e o servidor de destino nunca é chamado.
+        var targetHits = 0
+        var targetAuth: String? = null
+        val target = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        target.createContext("/fetch_vms") { ex ->
+            targetHits++
+            targetAuth = ex.requestHeaders.getFirst("Authorization")
+            val bytes = """{"vm_list":[]}""".toByteArray()
+            ex.sendResponseHeaders(200, bytes.size.toLong())
+            ex.responseBody.use { it.write(bytes) }
+        }
+        target.start()
+        val redirector = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        redirector.createContext("/fetch_vms") { ex ->
+            ex.responseHeaders.set("Location", "http://127.0.0.1:${target.address.port}/fetch_vms")
+            ex.sendResponseHeaders(302, -1)
+            ex.close()
+        }
+        redirector.start()
+        try {
+            val fetch = MuseApi.fetchVms("device-access", "http://127.0.0.1:${redirector.address.port}")
+            assertEquals(VmFetch(0, 302), fetch)
+            assertEquals(0, targetHits)
+            assertNull(targetAuth)
+        } finally {
+            redirector.stop(0)
+            target.stop(0)
+        }
+    }
+
     // --- Provisionamento ------------------------------------------------------------
 
     private val credentials = Credentials("acc", "ref", "someone", "http://insecure", "https://api.example", "noise.example")
@@ -206,6 +239,19 @@ class GadgetStateTest {
         assertEquals("noise.example", record.s("noise_host"))
         assertEquals(1234L, (record["access_token_saved_at"] as JsonPrimitive).long)
         assertEquals(validToken.take(12), record.s("sdk_token_hint"))
+    }
+
+    @Test
+    fun provisionWithUserinfoApiUrlFallsBackToTheOfficialApi() {
+        // "https://api.example@host-malicioso/" passaria num startsWith("https://")
+        // e o bearer iria para o host errado; userinfo na URL a torna inutilizável
+        // e o root cai para a API oficial, como já acontece com http puro.
+        val state = GadgetState(tmp.root)
+        var root = ""
+        val evil = Credentials("acc", "ref", "someone", "", "https://api.example@evil.example", "noise.example")
+        Provisioner(state, null, fetch = { _, r -> root = r; VmFetch(1, 200) }).provision(evil) { save -> save() }
+        assertEquals(MuseApi.API_BASE, root)
+        assertEquals("", state.pairing()!!.s("api_url_v2"))
     }
 
     @Test

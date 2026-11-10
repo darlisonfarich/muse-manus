@@ -431,17 +431,25 @@ class PairingSessionTest {
         val pool = Executors.newFixedThreadPool(8)
         val start = CountDownLatch(1)
         val counters = Collections.synchronizedList(mutableListOf<String>())
+        // Asserção dentro da thread do pool morre com ela: as falhas são coletadas
+        // e afirmadas na thread do teste, senão o teste passa com registros ruins.
+        val failures = Collections.synchronizedList(mutableListOf<Throwable>())
         repeat(400) {
             pool.execute {
                 start.await()
-                val record = device.encryptJson("{}", generation)!!
-                counters.add(record.s("counter"))
-                assertEquals(JsonObject(emptyMap()), mobile.open(record))
+                try {
+                    val record = device.encryptJson("{}", generation)!!
+                    counters.add(record.s("counter"))
+                    assertEquals(JsonObject(emptyMap()), mobile.open(record))
+                } catch (t: Throwable) {
+                    failures.add(t)
+                }
             }
         }
         start.countDown()
         pool.shutdown()
         assertTrue(pool.awaitTermination(30, TimeUnit.SECONDS))
+        assertTrue("falhas nas threads: ${failures.firstOrNull()}", failures.isEmpty())
         assertEquals((0 until 400).map { it.toString() }.toSet(), counters.toSet())
     }
 
