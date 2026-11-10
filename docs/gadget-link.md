@@ -25,7 +25,7 @@
 | tls.py | OkHttp com trust store do sistema | app já usa OkHttp |
 | link_client.py (`/v1/noise`, Noise XX, `/link-control`, chat, TTS) | cliente Noise XX sobre OkHttp WebSocket → `wss://hatch.metaaivm.com/v1/noise?vm_id=…` | registrar `device_family: "homehub"`; **nunca** family `link` nem `device.ota` |
 | muse_api.py (`fetch_vms`, refresh de token) | chamadas REST | bearer por-VM no upgrade |
-| voice_call.py / voice_audio.py (lifecycle realtime; PCM16 24 kHz; half-duplex; barge-in; `end_call_stop`) | `AudioRecord` (24 kHz mono PCM16) + `AudioTrack`; portar máquina de turnos | reaproveitar disciplina half-duplex já existente |
+| voice_call.py / voice_audio.py (lifecycle realtime; PCM16 24 kHz; half-duplex; barge-in; end_call_stop) | `AudioRecord` (24 kHz mono PCM16) + `AudioTrack`; portar máquina de turnos | reaproveitar disciplina half-duplex já existente |
 | service.py (loop, reconexão, rotação de token, socket) | **foreground service** | reaproveitar esqueleto do VoiceWakeService |
 | executor.py/fileops.py (comandos) | opcional | para comunicador puro, registrar DeviceDescription com poucos/nenhum comando |
 
@@ -45,7 +45,7 @@
 2. **Pairing v5 + framing** em Kotlin, validado contra os vetores publicados (teste JVM, sem Android). Trust-critical → primeiro.
 3. **Transporte BLE periférico** (advertiser + GATT server) ligando a lógica de `ble_setup`. Parear com o app Muse num **segundo dispositivo** (ver B2). Confirmar MuseGadgetXXXXXX, Wi-Fi, `pairing.json`.
 4. **Cliente Noise + `link.register`** como `homehub` → chegar a `registered with the Muse`.
-5. **Voz realtime** (`AudioRecord`/`AudioTrack`, half-duplex, barge-in, `end_call_stop`). Paridade por WAV primeiro, depois ao vivo.
+5. **Voz realtime** (`AudioRecord`/`AudioTrack`, half-duplex, barge-in, end_call_stop). Paridade por WAV primeiro, depois ao vivo.
 6. **Integração da wake:** o turno do VoiceWakeService deixa de abrir o A2 e passa a abrir o `voice-call` contra a VM arrendada; mantém gate half-duplex, notificação e a garantia de não-exfiltração pré-wake. "tchau" → `session_control/stop` → encerra a chamada.
 
 ## Bloqueios reais (camada → contorno)
