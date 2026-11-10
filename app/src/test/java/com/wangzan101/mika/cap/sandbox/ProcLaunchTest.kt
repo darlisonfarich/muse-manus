@@ -69,8 +69,12 @@ class ProcLaunchTest {
     @Test fun cancelDuringStartLeavesNoOrphan() = runBlocking {
         // 取消恰好落在 start() 返回之前:进程已经起来了,也必须被杀掉
         val pidFile = File.createTempFile("pid", ".txt").apply { delete() }
-        lateinit var job: Job
-        job = launch(Dispatchers.Default) {
+        // O Job nasce ANTES do launch: com lateinit, o hook de start podia disparar
+        // numa thread do Dispatchers.Default antes da atribuição e o job.cancel()
+        // lia a variável não inicializada (UninitializedPropertyAccessException,
+        // flake visto no CI da execução 176; o código de produção não tem o defeito).
+        val job = Job()
+        val launched = launch(job + Dispatchers.Default) {
             AndroidSandbox.launch(listOf("/bin/sh", "-c", "echo \$\$ > ${pidFile.path}; exec sleep 30"), env, 60_000) { pb ->
                 pb.start().also {
                     val end = System.currentTimeMillis() + 5_000
@@ -79,7 +83,7 @@ class ProcLaunchTest {
                 }
             }
         }
-        job.join()
+        launched.join()
         val pid = pidFile.readText().trim().toLong()
         assertTrue("process $pid survived", awaitGone(pid, 5_000))
     }
