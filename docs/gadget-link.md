@@ -94,7 +94,7 @@ batem com a referência. Corrigido nesta rodada (com testes):
 - `GadgetState.writeAtomic`: tmp único por gravação (o `@Synchronized` é por
   instância e cada `state(context)` cria uma nova sobre o mesmo diretório).
 - `SetupController`: `start()` com guarda contra chamada dupla; `runProvision`
-  só anuncia `auth_ok`/`onComplete` se a geração ainda é a atual; eventos de
+  só anuncia auth_ok/`onComplete` se a geração ainda é a atual; eventos de
   erro levam só o nome da classe (contrato "sem texto livre" da Diagnostics).
 - `DisconnectWatchdog`: após uma força bem-sucedida a época avança — dois
   `request()` seguidos cancelam duas vezes (inofensivo) mas forçam uma só.
@@ -118,13 +118,13 @@ batem com a referência. Corrigido nesta rodada (com testes):
 Registrado, NÃO corrigido (decisão ou refatoração maior — fila do Claude):
 
 - **Costura testável do GattTransport**: a fiação callback↔watchdog não tem
-  nenhum teste (o teste do watchdog usa um `FakeLink` que chama
+  nenhum teste (o teste do watchdog usa um FakeLink que chama
   `connectionChanged()` na mão). Refatoração para uma costura fakeável.
-- **Harness por relógio real** em parte do `SetupControllerTest`
+- **Harness por relógio real** em parte do `SetupControllerTest.kt`
   (`waitForStatus` com deadlines de 2–3 s): trocar por latch/executor injetável.
 - **Flag `provisioning` através do disconnect** (`SetupController`): cliente
   que cai no meio do provisionamento segura a flag até a thread terminar; o
-  impacto é limitado pelos timeouts de 15 s da `MuseApi`. Correção sugerida:
+  impacto é limitado pelos timeouts de 15 s da MuseApi. Correção sugerida:
   limpar a flag por geração no `finally`.
 - **`identity.json` corrompido**: o cabeçalho da classe promete "erro, não
   identidade nova", mas o teste `corruptIdentityIsReplaced` fixa regenerar.
@@ -133,13 +133,13 @@ Registrado, NÃO corrigido (decisão ou refatoração maior — fila do Claude):
   Diagnostics afirma pareamento. Apagar ao confirmar um novo pareamento tem o
   custo oposto: uma falha transitória apagaria um pareamento ainda válido.
   Escolher a semântica (decisão de produto).
-- **`auth_failed` genérico**: rede fora/HTTP 500 viram `auth_failed` — mas é o
+- **auth_failed genérico**: rede fora/HTTP 500 viram auth_failed — mas é o
   comportamento do próprio SDK (o CLI dele distingue só no log). Sem mudança
   no fio; no máximo detalhar na Diagnostics um dia.
 - **`forceOff` bloqueia a thread do watchdog** por até ~10 s na reabertura
   (addService + advertising): mover a reabertura para um executor próprio.
-- **Endurecimento menor de testes**: transcript do `RandomKeysTest` montado
-  com as funções de produção (independência repousa no `PairingVectorsTest`);
+- **Endurecimento menor de testes**: transcript do `RandomKeysTest.kt` montado
+  com as funções de produção (independência repousa no `PairingVectorsTest.kt`);
   escopo de sessão dos vetores community/official menor que o doc da suíte;
   `sendResponse` dos callbacks binder sem `runCatching` (mesma classe do
   notify, menor); `Mobile.open` não confronta a sequência de contadores —
