@@ -38,6 +38,16 @@
     <uses-permission
         android:name="android.permission.WRITE_SECURE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
+    <!-- gadget-link spike(docs/gadget-link.md B1):诊断信息里真的试一次 BLE 广播和 GATT server。
+         安卓 12 起是运行时权限「附近设备」,App 不主动弹框,用户在系统设置里打开才会试;11 及以前装上即有 -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <!-- 对话页附件可以拍照(走系统相机),声明用到相机、但不是必需:没有相机的设备照常安装。
          有的系统按 APK 特征给应用分类,不声明时 Mika 可能被当成游戏、限制刷新率;这条声明要留着 -->
@@ -56,6 +66,14 @@
         android:required="false" />
     <uses-feature
         android:name="android.hardware.location.gps"
+        android:required="false" />
+
+    <!-- 蓝牙只用于 gadget-link 诊断探针,不是必需:没有蓝牙的设备照常安装 -->
+    <uses-feature
+        android:name="android.hardware.bluetooth"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.bluetooth_le"
         android:required="false" />
 
     <!-- list_apps 列出可启动的 App;解析系统权限框所在的包,用于判断「被切走」 -->

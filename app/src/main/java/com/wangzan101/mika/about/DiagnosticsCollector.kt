@@ -185,12 +185,12 @@ object DiagnosticsCollector {
     }.getOrNull()
 
     /**
-     * BLE 外围能力的一句话结论:能不能广播、原始开关的状态([BlePeripheralCapability.summary])。只读能力,
-     * 不开广播、不碰电台、不需要运行时权限。见 docs/gadget-link.md 的 B1 阻塞点。
+     * BLE 外围能力的一句话结论:真的试一次可连接广播(约 1 秒)和开一个空 GATT server,随即撤掉;
+     * 后面附原始开关作参考。没给「附近设备」权限时不试,结论是 "not tested"。会阻塞最多几秒,
+     * 诊断本来就在后台线程收。见 docs/gadget-link.md 的 B1 阻塞点。
      */
     private fun gadgetLink(context: Context): String? = runCatching {
-        val cap = BlePeripheralProbe.inspect(context)
-        (if (cap.canAdvertise) "can advertise" else "cannot advertise") + "; ${cap.summary()}"
+        BlePeripheralProbe.diagnose(context)
     }.getOrNull()
 
     /** 最近几次运行:结局和步数取小结,模型取概要;目标、回答、失败原话都不取。 */
