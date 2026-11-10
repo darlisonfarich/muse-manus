@@ -98,6 +98,7 @@ kotlin {
 
 dependencies {
     implementation(project(":core"))
+    implementation(project(":gadgetlink"))
     implementation(libs.protobuf.lite)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)

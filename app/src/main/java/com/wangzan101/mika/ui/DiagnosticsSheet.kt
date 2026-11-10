@@ -23,7 +23,10 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -44,11 +47,17 @@ import kotlinx.coroutines.withContext
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DiagnosticsSheet(load: () -> String, onDismiss: () -> Unit) {
+fun DiagnosticsSheet(
+    load: () -> String,
+    onDismiss: () -> Unit,
+    // 额外的控件(gadget-link 的配对开关),拿到 reload 后可以让上面的文字重新收集
+    extra: (@Composable (reload: () -> Unit) -> Unit)? = null,
+) {
     val c = MikaTheme.colors
     val context = LocalContext.current
-    // 打开那一刻收一次;之后状态再变也不换,用户看到的就是要复制的
-    val text by produceState<String?>(null) {
+    var generation by remember { mutableIntStateOf(0) }
+    // 打开那一刻收一次;之后状态再变也不换,用户看到的就是要复制的(extra 主动 reload 时才重收)
+    val text by produceState<String?>(null, generation) {
         value = withContext(Dispatchers.IO) {
             runCatching(load).getOrElse { Diagnostics.sanitize("${Diagnostics.HEADER}\n(failed to collect: ${it.javaClass.simpleName})\n") }
         }
@@ -67,6 +76,7 @@ fun DiagnosticsSheet(load: () -> String, onDismiss: () -> Unit) {
                     fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 17.sp, color = if (text == null) c.ink3 else c.ink2,
                 )
             }
+            extra?.invoke { generation++ }
             Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 val ready = text != null
                 MikaButton(

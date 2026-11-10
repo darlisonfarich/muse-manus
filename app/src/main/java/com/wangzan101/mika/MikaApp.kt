@@ -369,6 +369,8 @@ class MikaApp : Application(), WebOwner, SandboxOwner, TaskEnvironment.Owner, Ph
         super.onCreate()
         // 上次进程在复制或绑定分享草稿途中退出时留下的临时文件;目录至多保留一份有效草稿。
         runCatching { sharedDrafts.cleanup() }
+        // gadget-link:上次配对窗口没正常关(进程被杀)时,把蓝牙名改回用户原来的
+        runCatching { com.wangzan101.mika.gadget.AdapterName.restoreIfStale(this) }
         // 界面以外的文字(通知、服务、悬浮胶囊)按 App 语言取
         AppLanguage.applyDefaultLocale(this)
         UiText.source = ResourceTexts { AppLanguage.resources(this) }

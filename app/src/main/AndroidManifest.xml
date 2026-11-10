@@ -17,6 +17,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- gadget-link:配对窗口打开时前台服务保持 BLE 广播和 GATT 连接(用户在另一台手机上操作 Muse App) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
@@ -221,6 +223,12 @@
         </service>
 
         <!-- 后台准备运行环境(解出随 APK 自带的根文件系统),只在准备期间运行 -->
+        <!-- gadget-link(docs/gadget-link.md 第 3 步):Muse Gadget 的 BLE 配对窗口,配完或超时自己关 -->
+        <service
+            android:name=".gadget.GadgetLinkService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
         <service
             android:name=".sandbox.SandboxService"
             android:exported="false"

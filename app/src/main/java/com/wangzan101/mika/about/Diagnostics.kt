@@ -33,7 +33,7 @@ data class DiagnosticsSnapshot(
     /** 语音转文字:选了什么、手机自带识别的情况;旧的调用处不给就不写这一段。 */
     val speech: Speech? = null,
     /** BLE 外围（周边）能力的一句话结论,来自 docs/gadget-link.md 的 spike 探针;没跑过/读不出为 null。 */
-    val gadgetLink: String? = null,
+    val gadgetLink: List<Pair<String, String>>? = null,
 ) {
     data class App(val versionName: String, val build: String, val installer: String?, val language: String)
 
@@ -168,7 +168,7 @@ object Diagnostics {
         }
         s.gadgetLink?.let { g ->
             section("Gadget link (spike)")
-            line("ble peripheral", g)
+            g.forEach { (key, value) -> line(key, value) }
         }
 
         section("Recent runs")
