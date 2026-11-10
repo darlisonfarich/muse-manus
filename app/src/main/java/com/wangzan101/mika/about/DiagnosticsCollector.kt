@@ -24,6 +24,7 @@ import com.wangzan101.mika.core.shell.PairingDiscovery
 import com.wangzan101.mika.core.shell.PermissionCommands
 import com.wangzan101.mika.core.shell.SetupInputs
 import com.wangzan101.mika.core.shell.SetupStep
+import com.wangzan101.mika.gadget.BlePeripheralProbe
 import com.wangzan101.mika.i18n.AppLanguage
 import com.wangzan101.mika.record.RunStore
 import com.wangzan101.mika.settings.AccessibilityState
@@ -103,6 +104,7 @@ object DiagnosticsCollector {
                 DiagnosticsSnapshot.Update(u.status.name, u.latest?.version, u.update?.version)
             },
             speech = speech(app),
+            gadgetLink = gadgetLink(app),
         )
     }
 
@@ -180,6 +182,15 @@ object DiagnosticsCollector {
                 svc.component + (if (svc.open) "" else " (not exported)") + (svc.permission?.let { " needs $it" } ?: "")
             },
         )
+    }.getOrNull()
+
+    /**
+     * BLE 外围能力的一句话结论:能不能广播、原始开关的状态([BlePeripheralCapability.summary])。只读能力,
+     * 不开广播、不碰电台、不需要运行时权限。见 docs/gadget-link.md 的 B1 阻塞点。
+     */
+    private fun gadgetLink(context: Context): String? = runCatching {
+        val cap = BlePeripheralProbe.inspect(context)
+        (if (cap.canAdvertise) "can advertise" else "cannot advertise") + "; ${cap.summary()}"
     }.getOrNull()
 
     /** 最近几次运行:结局和步数取小结,模型取概要;目标、回答、失败原话都不取。 */
