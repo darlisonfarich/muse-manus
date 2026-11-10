@@ -19,6 +19,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.ParcelUuid
 import com.darlisonfarich.gadgetlink.BleFraming
+import com.darlisonfarich.gadgetlink.DisconnectWatchdog
 import com.darlisonfarich.gadgetlink.SetupTransport
 import java.io.ByteArrayOutputStream
 import java.util.UUID
@@ -52,6 +53,8 @@ class GattTransport(
     private val onWrite: (ByteArray) -> Unit,
     private val onDisconnect: () -> Unit,
     private val log: (String) -> Unit,
+    /** A queda forçada fechou o servidor e não deu para reabrir: a janela de setup morreu. */
+    private val onReopenFailed: (String) -> Unit = {},
 ) : SetupTransport {
     companion object {
         val SERVICE_UUID: UUID = UUID.fromString("7fdd3d1c-38ea-46cf-8b46-314ecf5f240c")
@@ -82,6 +85,9 @@ class GattTransport(
     private var advertising: AdvertiseCallback? = null
     private var serviceAdded: CountDownLatch? = null
     @Volatile private var serviceAddStatus = BluetoothGatt.GATT_FAILURE
+    /** Abrir, fechar e a queda forçada não se cruzam. */
+    private val life = Any()
+    @Volatile private var stopped = false
 
     /** O celular que está no setup agora (endereço), para o diagnóstico. */
     val clientAddress: String? get() = client?.address
@@ -90,7 +96,12 @@ class GattTransport(
      * Abre o servidor GATT e começa a anunciar. Bloqueia alguns segundos (não chamar
      * na thread principal). Devolve null se tudo subiu, ou o motivo de não ter subido.
      */
-    fun start(): String? {
+    fun start(): String? = synchronized(life) {
+        if (stopped) return "setup closed"
+        openServerAndAdvertise()
+    }
+
+    private fun openServerAndAdvertise(): String? {
         val adapter = manager?.adapter ?: return "no bluetooth adapter"
         if (!adapter.isEnabled) return "bluetooth is off"
         val advertiser = adapter.bluetoothLeAdvertiser ?: return "no BLE advertiser"
@@ -176,6 +187,12 @@ class GattTransport(
 
     /** Para o anúncio, derruba o cliente e fecha o servidor. Pode ser chamado mais de uma vez. */
     fun stop() {
+        stopped = true
+        synchronized(life) { closeServer() }
+        thread.quitSafely()
+    }
+
+    private fun closeServer() {
         advertising?.let { cb ->
             runCatching { manager?.adapter?.bluetoothLeAdvertiser?.stopAdvertising(cb) }
             advertising = null
@@ -186,10 +203,34 @@ class GattTransport(
             runCatching { gatt.close() }
         }
         server = null
-        client = null
-        subscribed = false
+        synchronized(this) {
+            client = null
+            subscribed = false
+            currentMtu.set(DEFAULT_ATT_MTU)
+        }
+        synchronized(prepared) { prepared.reset() }
         pendingNotify.getAndSet(null)?.countDown()
-        thread.quitSafely()
+    }
+
+    /**
+     * Queda garantida (o [watchdog] chama quando o cancelConnection não derrubou):
+     * fecha o servidor GATT — com ele some a conexão deste app — limpa a sessão como
+     * numa desconexão e, se a janela de setup ainda está aberta, reabre serviço e anúncio.
+     */
+    private fun forceOff(device: BluetoothDevice) {
+        synchronized(life) {
+            if (stopped) return
+            closeServer()
+            watchdog.connectionChanged()
+            log("client disconnected ${device.address} (forced: GATT server closed)")
+            onDisconnect()
+            if (stopped) return
+            val error = openServerAndAdvertise()
+            if (error == null) log("setup reopened after forced disconnect") else {
+                log("could not reopen setup: $error")
+                onReopenFailed(error)
+            }
+        }
     }
 
     // -- SetupTransport --------------------------------------------------------------------
@@ -204,11 +245,26 @@ class GattTransport(
     }
 
     override fun disconnect(delaySeconds: Double) {
-        handler.postDelayed({
-            val device = client ?: return@postDelayed
-            runCatching { server?.cancelConnection(device) }
-        }, (delaySeconds * 1000).toLong())
+        watchdog.request((delaySeconds * 1000).toLong())
     }
+
+    /** Faz a queda pedida pelo setup acontecer de verdade (ver [DisconnectWatchdog]). */
+    private val watchdog = DisconnectWatchdog(
+        link = object : DisconnectWatchdog.Link<BluetoothDevice> {
+            override fun current(): BluetoothDevice? = client
+            override fun describe(client: BluetoothDevice): String = client.address
+            override fun cancel(client: BluetoothDevice) {
+                val gatt = server ?: error("GATT server closed")
+                // O cancelConnection do servidor só age numa conexão que o servidor "conhece":
+                // connect(…, false) registra a conexão já aberta pelo central antes de cancelar.
+                gatt.connect(client, false)
+                gatt.cancelConnection(client)
+            }
+            override fun forceOff(client: BluetoothDevice) = this@GattTransport.forceOff(client)
+        },
+        schedule = { delayMs, task -> handler.postDelayed(task, delayMs) },
+        log = log,
+    )
 
     /** Um notify por vez; espera onNotificationSent. Falso se não deu para mandar. */
     private fun notify(packet: ByteArray): Boolean {
@@ -257,6 +313,7 @@ class GattTransport(
                         subscribed = false
                         currentMtu.set(DEFAULT_ATT_MTU)
                         prepared.reset()
+                        watchdog.connectionChanged()
                         log("client connected ${device.address}")
                     } else if (client?.address != device.address) {
                         log("second client ${device.address} ignored")
@@ -270,6 +327,7 @@ class GattTransport(
                             subscribed = false
                             currentMtu.set(DEFAULT_ATT_MTU)
                             prepared.reset()
+                            watchdog.connectionChanged()
                         }
                     }
                 }
@@ -351,6 +409,7 @@ class GattTransport(
         if (client == null) {
             client = device
             currentMtu.set(DEFAULT_ATT_MTU)
+            watchdog.connectionChanged()
             log("client adopted on first write ${device.address}")
         }
         client?.address == device.address

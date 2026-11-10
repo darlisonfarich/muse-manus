@@ -99,6 +99,7 @@ class GadgetLinkService : Service() {
                 },
                 onDisconnect = { setup.onDisconnect() },
                 log = GadgetLink::log,
+                onReopenFailed = { reason -> worker.execute { fail("setup lost after forced disconnect: $reason") } },
             )
             setup = SetupController(
                 pairing = pairing,
