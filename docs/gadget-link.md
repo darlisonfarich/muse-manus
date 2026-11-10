@@ -43,6 +43,7 @@
    - (código) `BlePeripheralProbe` — o controlador do POCO X8 Pro consegue advertir como periférico? Se não, pareamento on-device sai de cena (ver bloqueios B1/B2).
    - (conta) rodar `musegadget voice-call --in-wav/--out-wav` contra um **gadget de referência Linux** (a VM da conta serve) para confirmar que a VM admite voz realtime ANTES de qualquer porte.
 2. **Pairing v5 + framing** em Kotlin, validado contra os vetores publicados (teste JVM, sem Android). Trust-critical → primeiro.
+   **FEITO (2026-11-10):** módulo JVM puro em `gadgetlink/` (port de pairing.py e ble_framing.py do SDK, commit 55cbf48). Bate byte a byte com os 3 vetores oficiais (transcript, HKDF, session id, registro client-finished) e porta toda a suíte test_pairing.py/test_ble_framing.py. Endurecido além do SDK: ponto P-256 validado à mão (não confia no provedor), UTF-8 estrito nos dois sentidos, contador sem repetição sob concorrência, chaves zeradas ao limpar, MTU 4..6 vira erro em vez de perder mensagem, handshakes com chaves aleatórias (coordenadas com byte zero). Os testes rodam no job core (JVM) do CI. Falta: provar no Android de verdade (Conscrypt) — vem junto do passo 3. Quando o app passar a depender do módulo (passo 3), registrar o muse-gadget-sdk (Apache-2.0) em licenses/THIRD_PARTY_NOTICES.md e na tela de licenças — o teste de licenças do app exige os dois; até lá o crédito está no cabeçalho de cada arquivo portado.
 3. **Transporte BLE periférico** (advertiser + GATT server) ligando a lógica de `ble_setup`. Parear com o app Muse num **segundo dispositivo** (ver B2). Confirmar MuseGadgetXXXXXX, Wi-Fi, `pairing.json`.
 4. **Cliente Noise + `link.register`** como `homehub` → chegar a `registered with the Muse`.
 5. **Voz realtime** (`AudioRecord`/`AudioTrack`, half-duplex, barge-in, end_call_stop). Paridade por WAV primeiro, depois ao vivo.
@@ -65,7 +66,7 @@
 ## Onde nasce
 
 Módulo autocontido no muse-manus (Apache-2.0, compatível com o fork Mika e com o
-SDK), eventual `:gadgetlink` (pacote `com.darlisonfarich.gadgetlink`), sem
+SDK), `:gadgetlink` (pacote `com.darlisonfarich.gadgetlink`; criado em 2026-11-10 com o pairing v5), sem
 dependências específicas do Mika para poder ser extraído depois. Este spike começa
 a sonda dentro do módulo `app` (compila já) e só vira módulo próprio quando o
 portão do passo 1 passar.
