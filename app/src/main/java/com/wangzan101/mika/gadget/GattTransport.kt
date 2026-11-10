@@ -79,8 +79,14 @@ class GattTransport(
     @Volatile private var client: BluetoothDevice? = null
     @Volatile private var subscribed = false
     private val currentMtu = AtomicInteger(DEFAULT_ATT_MTU)
-    private val pendingNotify = AtomicReference<CountDownLatch?>(null)
-    private val notifyStatus = AtomicInteger(BluetoothGatt.GATT_SUCCESS)
+
+    /** Um notify em voo: a trava e o status DESTE pacote. O status nasce FALHA —
+     *  acordar a trava por fechamento ou desconexão não é confirmação de entrega. */
+    private class PendingNotify {
+        val latch = CountDownLatch(1)
+        @Volatile var status: Int = BluetoothGatt.GATT_FAILURE
+    }
+    private val pendingNotify = AtomicReference<PendingNotify?>(null)
     private val prepared = ByteArrayOutputStream()
     private var advertising: AdvertiseCallback? = null
     private var serviceAdded: CountDownLatch? = null
@@ -209,7 +215,7 @@ class GattTransport(
             currentMtu.set(DEFAULT_ATT_MTU)
         }
         synchronized(prepared) { prepared.reset() }
-        pendingNotify.getAndSet(null)?.countDown()
+        pendingNotify.getAndSet(null)?.latch?.countDown()
     }
 
     /**
@@ -275,26 +281,37 @@ class GattTransport(
             log("dropped ${packet.size}-byte notify: client not subscribed to TX")
             return false
         }
-        val latch = CountDownLatch(1)
-        pendingNotify.set(latch)
-        val status = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.notifyCharacteristicChanged(device, characteristic, false, packet)
-        } else {
-            @Suppress("DEPRECATION")
-            characteristic.value = packet
-            @Suppress("DEPRECATION")
-            if (gatt.notifyCharacteristicChanged(device, characteristic, false)) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
+        val pending = PendingNotify()
+        pendingNotify.set(pending)
+        // Fora de runCatching, uma SecurityException (permissão revogada no meio da
+        // sessão) subiria pelo sendPackets e emudeceria todos os envios seguintes.
+        val status = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                gatt.notifyCharacteristicChanged(device, characteristic, false, packet)
+            } else {
+                @Suppress("DEPRECATION")
+                characteristic.value = packet
+                @Suppress("DEPRECATION")
+                if (gatt.notifyCharacteristicChanged(device, characteristic, false)) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
+            }
+        }.getOrElse {
+            pendingNotify.compareAndSet(pending, null)
+            log("notify failed: ${it.javaClass.simpleName}")
+            return false
         }
         if (status != BluetoothGatt.GATT_SUCCESS) {
-            pendingNotify.set(null)
+            pendingNotify.compareAndSet(pending, null)
             log("notify refused ($status)")
             return false
         }
-        if (!latch.await(NOTIFY_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+        if (!pending.latch.await(NOTIFY_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            // Limpa o pendente: a confirmação atrasada deste pacote não pode
+            // derrubar a trava do pacote seguinte nem emprestar o status a ele.
+            pendingNotify.compareAndSet(pending, null)
             log("notify not confirmed in ${NOTIFY_TIMEOUT_MS} ms")
             return false
         }
-        return notifyStatus.get() == BluetoothGatt.GATT_SUCCESS
+        return pending.status == BluetoothGatt.GATT_SUCCESS
     }
 
     // -- Callbacks do GATT (threads de binder) -----------------------------------------
@@ -312,11 +329,18 @@ class GattTransport(
                         client = device
                         subscribed = false
                         currentMtu.set(DEFAULT_ATT_MTU)
-                        prepared.reset()
+                        synchronized(prepared) { prepared.reset() }
                         watchdog.connectionChanged()
                         log("client connected ${device.address}")
                     } else if (client?.address != device.address) {
                         log("second client ${device.address} ignored")
+                    } else {
+                        // CONNECTED de novo sem DISCONNECTED antes (o callback se
+                        // perdeu): a conexão nova começa do zero — MTU 23 e nenhum
+                        // long write parcial da conexão anterior.
+                        currentMtu.set(DEFAULT_ATT_MTU)
+                        synchronized(prepared) { prepared.reset() }
+                        log("client reconnected ${device.address} (no prior disconnect)")
                     }
                 }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
@@ -326,13 +350,13 @@ class GattTransport(
                             client = null
                             subscribed = false
                             currentMtu.set(DEFAULT_ATT_MTU)
-                            prepared.reset()
+                            synchronized(prepared) { prepared.reset() }
                             watchdog.connectionChanged()
                         }
                     }
                 }
                 if (ours) {
-                    pendingNotify.getAndSet(null)?.countDown()
+                    pendingNotify.getAndSet(null)?.latch?.countDown()
                     log("client disconnected ${device.address} (status $status)")
                     onDisconnect()
                 }
@@ -351,16 +375,27 @@ class GattTransport(
             preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?,
         ) {
             val gatt = server ?: return
-            val ours = adopt(device)
+            val ours = adopt(device, characteristic.uuid == RX_UUID)
             val ok = ours && characteristic.uuid == RX_UUID && value != null
             if (responseNeeded) {
                 gatt.sendResponse(device, requestId, if (ok) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE, offset, null)
             }
             if (!ok) return
             if (preparedWrite) {
+                val v = value!!
                 synchronized(prepared) {
-                    if (offset != prepared.size()) prepared.reset() // fora de ordem: começa de novo
-                    if (prepared.size() + value!!.size <= BleFraming.MAX_MESSAGE_BYTES) prepared.write(value) else prepared.reset()
+                    when {
+                        // Recomeço legítimo: descarta o parcial e guarda o pedaço novo.
+                        offset == 0 -> {
+                            prepared.reset()
+                            if (v.size <= BleFraming.MAX_MESSAGE_BYTES) prepared.write(v) else Unit
+                        }
+                        // Fora de ordem: descarta o parcial E o pedaço — anexar o
+                        // pedaço velho como início remontaria a mensagem corrompida.
+                        offset != prepared.size() -> prepared.reset()
+                        prepared.size() + v.size <= BleFraming.MAX_MESSAGE_BYTES -> prepared.write(v)
+                        else -> prepared.reset()
+                    }
                 }
             } else {
                 onWrite(value!!)
@@ -368,16 +403,23 @@ class GattTransport(
         }
 
         override fun onExecuteWrite(device: BluetoothDevice, requestId: Int, execute: Boolean) {
-            val bytes = synchronized(prepared) { prepared.toByteArray().also { prepared.reset() } }
-            server?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-            if (execute && bytes.isNotEmpty() && device.address == client?.address) onWrite(bytes)
+            // Só o cliente drena o buffer: um segundo aparelho conectado (o
+            // "ignored") não pode apagar o long write em andamento do cliente.
+            val ours = device.address == client?.address
+            val bytes = if (ours) {
+                synchronized(prepared) { prepared.toByteArray().also { prepared.reset() } }
+            } else {
+                ByteArray(0)
+            }
+            server?.sendResponse(device, requestId, if (ours) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE, 0, null)
+            if (execute && bytes.isNotEmpty()) onWrite(bytes)
         }
 
         override fun onDescriptorWriteRequest(
             device: BluetoothDevice, requestId: Int, descriptor: BluetoothGattDescriptor,
             preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?,
         ) {
-            val ours = adopt(device)
+            val ours = adopt(device, descriptor.uuid == CCCD_UUID && descriptor.characteristic?.uuid == TX_UUID)
             val ok = ours && descriptor.uuid == CCCD_UUID && value != null && value.isNotEmpty()
             if (ok) {
                 subscribed = (value!![0].toInt() and 0x03) != 0
@@ -399,14 +441,21 @@ class GattTransport(
         }
 
         override fun onNotificationSent(device: BluetoothDevice, status: Int) {
-            notifyStatus.set(status)
-            pendingNotify.getAndSet(null)?.countDown()
+            pendingNotify.getAndSet(null)?.let { pending ->
+                pending.status = status
+                pending.latch.countDown()
+            }
         }
     }
 
-    /** Alguns centrais escrevem antes do callback de conexão chegar: adota se não há cliente. */
-    private fun adopt(device: BluetoothDevice): Boolean = synchronized(this) {
-        if (client == null) {
+    /**
+     * Alguns centrais escrevem antes do callback de conexão chegar: adota se não há
+     * cliente — mas só pelos canais do setup (RX ou o CCCD do TX). Escrita em outro
+     * lugar não adota: senão qualquer aparelho próximo que escreva 1 byte vira "o
+     * cliente" e o app Muse legítimo é ignorado pelo resto da janela.
+     */
+    private fun adopt(device: BluetoothDevice, onSetupChannel: Boolean): Boolean = synchronized(this) {
+        if (client == null && onSetupChannel) {
             client = device
             currentMtu.set(DEFAULT_ATT_MTU)
             watchdog.connectionChanged()

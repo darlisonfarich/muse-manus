@@ -37,6 +37,8 @@ class GadgetLinkService : Service() {
     private var controller: SetupController? = null
     private var window: ScheduledFuture<*>? = null
     @Volatile private var started = false
+    /** onDestroy pode chegar no meio do openSetup (thread worker): quem abre confere a flag. */
+    @Volatile private var destroyed = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -113,6 +115,12 @@ class GadgetLinkService : Service() {
             )
             transport = gatt
             controller = setup
+            // Se o serviço morreu durante a abertura (onDestroy não achou o
+            // transporte, ainda null), nada de subir o rádio sem serviço vivo.
+            if (destroyed) {
+                gatt.stop()
+                return
+            }
             setup.start()
             gatt.start()?.let { return fail(it) }
             GadgetLink.setPhase(GadgetLink.Phase.ADVERTISING, "open as ${identity.bleName} for ${GadgetLink.SETUP_WINDOW_MS / 60_000} min")
@@ -122,6 +130,9 @@ class GadgetLinkService : Service() {
                 stopSelf()
             }, GadgetLink.SETUP_WINDOW_MS, TimeUnit.MILLISECONDS)
         } catch (e: Exception) {
+            // Exceção depois do transporte criado (ex.: no start do GATT) não pode
+            // deixar o servidor anunciando sem ninguém para pará-lo.
+            transport?.stop()
             fail("${e.javaClass.simpleName}: ${e.message}")
         }
     }
@@ -132,6 +143,7 @@ class GadgetLinkService : Service() {
     }
 
     override fun onDestroy() {
+        destroyed = true
         window?.cancel(false)
         controller?.stop()
         transport?.stop()
