@@ -380,13 +380,17 @@ class SetupControllerTest {
     fun encryptedStatusesStayInCounterOrderUnderConcurrentSenders() {
         val h = Harness()
         h.pair()
+        // Só a fase concorrente conta: o pareamento já emitiu o pairing_confirmed
+        // (contador 0 da sessão), que não é parte do que este teste mede.
+        val before = h.transport.messages.size
         val threads = (1..8).map { n -> Thread { repeat(25) { h.controller.sendStatus("s$n") } } }
         threads.forEach(Thread::start)
         threads.forEach(Thread::join)
-        val counters = h.transport.messages.filterIsInstance<JsonObject>()
+        val counters = h.transport.messages.drop(before).filterIsInstance<JsonObject>()
             .filter { it.s("type") == "pairing_encrypted" }.map { it.s("counter").toInt() }
-        // O esperado é o total ENVIADO (8 threads × 25), não o que chegou: derivar
-        // de counters.size deixaria o teste verde com metade dos status perdidos.
-        assertEquals((0 until 200).toList(), counters)
+        // Total ENVIADO (8 × 25), não derivado do que chegou — e a sequência tem
+        // que ser consecutiva e em ordem a partir do primeiro contador da fase.
+        assertEquals(200, counters.size)
+        assertEquals((counters.first() until counters.first() + 200).toList(), counters)
     }
 }
