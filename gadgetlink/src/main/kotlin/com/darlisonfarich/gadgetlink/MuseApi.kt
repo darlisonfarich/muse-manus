@@ -25,6 +25,16 @@ import java.net.URL
 /** Quantas VMs utilizáveis a conta tem para este token, e o status HTTP (null = sem resposta). */
 data class VmFetch(val count: Int, val status: Int?)
 
+/** Uma VM arrendada à conta: a URL, o bearer por-VM e como chamá-la. */
+data class Vm(val vmUrl: String, val vmAuthToken: String, val vmName: String, val vmId: String, val isDefault: Boolean)
+
+data class VmList(val vms: List<Vm>, val status: Int?)
+
+data class TokenPair(val accessToken: String, val refreshToken: String)
+
+/** tokens = null em qualquer falha; status = o HTTP que encerrou a tentativa (null = falha de rede). */
+data class RefreshResult(val tokens: TokenPair?, val status: Int?)
+
 object MuseApi {
     const val API_BASE = "https://api.muse.ai"
     const val FETCH_PATH = "/fetch_vms"
@@ -54,37 +64,105 @@ object MuseApi {
     /** Prazo total da checagem (conexão + corpo): um servidor que pinga 1 byte por vez não prende a thread. */
     const val TOTAL_TIMEOUT_MS = 20_000
 
+    const val REFRESH_PATH = "/device_token/refresh"
+
+    private class Reply(val status: Int?, val body: ByteArray?)
+
+    /**
+     * Uma chamada HTTP: sem seguir redirect (o bearer, e mais ainda o refresh token, não vai para outro
+     * host), com teto no corpo e prazo total. status null = sem resposta; body null = não 2xx, estourou o
+     * teto ou o prazo.
+     */
+    private fun call(
+        method: String,
+        url: String,
+        headers: Map<String, String>,
+        payload: ByteArray?,
+        timeoutMs: Int,
+        totalTimeoutMs: Int,
+    ): Reply {
+        val deadline = System.nanoTime() + totalTimeoutMs * 1_000_000L
+        val connection = try {
+            URL(url).openConnection() as HttpURLConnection
+        } catch (e: IOException) {
+            return Reply(null, null)
+        }
+        return try {
+            connection.requestMethod = method
+            connection.instanceFollowRedirects = false
+            connection.connectTimeout = timeoutMs
+            connection.readTimeout = timeoutMs
+            headers.forEach { (k, v) -> connection.setRequestProperty(k, v) }
+            if (payload != null) {
+                connection.doOutput = true
+                connection.outputStream.use { it.write(payload) }
+            }
+            val status = connection.responseCode
+            if (status !in 200..299) return Reply(status, null)
+            Reply(status, connection.inputStream.use { readBounded(it, MAX_BODY_BYTES, deadline) })
+        } catch (e: IOException) {
+            Reply(null, null)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /** As VMs utilizáveis da conta para este token do device, e o status HTTP (null = sem resposta). */
+    fun fetchVmList(
+        accessToken: String,
+        root: String,
+        timeoutMs: Int = 15_000,
+        totalTimeoutMs: Int = TOTAL_TIMEOUT_MS,
+    ): VmList {
+        val reply = call(
+            "GET", root + FETCH_PATH,
+            mapOf("Authorization" to "Bearer $accessToken", "X-API-Version" to "1.0.0", "User-Agent" to USER_AGENT),
+            null, timeoutMs, totalTimeoutMs,
+        )
+        val status = reply.status ?: return VmList(emptyList(), null)
+        val body = reply.body ?: return VmList(emptyList(), status)
+        val text = runCatching { Utf8.decodeStrict(body) }.getOrNull() ?: return VmList(emptyList(), status)
+        return VmList(parseVmList(text), status)
+    }
+
     fun fetchVms(
         accessToken: String,
         root: String,
         timeoutMs: Int = 15_000,
         totalTimeoutMs: Int = TOTAL_TIMEOUT_MS,
-    ): VmFetch {
-        val deadline = System.nanoTime() + totalTimeoutMs * 1_000_000L
-        val connection = try {
-            URL(root + FETCH_PATH).openConnection() as HttpURLConnection
-        } catch (e: IOException) {
-            return VmFetch(0, null)
-        }
-        return try {
-            connection.requestMethod = "GET"
-            connection.instanceFollowRedirects = false
-            connection.connectTimeout = timeoutMs
-            connection.readTimeout = timeoutMs
-            connection.setRequestProperty("Authorization", "Bearer $accessToken")
-            connection.setRequestProperty("X-API-Version", "1.0.0")
-            connection.setRequestProperty("User-Agent", USER_AGENT)
-            val status = connection.responseCode
-            if (status !in 200..299) return VmFetch(0, status)
-            val body = connection.inputStream.use { readBounded(it, MAX_BODY_BYTES, deadline) }
-                ?: return VmFetch(0, status)
-            val text = runCatching { Utf8.decodeStrict(body) }.getOrNull() ?: return VmFetch(0, status)
-            VmFetch(countVms(text), status)
-        } catch (e: IOException) {
-            VmFetch(0, null)
-        } finally {
-            connection.disconnect()
-        }
+    ): VmFetch = fetchVmList(accessToken, root, timeoutMs, totalTimeoutMs).let { VmFetch(it.vms.size, it.status) }
+
+    /**
+     * Gira o par de tokens do device com o refresh token. O access token nunca é apresentado (como no
+     * ESP32: o servidor pode aceitá-lo e devolver tokens que depois todo endpoint recusa). O prefixo
+     * hatch_refresh: nunca é dobrado. 401 = o pareamento acabou, é preciso parear de novo.
+     */
+    fun refreshDeviceToken(
+        refreshToken: String,
+        deviceId: String,
+        root: String,
+        sdkToken: String? = null,
+        timeoutMs: Int = 15_000,
+        totalTimeoutMs: Int = TOTAL_TIMEOUT_MS,
+    ): RefreshResult {
+        val raw = refreshToken.substringAfterLast(':')
+        val payload = buildJsonObject {
+            put("device_id", deviceId)
+            if (!sdkToken.isNullOrEmpty()) put("sdk_token", sdkToken)
+        }.toString().toByteArray(Charsets.UTF_8)
+        val reply = call(
+            "POST", root + REFRESH_PATH,
+            mapOf("Authorization" to "Bearer hatch_refresh:$raw", "Content-Type" to "application/json", "User-Agent" to USER_AGENT),
+            payload, timeoutMs, totalTimeoutMs,
+        )
+        val status = reply.status ?: return RefreshResult(null, null)
+        val body = reply.body ?: return RefreshResult(null, status)
+        val text = runCatching { Utf8.decodeStrict(body) }.getOrNull() ?: return RefreshResult(null, status)
+        var data = runCatching { Json.parseToJsonElement(text) }.getOrNull() as? JsonObject ?: return RefreshResult(null, status)
+        (data["payload"] as? JsonObject)?.let { data = it }
+        val access = (data["access_token"] as? JsonPrimitive)?.takeIf { it.isString && it.content.isNotEmpty() }?.content
+        val refresh = (data["refresh_token"] as? JsonPrimitive)?.takeIf { it.isString && it.content.isNotEmpty() }?.content
+        return RefreshResult(if (access != null && refresh != null) TokenPair(access, refresh) else null, status)
     }
 
     /** Lê até [maxBytes] antes do [deadline] (System.nanoTime); null se passou de um dos dois. */
@@ -100,17 +178,27 @@ object MuseApi {
         }
     }
 
-    /** Mesmo filtro do SDK: objeto, sem error_title/backend_error_code, vm_list com url e token. */
-    fun countVms(body: String): Int {
-        val data = runCatching { Json.parseToJsonElement(body) }.getOrNull() as? JsonObject ?: return 0
-        if (truthy(data["error_title"]) || truthy(data["backend_error_code"])) return 0
-        val list = data["vm_list"] as? JsonArray ?: return 0
-        return list.count { entry ->
-            entry is JsonObject &&
-                (truthy(entry["vm_ws_url"]) || truthy(entry["vm_url"])) &&
-                truthy(entry["vm_auth_token"])
+    fun countVms(body: String): Int = parseVmList(body).size
+
+    /** Mesmo filtro do SDK: objeto, sem error_title/backend_error_code, vm_list com (vm_ws_url ou vm_url) e token. */
+    fun parseVmList(body: String): List<Vm> {
+        val data = runCatching { Json.parseToJsonElement(body) }.getOrNull() as? JsonObject ?: return emptyList()
+        if (truthy(data["error_title"]) || truthy(data["backend_error_code"])) return emptyList()
+        val list = data["vm_list"] as? JsonArray ?: return emptyList()
+        return list.mapNotNull { entry ->
+            if (entry !is JsonObject) return@mapNotNull null
+            val ws = entry["vm_ws_url"]
+            val url = if (truthy(ws)) ws else entry["vm_url"]
+            val token = entry["vm_auth_token"]
+            if (!truthy(url) || !truthy(token)) return@mapNotNull null
+            Vm(
+                vmUrl = textOf(url), vmAuthToken = textOf(token), vmName = textOf(entry["vm_name"]),
+                vmId = textOf(entry["vm_id"]), isDefault = truthy(entry["default"]),
+            )
         }
     }
+
+    private fun textOf(element: JsonElement?): String = (element as? JsonPrimitive)?.content ?: ""
 
     /** Verdade no sentido do Python: null, "", 0, false, [] e {} são falsos. */
     private fun truthy(element: JsonElement?): Boolean = when (element) {
