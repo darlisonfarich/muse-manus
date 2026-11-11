@@ -6,7 +6,10 @@ package com.darlisonfarich.gadgetlink.noise
  * "Muse" falso. Ele reaproveita o NoiseSymmetric de produção; a prova independente de que o
  * protocolo está certo são os vetores gerados pela implementação de referência do SDK.
  */
-class TestNoiseResponder(private val payload: ByteArray = ByteArray(0)) {
+class TestNoiseResponder(
+    private val payload: ByteArray = ByteArray(0),
+    private val newKeyPair: () -> X25519KeyPair = X25519::generate,
+) {
     private val ss = NoiseSymmetric()
     private var e: X25519KeyPair? = null
     private var re: ByteArray? = null
@@ -17,10 +20,10 @@ class TestNoiseResponder(private val payload: ByteArray = ByteArray(0)) {
         re = remoteEphemeral
         ss.mixHash(remoteEphemeral)
         ss.decryptAndHash(msg1.copyOfRange(Noise.DH_KEY_LEN, msg1.size))
-        val ephemeral = X25519.generate().also { e = it }
+        val ephemeral = newKeyPair().also { e = it }
         ss.mixHash(ephemeral.publicKey)
         ss.mixKey(X25519.dh(ephemeral.privateKey, remoteEphemeral))
-        val s = X25519.generate()
+        val s = newKeyPair()
         val encS = ss.encryptAndHash(s.publicKey)
         ss.mixKey(X25519.dh(s.privateKey, remoteEphemeral))
         val encPayload = ss.encryptAndHash(payload)
