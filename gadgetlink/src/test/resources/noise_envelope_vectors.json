@@ -1,0 +1,861 @@
+{
+ "encode": [
+  {
+   "name": "req_basic",
+   "kind": "frame",
+   "spec": {
+    "stream_id": 1,
+    "kind": "request",
+    "value": {
+     "verb": "POST",
+     "path": "/link-control",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "",
+       ""
+      ],
+      [
+       "k",
+       ""
+      ],
+      [
+       "",
+       "v"
+      ]
+     ],
+     "body": "7b7d",
+     "end_body": false
+    }
+   },
+   "hex": "080112470a04504f5354120d2f6c696e6b2d636f6e74726f6c1a200a0c636f6e74656e742d7479706512106170706c69636174696f6e2f6a736f6e1a001a030a016b1a0312017622027b7d",
+   "decoded": {
+    "stream_id": 1,
+    "kind": "request",
+    "value": {
+     "verb": "POST",
+     "path": "/link-control",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "",
+       ""
+      ],
+      [
+       "k",
+       ""
+      ],
+      [
+       "",
+       "v"
+      ]
+     ],
+     "body": "7b7d",
+     "end_body": false
+    }
+   }
+  },
+  {
+   "name": "req_big_stream_end",
+   "kind": "frame",
+   "spec": {
+    "stream_id": 1099511627776,
+    "kind": "request",
+    "value": {
+     "verb": "GET",
+     "path": "/",
+     "headers": [],
+     "body": "",
+     "end_body": true
+    }
+   },
+   "hex": "08808080808020120a0a0347455412012f2801",
+   "decoded": {
+    "stream_id": 1099511627776,
+    "kind": "request",
+    "value": {
+     "verb": "GET",
+     "path": "/",
+     "headers": [],
+     "body": "",
+     "end_body": true
+    }
+   }
+  },
+  {
+   "name": "req_empty",
+   "kind": "frame",
+   "spec": {
+    "stream_id": 3,
+    "kind": "request",
+    "value": {
+     "verb": "",
+     "path": "",
+     "headers": [],
+     "body": "",
+     "end_body": false
+    }
+   },
+   "hex": "08031200",
+   "decoded": {
+    "stream_id": 3,
+    "kind": "request",
+    "value": {
+     "verb": "",
+     "path": "",
+     "headers": [],
+     "body": "",
+     "end_body": false
+    }
+   }
+  },
+  {
+   "name": "resp_ok",
+   "kind": "frame",
+   "spec": {
+    "stream_id": 4,
+    "kind": "response",
+    "value": {
+     "status": 200,
+     "headers": [
+      [
+       "a",
+       "b"
+      ]
+     ],
+     "body": "6f6b",
+     "end_body": true
+    }
+   },
+   "hex": "08041a1108c80112060a01611201621a026f6b2001",
+   "decoded": {
+    "stream_id": 4,
+    "kind": "response",
+    "value": {
+     "status": 200,
+     "headers": [
+      [
+       "a",
+       "b"
+      ]
+     ],
+     "body": "6f6b",
+     "end_body": true
+    }
+   }
+  },
+  {
+   "name": "resp_negative_status",
+   "kind": "frame",
+   "spec": {
+    "stream_id": 4,
+    "kind": "response",
+    "value": {
+     "status": -1,
+     "headers": [],
+     "body": "",
+     "end_body": false
+    }
+   },
+   "hex": "08041a0b08ffffffffffffffffff01",
+   "decoded": {
+    "stream_id": 4,
+    "kind": "response",
+    "value": {
+     "status": -1,
+     "headers": [],
+     "body": "",
+     "end_body": false
+    }
+   }
+  },
+  {
+   "name": "resp_zero_status",
+   "kind": "frame",
+   "spec": {
+    "stream_id": 4,
+    "kind": "response",
+    "value": {
+     "status": 0,
+     "headers": [],
+     "body": "",
+     "end_body": false
+    }
+   },
+   "hex": "08041a00",
+   "decoded": {
+    "stream_id": 4,
+    "kind": "response",
+    "value": {
+     "status": 0,
+     "headers": [],
+     "body": "",
+     "end_body": false
+    }
+   }
+  },
+  {
+   "name": "chunk_negative_stream",
+   "kind": "frame",
+   "spec": {
+    "stream_id": -7,
+    "kind": "body_chunk",
+    "value": {
+     "data": "020d18232e39444f5a65707b86919ca7b2bdc8d3dee9f4ff0a15202b36414c57626d78838e99a4afbac5d0dbe6f1fc07121d28333e49545f6a75808b96a1acb7c2cdd8e3eef9040f1a25303b46515c67727d88939ea9b4bfcad5e0ebf6010c17222d38434e59646f7a85909ba6b1bcc7d2dde8f3fe09141f2a35404b56616c77828d98a3aeb9c4cfdae5f0fb06111c27323d48535e69747f8a95a0abb6c1ccd7e2edf8030e19242f3a45505b66717c87929da8b3bec9d4dfeaf5000b16212c37424d58636e79848f9aa5b0bbc6d1dce7f2fd08131e29343f4a55606b76818c97a2adb8c3ced9e4effa05101b26313c47525d68737e89949faab5c0cbd6e1ecf7020d18232e39444f5a65707b86919ca7b2bdc8d3dee9f4ff0a15202b36414c57626d78838e99a4afbac5d0db",
+     "end_body": true
+    }
+   },
+   "hex": "08f9ffffffffffffffff0122b1020aac02020d18232e39444f5a65707b86919ca7b2bdc8d3dee9f4ff0a15202b36414c57626d78838e99a4afbac5d0dbe6f1fc07121d28333e49545f6a75808b96a1acb7c2cdd8e3eef9040f1a25303b46515c67727d88939ea9b4bfcad5e0ebf6010c17222d38434e59646f7a85909ba6b1bcc7d2dde8f3fe09141f2a35404b56616c77828d98a3aeb9c4cfdae5f0fb06111c27323d48535e69747f8a95a0abb6c1ccd7e2edf8030e19242f3a45505b66717c87929da8b3bec9d4dfeaf5000b16212c37424d58636e79848f9aa5b0bbc6d1dce7f2fd08131e29343f4a55606b76818c97a2adb8c3ced9e4effa05101b26313c47525d68737e89949faab5c0cbd6e1ecf7020d18232e39444f5a65707b86919ca7b2bdc8d3dee9f4ff0a15202b36414c57626d78838e99a4afbac5d0db1001",
+   "decoded": {
+    "stream_id": -7,
+    "kind": "body_chunk",
+    "value": {
+     "data": "020d18232e39444f5a65707b86919ca7b2bdc8d3dee9f4ff0a15202b36414c57626d78838e99a4afbac5d0dbe6f1fc07121d28333e49545f6a75808b96a1acb7c2cdd8e3eef9040f1a25303b46515c67727d88939ea9b4bfcad5e0ebf6010c17222d38434e59646f7a85909ba6b1bcc7d2dde8f3fe09141f2a35404b56616c77828d98a3aeb9c4cfdae5f0fb06111c27323d48535e69747f8a95a0abb6c1ccd7e2edf8030e19242f3a45505b66717c87929da8b3bec9d4dfeaf5000b16212c37424d58636e79848f9aa5b0bbc6d1dce7f2fd08131e29343f4a55606b76818c97a2adb8c3ced9e4effa05101b26313c47525d68737e89949faab5c0cbd6e1ecf7020d18232e39444f5a65707b86919ca7b2bdc8d3dee9f4ff0a15202b36414c57626d78838e99a4afbac5d0db",
+     "end_body": true
+    }
+   }
+  },
+  {
+   "name": "chunk_empty",
+   "kind": "frame",
+   "spec": {
+    "stream_id": 9,
+    "kind": "body_chunk",
+    "value": {
+     "data": "",
+     "end_body": false
+    }
+   },
+   "hex": "08092200",
+   "decoded": {
+    "stream_id": 9,
+    "kind": "body_chunk",
+    "value": {
+     "data": "",
+     "end_body": false
+    }
+   }
+  },
+  {
+   "name": "reset_timeout_unicode",
+   "kind": "frame",
+   "spec": {
+    "stream_id": 5,
+    "kind": "reset",
+    "value": {
+     "code": 2,
+     "reason": "tempo é ouro 🚀"
+    }
+   },
+   "hex": "08052a160802121274656d706f20c3a9206f75726f20f09f9a80",
+   "decoded": {
+    "stream_id": 5,
+    "kind": "reset",
+    "value": {
+     "code": 2,
+     "reason": "tempo é ouro 🚀"
+    }
+   }
+  },
+  {
+   "name": "reset_unspecified_empty",
+   "kind": "frame",
+   "spec": {
+    "stream_id": 6,
+    "kind": "reset",
+    "value": {
+     "code": 0,
+     "reason": ""
+    }
+   },
+   "hex": "08062a00",
+   "decoded": {
+    "stream_id": 6,
+    "kind": "reset",
+    "value": {
+     "code": 0,
+     "reason": ""
+    }
+   }
+  },
+  {
+   "name": "reset_service_unavailable",
+   "kind": "frame",
+   "spec": {
+    "stream_id": 6,
+    "kind": "reset",
+    "value": {
+     "code": 6,
+     "reason": "x"
+    }
+   },
+   "hex": "08062a050806120178",
+   "decoded": {
+    "stream_id": 6,
+    "kind": "reset",
+    "value": {
+     "code": 6,
+     "reason": "x"
+    }
+   }
+  },
+  {
+   "name": "frame_no_kind",
+   "kind": "frame",
+   "spec": {
+    "stream_id": 5,
+    "kind": null,
+    "value": null
+   },
+   "hex": "0805",
+   "decoded": {
+    "stream_id": 5,
+    "kind": null,
+    "value": null
+   }
+  },
+  {
+   "name": "frame_nothing",
+   "kind": "frame",
+   "spec": {
+    "stream_id": 0,
+    "kind": null,
+    "value": null
+   },
+   "hex": "",
+   "decoded": {
+    "stream_id": 0,
+    "kind": null,
+    "value": null
+   }
+  },
+  {
+   "name": "sreq_daemon_empty",
+   "kind": "service_request",
+   "spec": {
+    "service": 0,
+    "payload": ""
+   },
+   "hex": "",
+   "decoded": {
+    "service": 0,
+    "payload": ""
+   }
+  },
+  {
+   "name": "sreq_sentinel",
+   "kind": "service_request",
+   "spec": {
+    "service": 1,
+    "payload": "616263"
+   },
+   "hex": "08011203616263",
+   "decoded": {
+    "service": 1,
+    "payload": "616263"
+   }
+  },
+  {
+   "name": "sreq_authd",
+   "kind": "service_request",
+   "spec": {
+    "service": 3,
+    "payload": "020d18232e39444f5a65"
+   },
+   "hex": "0803120a020d18232e39444f5a65",
+   "decoded": {
+    "service": 3,
+    "payload": "020d18232e39444f5a65"
+   }
+  },
+  {
+   "name": "sresp_empty",
+   "kind": "service_response",
+   "spec": {
+    "payload": ""
+   },
+   "hex": "",
+   "decoded": {
+    "payload": ""
+   }
+  },
+  {
+   "name": "sresp_payload",
+   "kind": "service_response",
+   "spec": {
+    "payload": "616263"
+   },
+   "hex": "0a03616263",
+   "decoded": {
+    "payload": "616263"
+   }
+  }
+ ],
+ "decode": [
+  {
+   "name": "frame_unknown_fields_skipped",
+   "kind": "frame",
+   "hex": "48074a037a7a7a080322060a027a7a1001",
+   "ok": true,
+   "spec": {
+    "stream_id": 3,
+    "kind": "body_chunk",
+    "value": {
+     "data": "7a7a",
+     "end_body": true
+    }
+   }
+  },
+  {
+   "name": "frame_last_kind_wins",
+   "kind": "frame",
+   "hex": "12160a0347455412022f781a060a0168120131220162280122060a027a7a1001",
+   "ok": true,
+   "spec": {
+    "stream_id": 0,
+    "kind": "body_chunk",
+    "value": {
+     "data": "7a7a",
+     "end_body": true
+    }
+   }
+  },
+  {
+   "name": "frame_same_kind_twice_last_wins",
+   "kind": "frame",
+   "hex": "22060a027a7a100122030a0171",
+   "ok": true,
+   "spec": {
+    "stream_id": 0,
+    "kind": "body_chunk",
+    "value": {
+     "data": "71",
+     "end_body": false
+    }
+   }
+  },
+  {
+   "name": "frame_stream_wrong_wire",
+   "kind": "frame",
+   "hex": "0a0161",
+   "ok": false
+  },
+  {
+   "name": "frame_request_wrong_wire",
+   "kind": "frame",
+   "hex": "1001",
+   "ok": false
+  },
+  {
+   "name": "frame_response_wrong_wire",
+   "kind": "frame",
+   "hex": "1801",
+   "ok": false
+  },
+  {
+   "name": "frame_chunk_wrong_wire",
+   "kind": "frame",
+   "hex": "2001",
+   "ok": false
+  },
+  {
+   "name": "frame_reset_wrong_wire",
+   "kind": "frame",
+   "hex": "2801",
+   "ok": false
+  },
+  {
+   "name": "frame_empty_request",
+   "kind": "frame",
+   "hex": "1200",
+   "ok": true,
+   "spec": {
+    "stream_id": 0,
+    "kind": "request",
+    "value": {
+     "verb": "",
+     "path": "",
+     "headers": [],
+     "body": "",
+     "end_body": false
+    }
+   }
+  },
+  {
+   "name": "frame_empty_response",
+   "kind": "frame",
+   "hex": "1a00",
+   "ok": true,
+   "spec": {
+    "stream_id": 0,
+    "kind": "response",
+    "value": {
+     "status": 0,
+     "headers": [],
+     "body": "",
+     "end_body": false
+    }
+   }
+  },
+  {
+   "name": "frame_empty_reset",
+   "kind": "frame",
+   "hex": "2a00",
+   "ok": true,
+   "spec": {
+    "stream_id": 0,
+    "kind": "reset",
+    "value": {
+     "code": 0,
+     "reason": ""
+    }
+   }
+  },
+  {
+   "name": "frame_negative_stream",
+   "kind": "frame",
+   "hex": "08ffffffffffffffffff011a0b08cc0112060a016b120176",
+   "ok": true,
+   "spec": {
+    "stream_id": -1,
+    "kind": "response",
+    "value": {
+     "status": 204,
+     "headers": [
+      [
+       "k",
+       "v"
+      ]
+     ],
+     "body": "",
+     "end_body": false
+    }
+   }
+  },
+  {
+   "name": "frame_response_status_overflow",
+   "kind": "frame",
+   "hex": "1a06088080808008",
+   "ok": false
+  },
+  {
+   "name": "frame_response_status_min",
+   "kind": "frame",
+   "hex": "1a0b0880808080f8ffffffff01",
+   "ok": true,
+   "spec": {
+    "stream_id": 0,
+    "kind": "response",
+    "value": {
+     "status": -2147483648,
+     "headers": [],
+     "body": "",
+     "end_body": false
+    }
+   }
+  },
+  {
+   "name": "frame_response_status_negative",
+   "kind": "frame",
+   "hex": "1a0b08fbffffffffffffffff01",
+   "ok": true,
+   "spec": {
+    "stream_id": 0,
+    "kind": "response",
+    "value": {
+     "status": -5,
+     "headers": [],
+     "body": "",
+     "end_body": false
+    }
+   }
+  },
+  {
+   "name": "frame_response_status_too_negative",
+   "kind": "frame",
+   "hex": "1a0b08fffffffff7ffffffff01",
+   "ok": false
+  },
+  {
+   "name": "frame_response_end_body_two",
+   "kind": "frame",
+   "hex": "1a022002",
+   "ok": true,
+   "spec": {
+    "stream_id": 0,
+    "kind": "response",
+    "value": {
+     "status": 0,
+     "headers": [],
+     "body": "",
+     "end_body": true
+    }
+   }
+  },
+  {
+   "name": "frame_request_end_body_two",
+   "kind": "frame",
+   "hex": "12022802",
+   "ok": true,
+   "spec": {
+    "stream_id": 0,
+    "kind": "request",
+    "value": {
+     "verb": "",
+     "path": "",
+     "headers": [],
+     "body": "",
+     "end_body": true
+    }
+   }
+  },
+  {
+   "name": "frame_request_verb_varint",
+   "kind": "frame",
+   "hex": "12020801",
+   "ok": false
+  },
+  {
+   "name": "frame_request_header_wrong_wire",
+   "kind": "frame",
+   "hex": "12021801",
+   "ok": false
+  },
+  {
+   "name": "frame_header_bad_utf8",
+   "kind": "frame",
+   "hex": "12051a030a01ff",
+   "ok": false
+  },
+  {
+   "name": "frame_header_key_wrong_wire",
+   "kind": "frame",
+   "hex": "12041a020801",
+   "ok": false
+  },
+  {
+   "name": "frame_header_value_wrong_wire",
+   "kind": "frame",
+   "hex": "12041a021001",
+   "ok": false
+  },
+  {
+   "name": "frame_request_bad_utf8_path",
+   "kind": "frame",
+   "hex": "12041202c328",
+   "ok": false
+  },
+  {
+   "name": "frame_request_unknown_inner_skipped",
+   "kind": "frame",
+   "hex": "120748010a03474554",
+   "ok": true,
+   "spec": {
+    "stream_id": 0,
+    "kind": "request",
+    "value": {
+     "verb": "GET",
+     "path": "",
+     "headers": [],
+     "body": "",
+     "end_body": false
+    }
+   }
+  },
+  {
+   "name": "frame_reset_code_unknown",
+   "kind": "frame",
+   "hex": "2a020863",
+   "ok": false
+  },
+  {
+   "name": "frame_reset_code_negative",
+   "kind": "frame",
+   "hex": "2a0b08ffffffffffffffffff01",
+   "ok": false
+  },
+  {
+   "name": "frame_reset_code_ok",
+   "kind": "frame",
+   "hex": "2a0708031203626164",
+   "ok": true,
+   "spec": {
+    "stream_id": 0,
+    "kind": "reset",
+    "value": {
+     "code": 3,
+     "reason": "bad"
+    }
+   }
+  },
+  {
+   "name": "frame_reset_reason_bad_utf8",
+   "kind": "frame",
+   "hex": "2a03120180",
+   "ok": false
+  },
+  {
+   "name": "frame_reset_code_wrong_wire",
+   "kind": "frame",
+   "hex": "2a030a0161",
+   "ok": false
+  },
+  {
+   "name": "frame_chunk_data_wrong_wire",
+   "kind": "frame",
+   "hex": "22020801",
+   "ok": false
+  },
+  {
+   "name": "frame_chunk_end_wrong_wire",
+   "kind": "frame",
+   "hex": "2203120161",
+   "ok": false
+  },
+  {
+   "name": "frame_truncated_inner",
+   "kind": "frame",
+   "hex": "22050a",
+   "ok": false
+  },
+  {
+   "name": "frame_garbage",
+   "kind": "frame",
+   "hex": "ffff",
+   "ok": false
+  },
+  {
+   "name": "frame_empty",
+   "kind": "frame",
+   "hex": "",
+   "ok": true,
+   "spec": {
+    "stream_id": 0,
+    "kind": null,
+    "value": null
+   }
+  },
+  {
+   "name": "sreq_unknown_service_9",
+   "kind": "service_request",
+   "hex": "0809",
+   "ok": false
+  },
+  {
+   "name": "sreq_unknown_service_huge",
+   "kind": "service_request",
+   "hex": "0880808080808080808001",
+   "ok": false
+  },
+  {
+   "name": "sreq_service_wrong_wire",
+   "kind": "service_request",
+   "hex": "0a0161",
+   "ok": false
+  },
+  {
+   "name": "sreq_payload_wrong_wire",
+   "kind": "service_request",
+   "hex": "1001",
+   "ok": false
+  },
+  {
+   "name": "sreq_ok_vault",
+   "kind": "service_request",
+   "hex": "080212027070",
+   "ok": true,
+   "spec": {
+    "service": 2,
+    "payload": "7070"
+   }
+  },
+  {
+   "name": "sreq_unknown_skipped",
+   "kind": "service_request",
+   "hex": "380112027070",
+   "ok": true,
+   "spec": {
+    "service": 0,
+    "payload": "7070"
+   }
+  },
+  {
+   "name": "sreq_default",
+   "kind": "service_request",
+   "hex": "",
+   "ok": true,
+   "spec": {
+    "service": 0,
+    "payload": ""
+   }
+  },
+  {
+   "name": "sreq_truncated",
+   "kind": "service_request",
+   "hex": "120901",
+   "ok": false
+  },
+  {
+   "name": "sresp_ok",
+   "kind": "service_response",
+   "hex": "0a077061796c6f6164",
+   "ok": true,
+   "spec": {
+    "payload": "7061796c6f6164"
+   }
+  },
+  {
+   "name": "sresp_wrong_wire",
+   "kind": "service_response",
+   "hex": "0801",
+   "ok": false
+  },
+  {
+   "name": "sresp_unknown_skipped",
+   "kind": "service_response",
+   "hex": "28010a0170",
+   "ok": true,
+   "spec": {
+    "payload": "70"
+   }
+  },
+  {
+   "name": "sresp_last_wins",
+   "kind": "service_response",
+   "hex": "0a036f6e650a0374776f",
+   "ok": true,
+   "spec": {
+    "payload": "74776f"
+   }
+  },
+  {
+   "name": "sresp_empty",
+   "kind": "service_response",
+   "hex": "",
+   "ok": true,
+   "spec": {
+    "payload": ""
+   }
+  }
+ ],
+ "refused": [
+  {
+   "name": "reset_code_99",
+   "refused": true
+  },
+  {
+   "name": "service_9",
+   "refused": true
+  },
+  {
+   "name": "status_2_pow_31",
+   "refused": true
+  }
+ ]
+}
