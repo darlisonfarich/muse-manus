@@ -25,10 +25,18 @@ class SetupControllerTest {
         val disconnects = CopyOnWriteArrayList<Double>()
         private val assembler = ChunkAssembler()
 
+        @Volatile var sendGate: CountDownLatch? = null
+        @Volatile var sendEntered = CountDownLatch(1)
+
         override fun mtu() = mtu
 
         @Synchronized
         override fun sendPackets(packets: List<ByteArray>) {
+            // Simula o onNotificationSent lento do Android: o envio fica preso até o teste soltar.
+            sendGate?.let { gate ->
+                sendEntered.countDown()
+                gate.await(5, TimeUnit.SECONDS)
+            }
             for (packet in packets) {
                 assertTrue("packet ${packet.size} > mtu $mtu", packet.size <= maxOf(mtu - 3, 20))
                 val message = assembler.feed(packet) ?: continue
@@ -201,9 +209,56 @@ class SetupControllerTest {
         h.send(hello())
         h.send(JsonObject(clientFinishedRecord() + ("counter" to JsonPrimitive("1"))))
         assertEquals(1, h.transport.messages.size)
-        assertEquals(listOf(0.3), h.transport.disconnects.toList())
+        // Nada a entregar (as chaves já foram zeradas e o texto puro está bloqueado): queda imediata.
+        assertEquals(listOf(0.0), h.transport.disconnects.toList())
         assertEquals(PairingState.IDLE, h.pairing.state)
         assertTrue(SetupEvent.DECRYPT_FAILED in h.events)
+    }
+
+    /**
+     * O caso medido no POCO: um registro JÁ USADO repetido depois do pareamento confirmado. O decrypt zera
+     * as chaves antes de falhar, então nenhum status sai e não há o que esperar: a queda é pedida na hora
+     * (antes eram 0,3 s a mais) e nada é enviado.
+     */
+    @Test
+    fun aReplayedRecordAfterConfirmationIsDroppedAtOnceWithNothingSent() {
+        val h = Harness()
+        h.pair()
+        val before = h.transport.messages.size
+        h.send(clientFinishedRecord()) // o mesmo registro (contador 0) de novo
+        assertEquals(listOf(0.0), h.transport.disconnects.toList())
+        assertEquals("nenhum status vai atrás do replay", before, h.transport.messages.size)
+        assertEquals(PairingState.IDLE, h.pairing.state)
+        assertTrue(SetupEvent.DECRYPT_FAILED in h.events)
+    }
+
+    /** Antes do hello o status em texto puro ainda sai; só nesse caso a queda espera os 0,3 s para ele chegar. */
+    @Test
+    fun aFailureBeforeTheHelloKeepsTheShortWaitSoThePlaintextStatusCanLeave() {
+        val h = Harness()
+        h.send(JsonObject(clientFinishedRecord()))
+        assertEquals(listOf(0.3), h.transport.disconnects.toList())
+        assertEquals(listOf<Any>("error_pairing_decrypt"), h.transport.messages.toList())
+    }
+
+    /**
+     * O único caminho em que um status ainda é transmitido junto com uma queda é o de texto puro, antes do
+     * hello (nos demais a sessão já foi zerada). Esse envio espera até 2 s pela confirmação do notify no
+     * Android, então a queda tem que ser pedida ANTES dele: um envio lento não pode atrasar o relógio.
+     */
+    @Test
+    fun theDropIsRequestedBeforeTheStatusIsSentSoASlowNotifyCannotDelayIt() {
+        val h = Harness()
+        h.transport.sendEntered = CountDownLatch(1)
+        h.transport.sendGate = CountDownLatch(1) // todo envio fica preso, como um onNotificationSent lento
+        val worker = Thread { h.send(JsonObject(clientFinishedRecord())) }.also { it.start() }
+        assertTrue("o envio do status começou", h.transport.sendEntered.await(5, TimeUnit.SECONDS))
+        // O envio do status segue preso, e a queda JÁ foi pedida.
+        assertEquals(listOf(0.3), h.transport.disconnects.toList())
+        h.transport.sendGate!!.countDown()
+        worker.join(5_000)
+        assertFalse(worker.isAlive)
+        assertEquals(listOf<Any>("error_pairing_decrypt"), h.transport.messages.toList())
     }
 
     @Test

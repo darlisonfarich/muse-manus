@@ -13,11 +13,15 @@ import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.ParcelUuid
+import android.os.SystemClock
 import com.darlisonfarich.gadgetlink.BleFraming
 import com.darlisonfarich.gadgetlink.DisconnectWatchdog
 import com.darlisonfarich.gadgetlink.SetupTransport
@@ -96,6 +100,57 @@ class GattTransport(
     private val life = Any()
     @Volatile private var stopped = false
 
+    /**
+     * Medição da queda: quando ela foi pedida (uptime, ms) e para qual cliente. O Android só derruba o
+     * enlace depois do próprio tempo de ociosidade do GATT, que fica fora do nosso controle; estes dois
+     * campos deixam o log dizer quanto ele leva de verdade, em vez de supor.
+     */
+    @Volatile private var dropRequestedAtMs = 0L
+    @Volatile private var dropRequestedFor: String? = null
+
+    private fun sinceDropRequest(): String {
+        val at = dropRequestedAtMs
+        return if (at == 0L) "" else " (${SystemClock.elapsedRealtime() - at} ms after the drop request)"
+    }
+
+    /** O evento de desconexão do ACL é o instante em que o enlace de rádio cai, o mesmo que o notebook enxerga. */
+    private val aclReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, intent: Intent) {
+            if (intent.action != BluetoothDevice.ACTION_ACL_DISCONNECTED) return
+            val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION") intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+            } ?: return
+            if (device.address == dropRequestedFor) {
+                log("ACL link ${device.address} dropped${sinceDropRequest()}")
+                dropRequestedAtMs = 0L
+            } else {
+                log("ACL link ${device.address} dropped")
+            }
+        }
+    }
+    private var aclReceiverRegistered = false
+
+    private fun registerAclReceiver() {
+        if (aclReceiverRegistered) return
+        val filter = IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECTED)
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(aclReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                context.registerReceiver(aclReceiver, filter)
+            }
+            aclReceiverRegistered = true
+        }.onFailure { log("could not watch the ACL link (${it.javaClass.simpleName})") }
+    }
+
+    private fun unregisterAclReceiver() {
+        if (!aclReceiverRegistered) return
+        aclReceiverRegistered = false
+        runCatching { context.unregisterReceiver(aclReceiver) }
+    }
+
     /** O celular que está no setup agora (endereço), para o diagnóstico. */
     val clientAddress: String? get() = client?.address
 
@@ -105,6 +160,7 @@ class GattTransport(
      */
     fun start(): String? = synchronized(life) {
         if (stopped) return "setup closed"
+        registerAclReceiver()
         openServerAndAdvertise()
     }
 
@@ -208,6 +264,7 @@ class GattTransport(
         serviceAdded?.countDown()
         advertiseDone?.countDown()
         synchronized(life) { closeServer() }
+        unregisterAclReceiver()
         thread.quitSafely()
     }
 
@@ -241,7 +298,7 @@ class GattTransport(
             if (stopped) return
             closeServer()
             watchdog.connectionChanged()
-            log("client disconnected ${device.address} (forced: GATT server closed)")
+            log("client disconnected ${device.address} (forced: GATT server closed)${sinceDropRequest()}")
             onDisconnect()
             if (stopped) return
             val error = openServerAndAdvertise()
@@ -264,6 +321,8 @@ class GattTransport(
     }
 
     override fun disconnect(delaySeconds: Double) {
+        dropRequestedFor = client?.address
+        dropRequestedAtMs = SystemClock.elapsedRealtime()
         watchdog.request((delaySeconds * 1000).toLong())
     }
 
@@ -370,7 +429,7 @@ class GattTransport(
                 }
                 if (ours) {
                     pendingNotify.getAndSet(null)?.latch?.countDown()
-                    log("client disconnected ${device.address} (status $status)")
+                    log("client disconnected ${device.address} (status $status)${sinceDropRequest()}")
                     onDisconnect()
                 }
             }

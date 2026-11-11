@@ -198,8 +198,15 @@ class SetupController(
             pairing.decrypt(envelope)
         } catch (e: PairingException) {
             emit(SetupEvent.DECRYPT_FAILED, e.cause?.message ?: e.status)
+            // Todo erro do decrypt zera a sessão antes de lançar, então não há chave para cifrar o status.
+            // Só um status em texto puro (antes do hello) ainda sairia, e só nesse caso vale dar um tempo
+            // para ele chegar. Sem nada a entregar (o replay depois de confirmado), a queda é pedida já:
+            // medido no POCO, o enlace levou 3,04 s para cair, e o Android ainda soma o tempo dele depois.
+            val flush = !synchronized(stateLock) { plaintextBlocked } && e.status in PLAINTEXT_STATUSES
+            // A queda é pedida ANTES do envio: o envio pode esperar até 2 s pela confirmação do notify
+            // e não pode atrasar o relógio da queda.
+            transport.disconnect(if (flush) DISCONNECT_AFTER_ERROR_S else 0.0)
             sendStatus(e.status)
-            transport.disconnect(DISCONNECT_AFTER_ERROR_S)
             return
         }
         handleMessage(plaintext.toByteArray(Charsets.UTF_8), decrypted = true)
@@ -209,8 +216,10 @@ class SetupController(
         val generation = pairing.handleClientFinished(command)
         if (generation == 0L) {
             emit(SetupEvent.CONFIRM_REJECTED, "client-finished was not the first record")
-            sendStatus("error_pairing_decrypt")
+            // Aqui o status cifrado existe e precisa chegar: os 0,3 s são para ele sair, mas a queda é
+            // pedida antes do envio para uma confirmação lenta do notify não atrasá-la.
             transport.disconnect(DISCONNECT_AFTER_ERROR_S)
+            sendStatus("error_pairing_decrypt")
             return
         }
         emit(SetupEvent.CONFIRMED, "pairing confirmed (app consent)")
