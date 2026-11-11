@@ -1,0 +1,466 @@
+{
+ "max_inbound_message": 4194304,
+ "max_control_message_bytes": 262144,
+ "encode": [
+  {
+   "msg": {
+    "type": "req",
+    "id": "abc",
+    "method": "link.register"
+   },
+   "hex": "320000007b2274797065223a22726571222c226964223a22616263222c226d6574686f64223a226c696e6b2e7265676973746572227d"
+  },
+  {
+   "msg": {
+    "method": "link.result",
+    "id": "x1",
+    "ok": false,
+    "error": "unsupported command: file.read"
+   },
+   "hex": "560000007b226d6574686f64223a226c696e6b2e726573756c74222c226964223a227831222c226f6b223a66616c73652c226572726f72223a22756e737570706f7274656420636f6d6d616e643a2066696c652e72656164227d"
+  },
+  {
+   "msg": {
+    "a": 1,
+    "b": [
+     1,
+     2,
+     {
+      "c": null
+     }
+    ],
+    "d": true,
+    "e": false,
+    "f": "texto"
+   },
+   "hex": "3b0000007b2261223a312c2262223a5b312c322c7b2263223a6e756c6c7d5d2c2264223a747275652c2265223a66616c73652c2266223a22746578746f227d"
+  },
+  {
+   "msg": {
+    "s": "acentuação é ü ç ñ"
+   },
+   "hex": "380000007b2273223a226163656e7475615c75303065375c75303065336f205c7530306539205c7530306663205c7530306537205c7530306631227d"
+  },
+  {
+   "msg": {
+    "s": "emoji 🚀 e   e é"
+   },
+   "hex": "2c0000007b2273223a22656d6f6a69205c75643833645c75646538302065205c75323032382065205c7530306539227d"
+  },
+  {
+   "msg": {
+    "s": "controle \u0001 \u001f  tab\t nl\n cr\r bs\b ff\f aspas\" barra\\ fatia/"
+   },
+   "hex": "560000007b2273223a22636f6e74726f6c65205c7530303031205c7530303166205c7530303766207461625c74206e6c5c6e2063725c722062735c622066665c662061737061735c222062617272615c5c2066617469612f227d"
+  },
+  {
+   "msg": {
+    "n": 0,
+    "neg": -5,
+    "big": 9007199254740991,
+    "bigger": 1234567890123456789
+   },
+   "hex": "440000007b226e223a302c226e6567223a2d352c22626967223a393030373139393235343734303939312c22626967676572223a313233343536373839303132333435363738397d"
+  },
+  {
+   "msg": {},
+   "hex": "020000007b7d"
+  },
+  {
+   "msg": {
+    "nested": {
+     "x": {
+      "y": {
+       "z": []
+      }
+     }
+    }
+   },
+   "hex": "1f0000007b226e6573746564223a7b2278223a7b2279223a7b227a223a5b5d7d7d7d7d"
+  }
+ ],
+ "decoder": [
+  {
+   "name": "two_messages_in_one_feed",
+   "feeds": [
+    "0a0000007b226964223a2231227d160000007b226964223a2232222c226576656e74223a2278227d"
+   ],
+   "expected": [
+    [
+     {
+      "id": "1"
+     },
+     {
+      "id": "2",
+      "event": "x"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "message_split_across_feeds",
+   "feeds": [
+    "0a0000",
+    "007b22",
+    "6964223a2231227d",
+    "160000007b226964223a2232222c226576656e74223a2278227d"
+   ],
+   "expected": [
+    [],
+    [],
+    [
+     {
+      "id": "1"
+     }
+    ],
+    [
+     {
+      "id": "2",
+      "event": "x"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "split_inside_length_prefix",
+   "feeds": [
+    "0a",
+    "0000007b226964223a2231227d"
+   ],
+   "expected": [
+    [],
+    [
+     {
+      "id": "1"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "byte_by_byte",
+   "feeds": [
+    "0a",
+    "00",
+    "00",
+    "00",
+    "7b",
+    "22",
+    "69",
+    "64",
+    "22",
+    "3a",
+    "22",
+    "31",
+    "22",
+    "7d"
+   ],
+   "expected": [
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [
+     {
+      "id": "1"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "keepalive_empty_message_skipped",
+   "feeds": [
+    "000000000a0000007b226964223a2231227d"
+   ],
+   "expected": [
+    [
+     {
+      "id": "1"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "malformed_json_dropped",
+   "feeds": [
+    "090000007b6e6f74206a736f6e0a0000007b226964223a2231227d"
+   ],
+   "expected": [
+    [
+     {
+      "id": "1"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "invalid_utf8_dropped",
+   "feeds": [
+    "02000000fffe0a0000007b226964223a2231227d"
+   ],
+   "expected": [
+    [
+     {
+      "id": "1"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "array_json_dropped",
+   "feeds": [
+    "050000005b312c325d0a0000007b226964223a2231227d"
+   ],
+   "expected": [
+    [
+     {
+      "id": "1"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "string_json_dropped",
+   "feeds": [
+    "030000002278220a0000007b226964223a2231227d"
+   ],
+   "expected": [
+    [
+     {
+      "id": "1"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "number_json_dropped",
+   "feeds": [
+    "0200000031320a0000007b226964223a2231227d"
+   ],
+   "expected": [
+    [
+     {
+      "id": "1"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "null_json_dropped",
+   "feeds": [
+    "040000006e756c6c0a0000007b226964223a2231227d"
+   ],
+   "expected": [
+    [
+     {
+      "id": "1"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "length_over_limit_is_error",
+   "feeds": [
+    "01004000"
+   ],
+   "expected": [
+    "error"
+   ]
+  },
+  {
+   "name": "length_at_limit_waits_for_more",
+   "feeds": [
+    "000040007b"
+   ],
+   "expected": [
+    []
+   ]
+  },
+  {
+   "name": "nothing_until_complete",
+   "feeds": [
+    "320000007b7d"
+   ],
+   "expected": [
+    []
+   ]
+  },
+  {
+   "name": "duplicate_keys_last_wins",
+   "feeds": [
+    "0d0000007b2261223a312c2261223a327d"
+   ],
+   "expected": [
+    [
+     {
+      "a": 2
+     }
+    ]
+   ]
+  },
+  {
+   "name": "unicode_escapes",
+   "feeds": [
+    "1a0000007b2273223a225c75303065395c75643833645c7564653830227d"
+   ],
+   "expected": [
+    [
+     {
+      "s": "é🚀"
+     }
+    ]
+   ]
+  }
+ ],
+ "urls": [
+  {
+   "host": "hatch.metaaivm.com",
+   "vm_id": "vm-1",
+   "app_id": null,
+   "url": "wss://hatch.metaaivm.com/v1/noise?vm_id=vm-1"
+  },
+  {
+   "host": "hatch.metaaivm.com",
+   "vm_id": "a b",
+   "app_id": null,
+   "url": "wss://hatch.metaaivm.com/v1/noise?vm_id=a%20b"
+  },
+  {
+   "host": "hatch.metaaivm.com",
+   "vm_id": "é",
+   "app_id": null,
+   "url": "wss://hatch.metaaivm.com/v1/noise?vm_id=%C3%A9"
+  },
+  {
+   "host": "hatch.metaaivm.com",
+   "vm_id": "a/b?c=d&e#f",
+   "app_id": null,
+   "url": "wss://hatch.metaaivm.com/v1/noise?vm_id=a%2Fb%3Fc%3Dd%26e%23f"
+  },
+  {
+   "host": "hatch.metaaivm.com",
+   "vm_id": "x'y()*!~_.-",
+   "app_id": null,
+   "url": "wss://hatch.metaaivm.com/v1/noise?vm_id=x'y()*!~_.-"
+  },
+  {
+   "host": "hatch.metaaivm.com",
+   "vm_id": "🚀",
+   "app_id": null,
+   "url": "wss://hatch.metaaivm.com/v1/noise?vm_id=%F0%9F%9A%80"
+  },
+  {
+   "host": "hatch.metaaivm.com",
+   "vm_id": "vm",
+   "app_id": "hatch-web",
+   "url": "wss://hatch.metaaivm.com/v1/noise?vm_id=vm&app_id=hatch-web"
+  },
+  {
+   "host": "hatch.metaaivm.com",
+   "vm_id": "vm",
+   "app_id": "12345",
+   "url": "wss://hatch.metaaivm.com/v1/noise?vm_id=vm&app_id=12345"
+  },
+  {
+   "host": "hatch.metaaivm.com",
+   "vm_id": "vm",
+   "app_id": "0012345",
+   "url": "wss://hatch.metaaivm.com/v1/noise?vm_id=vm&app_id=12345"
+  },
+  {
+   "host": "hatch.metaaivm.com",
+   "vm_id": "vm",
+   "app_id": "9223372036854775807",
+   "url": "wss://hatch.metaaivm.com/v1/noise?vm_id=vm&app_id=9223372036854775807"
+  },
+  {
+   "host": "hatch.metaaivm.com",
+   "vm_id": "vm",
+   "app_id": "9223372036854775808",
+   "url": null
+  },
+  {
+   "host": "hatch.metaaivm.com",
+   "vm_id": "vm",
+   "app_id": "0",
+   "url": null
+  },
+  {
+   "host": "hatch.metaaivm.com",
+   "vm_id": "vm",
+   "app_id": "",
+   "url": null
+  },
+  {
+   "host": "hatch.metaaivm.com",
+   "vm_id": "vm",
+   "app_id": "-1",
+   "url": null
+  },
+  {
+   "host": "hatch.metaaivm.com",
+   "vm_id": "vm",
+   "app_id": "12 3",
+   "url": null
+  },
+  {
+   "host": "hatch.metaaivm.com",
+   "vm_id": "vm",
+   "app_id": "١٢٣",
+   "url": null
+  },
+  {
+   "host": "hatch.metaaivm.com",
+   "vm_id": "vm",
+   "app_id": "12345678901234567890",
+   "url": null
+  },
+  {
+   "host": "noise.example.org:8443",
+   "vm_id": "vm",
+   "app_id": null,
+   "url": "wss://noise.example.org:8443/v1/noise?vm_id=vm"
+  }
+ ],
+ "register": [
+  {
+   "node_id": "homelink-abc123",
+   "display_name": "Celular",
+   "version": "0.1.7",
+   "commands": {},
+   "id": "11111111-2222-3333-4444-555555555555",
+   "hex": "120100007b2274797065223a22726571222c226964223a2231313131313131312d323232322d333333332d343434342d353535353535353535353535222c226d6574686f64223a226c696e6b2e7265676973746572222c22706172616d73223a7b226e6f64655f6964223a22686f6d656c696e6b2d616263313233222c22646973706c61795f6e616d65223a2243656c756c6172222c22706c6174666f726d223a226c696e7578222c2276657273696f6e223a22302e312e37222c226465766963655f66616d696c79223a22686f6d65687562222c226d6f64656c5f6964223a226c696e7578222c2269735f77616b6575705f737570706f72746564223a66616c73652c22636f6d6d616e64735f7632223a7b7d7d7d"
+  },
+  {
+   "node_id": "homelink-abc123",
+   "display_name": "Celular do Darlison é ü",
+   "version": "0.1.7",
+   "commands": {},
+   "id": "11111111-2222-3333-4444-555555555555",
+   "hex": "2c0100007b2274797065223a22726571222c226964223a2231313131313131312d323232322d333333332d343434342d353535353535353535353535222c226d6574686f64223a226c696e6b2e7265676973746572222c22706172616d73223a7b226e6f64655f6964223a22686f6d656c696e6b2d616263313233222c22646973706c61795f6e616d65223a2243656c756c617220646f204461726c69736f6e205c7530306539205c7530306663222c22706c6174666f726d223a226c696e7578222c2276657273696f6e223a22302e312e37222c226465766963655f66616d696c79223a22686f6d65687562222c226d6f64656c5f6964223a226c696e7578222c2269735f77616b6575705f737570706f72746564223a66616c73652c22636f6d6d616e64735f7632223a7b7d7d7d"
+  },
+  {
+   "node_id": "n",
+   "display_name": "d",
+   "version": "v",
+   "commands": {
+    "device.health": {
+     "description": "health",
+     "required": {},
+     "optional": {},
+     "timeout_ms": 5000
+    }
+   },
+   "id": "11111111-2222-3333-4444-555555555555",
+   "hex": "500100007b2274797065223a22726571222c226964223a2231313131313131312d323232322d333333332d343434342d353535353535353535353535222c226d6574686f64223a226c696e6b2e7265676973746572222c22706172616d73223a7b226e6f64655f6964223a226e222c22646973706c61795f6e616d65223a2264222c22706c6174666f726d223a226c696e7578222c2276657273696f6e223a2276222c226465766963655f66616d696c79223a22686f6d65687562222c226d6f64656c5f6964223a226c696e7578222c2269735f77616b6575705f737570706f72746564223a66616c73652c22636f6d6d616e64735f7632223a7b226465766963652e6865616c7468223a7b226465736372697074696f6e223a226865616c7468222c227265717569726564223a7b7d2c226f7074696f6e616c223a7b7d2c2274696d656f75745f6d73223a353030307d7d7d7d"
+  }
+ ]
+}
