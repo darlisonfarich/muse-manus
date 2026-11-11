@@ -20,8 +20,23 @@ class DisconnectWatchdog<C : Any>(
     private val graceMs: Long = DEFAULT_GRACE_MS,
 ) {
     companion object {
-        /** Com o atraso de 0,3 s do setup, a queda forçada sai em ~0,9 s do erro. */
-        const val DEFAULT_GRACE_MS = 600L
+        /**
+         * Tempo do timer de ociosidade do link que o stack do Android (Bluetooth, l2c) arma
+         * quando o `cancelConnection` fecha o canal GATT: `Started link IDLE timeout_ms:1000`.
+         * É ele que derruba o enlace de rádio depois do cancel educado.
+         */
+        const val ANDROID_LINK_IDLE_MS = 1_000L
+
+        /**
+         * Espera depois do cancel antes de forçar. TEM de passar do timer do stack
+         * ([ANDROID_LINK_IDLE_MS]) com folga: com 600 ms o `forceOff` (fechar e reabrir o
+         * servidor GATT) disparava no meio desse timer, o servidor novo se reanexava ao
+         * enlace ainda aberto e o timer era reiniciado a cada tráfego de reabertura. No POCO
+         * X8 Pro (log de 2026-11-11) a queda saía em ~2,8 s; sem o `forceOff` precoce o
+         * `cancelConnection` derruba em ~1,0 s. O `forceOff` fica como rede de segurança
+         * para o caso do HyperOS em que o cancel não derruba o central externo.
+         */
+        const val DEFAULT_GRACE_MS = 1_500L
     }
 
     interface Link<C> {

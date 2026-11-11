@@ -145,12 +145,35 @@ class DisconnectWatchdogTest {
     }
 
     @Test
-    fun theWorstCaseFitsInAboutOneSecondForTheSetupDelay() {
+    fun theGraceOutlastsTheAndroidLinkIdleTimerSoTheForceNeverPreemptsIt() {
+        // Regressão do reteste no POCO: graça de 600 ms < timer de 1 s do stack fazia o
+        // forceOff reabrir o servidor no meio do timer e a queda ia de ~1,0 s para ~2,8 s.
+        assertTrue(
+            "grace ${DisconnectWatchdog.DEFAULT_GRACE_MS} ms must exceed the stack's ${DisconnectWatchdog.ANDROID_LINK_IDLE_MS} ms idle timer",
+            DisconnectWatchdog.DEFAULT_GRACE_MS >= DisconnectWatchdog.ANDROID_LINK_IDLE_MS + 300,
+        )
+    }
+
+    @Test
+    fun forcedOffComesOnlyAfterTheDefaultGraceWhenTheCancelDidNotDrop() {
         val link = FakeLink("AA:BB")
-        watchdog(link, graceMs = DisconnectWatchdog.DEFAULT_GRACE_MS).request(300)
+        watchdog(link, graceMs = DisconnectWatchdog.DEFAULT_GRACE_MS).request(0)
         val total = scheduler.runNext() + scheduler.runNext()
-        assertTrue("forced off at $total ms", total <= 1_000)
+        assertEquals(DisconnectWatchdog.DEFAULT_GRACE_MS, total)
         assertEquals(listOf("AA:BB"), link.forced)
+    }
+
+    @Test
+    fun aDropWithinTheDefaultGraceIsNotForced() {
+        val link = FakeLink("AA:BB")
+        val dog = watchdog(link, graceMs = DisconnectWatchdog.DEFAULT_GRACE_MS)
+        dog.request(0)
+        scheduler.runNext() // cancel educado
+        link.client = null  // o stack derrubou o enlace pelo timer de ociosidade
+        dog.connectionChanged()
+        scheduler.runNext() // checagem da graça
+        assertTrue(link.forced.isEmpty())
+        assertTrue(logs.toString(), logs.any { it.contains("disconnect confirmed") })
     }
 
     @Test
