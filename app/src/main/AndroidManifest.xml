@@ -229,6 +229,12 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
 
+        <!-- gadget-link(docs/gadget-link.md 第 4 步):配对后保持手机在 Muse 注册(Noise 隧道),用户在 Diagnostics 里开关 -->
+        <service
+            android:name=".gadget.GadgetConnectService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
         <service
             android:name=".sandbox.SandboxService"
             android:exported="false"

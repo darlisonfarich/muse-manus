@@ -12,6 +12,7 @@ import android.os.Build
 import com.darlisonfarich.gadgetlink.GadgetState
 import com.darlisonfarich.gadgetlink.SetupEvent
 import com.darlisonfarich.gadgetlink.SetupNetwork
+import com.darlisonfarich.gadgetlink.noise.SupervisorState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.JsonObject
@@ -87,6 +88,57 @@ object GadgetLink {
         app.startService(Intent(app, GadgetLinkService::class.java).setAction(GadgetLinkService.ACTION_STOP))
     }
 
+    // -- Conexão com o Muse (passo 4) ---------------------------------------------------
+
+    private val _link = MutableStateFlow<SupervisorState?>(null)
+
+    /** null = desligada; senão o que o supervisor está fazendo (a última coisa que ele contou). */
+    val link: StateFlow<SupervisorState?> = _link
+    @Volatile var linkDetail: String = ""
+        private set
+
+    val linkRunning: Boolean get() = _link.value != null
+
+    /** Por que a conexão não subiu (ex.: Android sem X25519); some no próximo "Conectar". */
+    @Volatile var linkError: String? = null
+        private set
+
+    internal fun setLinkError(message: String?) {
+        linkError = message
+        message?.let { log("LINK ERROR: $it") }
+    }
+
+    /** Liga o celular ao Muse e o mantém registrado. Só depois de conferir as permissões (a UI faz isso no toque). */
+    fun connect(context: Context) {
+        val app = context.applicationContext
+        app.startForegroundService(Intent(app, GadgetConnectService::class.java).setAction(GadgetConnectService.ACTION_START))
+    }
+
+    fun disconnect(context: Context) {
+        val app = context.applicationContext
+        app.startService(Intent(app, GadgetConnectService::class.java).setAction(GadgetConnectService.ACTION_STOP))
+    }
+
+    internal fun onLinkState(state: SupervisorState, detail: String) {
+        _link.value = if (state == SupervisorState.STOPPED) null else state
+        linkDetail = if (state == SupervisorState.STOPPED) "" else detail
+        log("LINK ${state.name}${if (detail.isEmpty()) "" else " $detail"}")
+    }
+
+    /** Texto da Diagnostics e da notificação; nunca leva token nem dado da conta. */
+    fun linkLabel(state: SupervisorState?, detail: String): String = when (state) {
+        null, SupervisorState.STOPPED -> "off"
+        SupervisorState.IDLE -> "starting"
+        SupervisorState.NOT_PAIRED -> "not paired yet (pair first)"
+        SupervisorState.INVALID_PAIRING -> "saved pairing is unusable: $detail"
+        SupervisorState.REFRESHING_TOKEN -> "refreshing the device token"
+        SupervisorState.FETCHING_VMS -> "looking up your Muse"
+        SupervisorState.NO_VM -> "no usable Muse on the account, retrying in $detail"
+        SupervisorState.CONNECTING -> "connecting to $detail"
+        SupervisorState.REGISTERED -> "registered with the Muse"
+        SupervisorState.WAITING_TO_RECONNECT -> "reconnecting in $detail"
+    }
+
     // -- Estado e eventos ---------------------------------------------------------------
 
     internal fun setPhase(phase: Phase, note: String? = null) {
@@ -133,6 +185,7 @@ object GadgetLink {
         val lines = mutableListOf<Pair<String, String>>()
         val state = state(context)
         lines += "link" to (_phase.value.label + (lastError?.let { " — last error: $it" } ?: ""))
+        lines += "link to Muse" to (linkLabel(_link.value, linkDetail) + (linkError?.let { " — error: $it" } ?: ""))
         runCatching { state.loadJson(GadgetState.IDENTITY_FILE) }.getOrNull()
             ?.let { (it["mac"] as? JsonPrimitive)?.content }
             ?.takeIf { com.darlisonfarich.gadgetlink.Identity.isValidMac(it) }

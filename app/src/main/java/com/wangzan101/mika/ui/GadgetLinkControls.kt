@@ -43,6 +43,17 @@ fun GadgetLinkControls(reload: () -> Unit) {
     val context = LocalContext.current
     val phase by GadgetLink.phase.collectAsState()
     val running = phase != GadgetLink.Phase.OFF && phase != GadgetLink.Phase.ERROR && phase != GadgetLink.Phase.PAIRED
+    val linkState by GadgetLink.link.collectAsState()
+    val linking = linkState != null
+
+    // O serviço de conexão com o Muse (tipo connectedDevice) só sobe com "Dispositivos próximos" concedido.
+    val connectPermissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        if (result.isNotEmpty() && result.values.all { it }) {
+            connectNow(context, reload)
+        } else {
+            Toast.makeText(context, "Sem \"Dispositivos próximos\" a conexão com o Muse não liga.", Toast.LENGTH_LONG).show()
+        }
+    }
 
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         if (result.isNotEmpty() && result.values.all { it }) {
@@ -69,8 +80,9 @@ fun GadgetLinkControls(reload: () -> Unit) {
     // O texto da Diagnostics acompanha o pareamento: recoleta a cada mudança de fase e,
     // com a janela aberta, de tempos em tempos (eventos de MTU, conexão etc.).
     LaunchedEffect(phase) { reload() }
-    LaunchedEffect(running) {
-        while (running) {
+    LaunchedEffect(linkState) { reload() }
+    LaunchedEffect(running, linking) {
+        while (running || linking) {
             delay(3_000)
             reload()
         }
@@ -78,6 +90,7 @@ fun GadgetLinkControls(reload: () -> Unit) {
 
     Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
         Text("Gadget link (spike) — ${phase.label}", style = MikaType.Caption, color = c.ink3)
+        Text("Muse — ${GadgetLink.linkLabel(linkState, GadgetLink.linkDetail)}", style = MikaType.Caption, color = c.ink3)
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             MikaButton(
                 if (running) "Fechar pareamento" else "Abrir pareamento",
@@ -101,7 +114,30 @@ fun GadgetLinkControls(reload: () -> Unit) {
                 kind = ButtonKind.Tonal,
             )
         }
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            MikaButton(
+                if (linking) "Desconectar do Muse" else "Conectar ao Muse",
+                {
+                    if (linking) {
+                        GadgetLink.disconnect(context)
+                        reload()
+                    } else {
+                        val missing = GadgetLink.missingPermissions(context)
+                        if (missing.isEmpty()) connectNow(context, reload) else connectPermissions.launch(missing.toTypedArray())
+                    }
+                },
+                Modifier.weight(1f).testTag("gadget-link-connect"),
+                kind = ButtonKind.Tonal,
+            )
+        }
     }
+}
+
+private fun connectNow(context: Context, reload: () -> Unit) {
+    runCatching { GadgetLink.connect(context) }.onFailure {
+        Toast.makeText(context, "Não deu para conectar: ${it.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+    }
+    reload()
 }
 
 private fun openIfReady(context: Context, reload: () -> Unit) {
