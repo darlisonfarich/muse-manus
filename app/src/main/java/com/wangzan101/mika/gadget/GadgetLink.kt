@@ -109,7 +109,10 @@ object GadgetLink {
             SetupEvent.HELLO_OK -> _phase.value = Phase.HELLO
             SetupEvent.CONFIRMED -> _phase.value = Phase.CONFIRMED
             SetupEvent.PROVISION_STARTED -> _phase.value = Phase.PROVISIONING
-            SetupEvent.PROVISIONED -> _phase.value = Phase.PAIRED
+            SetupEvent.PROVISIONED -> {
+                _phase.value = Phase.PAIRED
+                lastError = null // erro de tentativa anterior não gruda num pareamento que deu certo
+            }
             SetupEvent.DECRYPT_FAILED, SetupEvent.CONFIRM_REJECTED, SetupEvent.HELLO_REJECTED,
             SetupEvent.PROVISION_FAILED, SetupEvent.PROVISION_OFFLINE,
             -> lastError = "${event.name} $detail".trim()
