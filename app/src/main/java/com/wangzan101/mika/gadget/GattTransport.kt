@@ -89,8 +89,9 @@ class GattTransport(
     private val pendingNotify = AtomicReference<PendingNotify?>(null)
     private val prepared = ByteArrayOutputStream()
     private var advertising: AdvertiseCallback? = null
-    private var serviceAdded: CountDownLatch? = null
+    @Volatile private var serviceAdded: CountDownLatch? = null
     @Volatile private var serviceAddStatus = BluetoothGatt.GATT_FAILURE
+    @Volatile private var advertiseDone: CountDownLatch? = null
     /** Abrir, fechar e a queda forçada não se cruzam. */
     private val life = Any()
     @Volatile private var stopped = false
@@ -132,9 +133,12 @@ class GattTransport(
         )
         service.addCharacteristic(txChar)
         tx = txChar
+        // Numa reabertura o status da vez anterior ainda estaria aqui: só vale o desta.
+        serviceAddStatus = BluetoothGatt.GATT_FAILURE
         val added = CountDownLatch(1).also { serviceAdded = it }
         if (!gatt.addService(service)) return "addService refused"
         if (!added.await(SERVICE_ADD_TIMEOUT_MS, TimeUnit.MILLISECONDS)) return "GATT service add timed out"
+        if (stopped) return "setup closed"
         if (serviceAddStatus != BluetoothGatt.GATT_SUCCESS) return "GATT service add failed ($serviceAddStatus)"
         log("GATT service up")
 
@@ -157,7 +161,7 @@ class GattTransport(
             .addManufacturerData(PAIRED_FLAG_COMPANY_ID, byteArrayOf(0))
             .build()
         val scanResponse = AdvertiseData.Builder().setIncludeDeviceName(withName).build()
-        val done = CountDownLatch(1)
+        val done = CountDownLatch(1).also { advertiseDone = it }
         val result = AtomicReference<String?>("advertising did not answer")
         val cb = object : AdvertiseCallback() {
             override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
@@ -172,6 +176,10 @@ class GattTransport(
         }
         advertiser.startAdvertising(settings, data, scanResponse, cb)
         done.await(ADVERTISE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        if (stopped) {
+            runCatching { advertiser.stopAdvertising(cb) }
+            return "setup closed"
+        }
         val error = result.get()
         if (error == null) {
             advertising = cb
@@ -194,6 +202,11 @@ class GattTransport(
     /** Para o anúncio, derruba o cliente e fecha o servidor. Pode ser chamado mais de uma vez. */
     fun stop() {
         stopped = true
+        // Quem está abrindo (start ou reabertura da queda forçada) segura `life` e espera
+        // por estas travas por até ~10 s; solta as duas para o stop — que roda na thread
+        // principal, no onDestroy do serviço — não ficar preso atrás dele.
+        serviceAdded?.countDown()
+        advertiseDone?.countDown()
         synchronized(life) { closeServer() }
         thread.quitSafely()
     }

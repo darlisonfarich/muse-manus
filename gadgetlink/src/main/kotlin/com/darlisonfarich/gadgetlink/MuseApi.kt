@@ -16,7 +16,9 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.put
+import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -42,7 +44,23 @@ object MuseApi {
         return parsed.userInfo == null && !parsed.host.isNullOrEmpty()
     }
 
-    fun fetchVms(accessToken: String, root: String, timeoutMs: Int = 15_000): VmFetch {
+    /**
+     * Teto do corpo de /fetch_vms. O api_url_v2 vem do celular que está pareando, então
+     * o host do outro lado não é de confiança: sem teto, uma resposta gigante estouraria
+     * a memória do app. Uma lista real de VMs tem poucos KB.
+     */
+    const val MAX_BODY_BYTES = 1 shl 20
+
+    /** Prazo total da checagem (conexão + corpo): um servidor que pinga 1 byte por vez não prende a thread. */
+    const val TOTAL_TIMEOUT_MS = 20_000
+
+    fun fetchVms(
+        accessToken: String,
+        root: String,
+        timeoutMs: Int = 15_000,
+        totalTimeoutMs: Int = TOTAL_TIMEOUT_MS,
+    ): VmFetch {
+        val deadline = System.nanoTime() + totalTimeoutMs * 1_000_000L
         val connection = try {
             URL(root + FETCH_PATH).openConnection() as HttpURLConnection
         } catch (e: IOException) {
@@ -58,13 +76,27 @@ object MuseApi {
             connection.setRequestProperty("User-Agent", USER_AGENT)
             val status = connection.responseCode
             if (status !in 200..299) return VmFetch(0, status)
-            val body = connection.inputStream.use { it.readBytes() }
+            val body = connection.inputStream.use { readBounded(it, MAX_BODY_BYTES, deadline) }
+                ?: return VmFetch(0, status)
             val text = runCatching { Utf8.decodeStrict(body) }.getOrNull() ?: return VmFetch(0, status)
             VmFetch(countVms(text), status)
         } catch (e: IOException) {
             VmFetch(0, null)
         } finally {
             connection.disconnect()
+        }
+    }
+
+    /** Lê até [maxBytes] antes do [deadline] (System.nanoTime); null se passou de um dos dois. */
+    private fun readBounded(input: InputStream, maxBytes: Int, deadline: Long): ByteArray? {
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(8 * 1024)
+        while (true) {
+            if (System.nanoTime() - deadline > 0) return null
+            val n = input.read(buffer)
+            if (n < 0) return out.toByteArray()
+            if (out.size() + n > maxBytes) return null
+            out.write(buffer, 0, n)
         }
     }
 

@@ -179,6 +179,59 @@ class GadgetStateTest {
     }
 
     @Test
+    fun fetchVmsRefusesABodyBeyondTheCap() {
+        // O api_url_v2 vem do celular que está pareando: um host que despeja gigabytes
+        // não pode estourar a memória do app. Uma resposta válida, mas inchada, é recusada.
+        val padding = "x".repeat(MuseApi.MAX_BODY_BYTES + 1)
+        val (server, root) = serve(200, """{"vm_list":[{"vm_ws_url":"wss://a","vm_auth_token":"t"}],"pad":"$padding"}""")
+        try {
+            assertEquals(VmFetch(0, 200), MuseApi.fetchVms("t", root))
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun fetchVmsAcceptsABodyJustUnderTheCap() {
+        val padding = "x".repeat(MuseApi.MAX_BODY_BYTES - 200)
+        val (server, root) = serve(200, """{"vm_list":[{"vm_ws_url":"wss://a","vm_auth_token":"t"}],"pad":"$padding"}""")
+        try {
+            assertEquals(VmFetch(1, 200), MuseApi.fetchVms("t", root))
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun fetchVmsGivesUpOnAServerThatDripsTheBody() {
+        // Um byte por vez, mais devagar que o prazo total: cada read cabe no readTimeout,
+        // mas a thread de provisionamento não pode ficar presa para sempre.
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/fetch_vms") { ex ->
+            ex.sendResponseHeaders(200, 40)
+            runCatching {
+                ex.responseBody.use { out ->
+                    repeat(40) {
+                        out.write('x'.code)
+                        out.flush()
+                        Thread.sleep(150)
+                    }
+                }
+            }
+        }
+        server.start()
+        try {
+            val started = System.nanoTime()
+            val fetch = MuseApi.fetchVms("t", "http://127.0.0.1:${server.address.port}", totalTimeoutMs = 600)
+            val tookMs = (System.nanoTime() - started) / 1_000_000
+            assertEquals(VmFetch(0, 200), fetch)
+            assertTrue("gave up after $tookMs ms", tookMs < 2_500)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun fetchVmsWithoutAServerHasNoStatus() {
         assertEquals(VmFetch(0, null), MuseApi.fetchVms("t", "http://127.0.0.1:1"))
     }

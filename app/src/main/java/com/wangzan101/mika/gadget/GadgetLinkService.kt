@@ -122,7 +122,8 @@ class GadgetLinkService : Service() {
                 return
             }
             setup.start()
-            gatt.start()?.let { return fail(it) }
+            // Fechado pelo usuário no meio da abertura: não é erro, é o fim pedido.
+            gatt.start()?.let { return if (destroyed) Unit else fail(it) }
             GadgetLink.setPhase(GadgetLink.Phase.ADVERTISING, "open as ${identity.bleName} for ${GadgetLink.SETUP_WINDOW_MS / 60_000} min")
             updateNotification("Aberto como ${identity.bleName}. Escolha esse nome no app Muse do outro celular.")
             window = worker.schedule({
