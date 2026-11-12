@@ -59,14 +59,17 @@ object X25519 {
 
     /**
      * Por que o X25519 do provedor não respondeu aqui, se não respondeu. Só diagnóstico
-     * (2026-11-12, Claude): a mensagem anterior presumia "Android < 13" sem checar a exceção
-     * de verdade; isso expõe a causa real quando o aparelho já é Android 13+ e mesmo assim falha.
+     * (2026-11-12, Claude): a primeira versão desta função mostrava só a exceção mais externa —
+     * mas rawDh() embrulha a GeneralSecurityException real num NoiseProtocolError genérico
+     * ("x25519: provider failure"), e isso escondia a causa de novo. Agora desce a cadeia
+     * [Throwable.cause] até o fundo, para mostrar a exceção do provedor (JCA) de verdade.
      */
     fun unavailableReason(): String? = try {
         rawDh(ByteArray(32) { 1 }, BASE_POINT)
         null
     } catch (e: Throwable) {
-        "${e.javaClass.name}: ${e.message}"
+        val root = generateSequence(e) { it.cause }.last()
+        "${root.javaClass.name}: ${root.message}"
     }
 
     fun generate(): X25519KeyPair = fromPrivate(ByteArray(32).also(random::nextBytes))
