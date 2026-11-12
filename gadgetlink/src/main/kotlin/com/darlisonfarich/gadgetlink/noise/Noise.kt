@@ -55,11 +55,18 @@ object X25519 {
     ).map { h -> ByteArray(32) { h.substring(2 * it, 2 * it + 2).toInt(16).toByte() } }
 
     /** O X25519 do provedor existe (JDK 11+; no Android, API 33+). Quem usa decide o que fazer sem ele. */
-    fun isAvailable(): Boolean = try {
+    fun isAvailable(): Boolean = unavailableReason() == null
+
+    /**
+     * Por que o X25519 do provedor não respondeu aqui, se não respondeu. Só diagnóstico
+     * (2026-11-12, Claude): a mensagem anterior presumia "Android < 13" sem checar a exceção
+     * de verdade; isso expõe a causa real quando o aparelho já é Android 13+ e mesmo assim falha.
+     */
+    fun unavailableReason(): String? = try {
         rawDh(ByteArray(32) { 1 }, BASE_POINT)
-        true
+        null
     } catch (e: Throwable) {
-        false
+        "${e.javaClass.name}: ${e.message}"
     }
 
     fun generate(): X25519KeyPair = fromPrivate(ByteArray(32).also(random::nextBytes))
