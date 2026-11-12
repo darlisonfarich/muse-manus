@@ -75,9 +75,12 @@ class GadgetConnectService : Service() {
 
     private fun begin() {
         GadgetLink.setLinkError(null)
-        // O X25519 do provedor só existe no Android 13+; sem ele o handshake Noise nem começa.
-        if (!X25519.isAvailable()) {
-            GadgetLink.setLinkError("X25519 is not available on this Android (needs Android 13 or newer)")
+        // O X25519 do provedor devia existir a partir do Android 13+; se não existir mesmo em Android
+        // mais novo, a causa é outra — por isso o diagnóstico (2026-11-12, Claude) mostra a exceção real
+        // em vez de presumir "versão antiga" sem checar.
+        val x25519Problem = X25519.unavailableReason()
+        if (x25519Problem != null) {
+            GadgetLink.setLinkError("X25519 unavailable: $x25519Problem")
             stopSelf()
             return
         }
