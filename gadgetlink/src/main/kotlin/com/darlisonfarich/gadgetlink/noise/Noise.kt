@@ -16,6 +16,7 @@ import java.security.GeneralSecurityException
 import java.security.KeyFactory
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.security.Security
 import java.security.spec.NamedParameterSpec
 import java.security.spec.XECPrivateKeySpec
 import java.security.spec.XECPublicKeySpec
@@ -57,19 +58,30 @@ object X25519 {
     /** O X25519 do provedor existe (JDK 11+; no Android, API 33+). Quem usa decide o que fazer sem ele. */
     fun isAvailable(): Boolean = unavailableReason() == null
 
+    /** Lista "nome(classe)" de cada provedor que registra o serviço dado, para achar um concorrente de XDH. */
+    private fun providersFor(service: String, algorithm: String): String = runCatching {
+        Security.getProviders().filter { it.getService(service, algorithm) != null }
+            .joinToString(", ") { "${it.name}(${it.getService(service, algorithm)!!.className})" }
+            .ifEmpty { "none" }
+    }.getOrElse { "lookup failed (${it.javaClass.simpleName})" }
+
     /**
      * Por que o X25519 do provedor não respondeu aqui, se não respondeu. Só diagnóstico
-     * (2026-11-12, Claude): a primeira versão desta função mostrava só a exceção mais externa —
-     * mas rawDh() embrulha a GeneralSecurityException real num NoiseProtocolError genérico
-     * ("x25519: provider failure"), e isso escondia a causa de novo. Agora desce a cadeia
-     * [Throwable.cause] até o fundo, para mostrar a exceção do provedor (JCA) de verdade.
+     * (2026-11-12, Claude): a 1ª versão mostrava só a exceção mais externa; rawDh() embrulha a
+     * GeneralSecurityException real, então agora desce [Throwable.cause] até o fundo. A exceção
+     * de fundo encontrada no POCO (InvalidKeySpecException "Must use XECPrivateKeySpec...; was
+     * XECPrivateKeySpec" — o MESMO nome dos dois lados) é a marca de um segundo provedor
+     * competindo pelo algoritmo "XDH" (visto em builds HyperOS com criptografia OEM própria);
+     * por isso a lista de provedores de KeyFactory.XDH/KeyAgreement.XDH entra na mensagem.
      */
     fun unavailableReason(): String? = try {
         rawDh(ByteArray(32) { 1 }, BASE_POINT)
         null
     } catch (e: Throwable) {
         val root = generateSequence(e) { it.cause }.last()
-        "${root.javaClass.name}: ${root.message}"
+        val kf = providersFor("KeyFactory", "XDH")
+        val ka = providersFor("KeyAgreement", "XDH")
+        "${root.javaClass.name}: ${root.message} — KeyFactory.XDH=[$kf] KeyAgreement.XDH=[$ka]"
     }
 
     fun generate(): X25519KeyPair = fromPrivate(ByteArray(32).also(random::nextBytes))
