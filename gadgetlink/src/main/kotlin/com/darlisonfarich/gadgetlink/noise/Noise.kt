@@ -11,16 +11,13 @@ package com.darlisonfarich.gadgetlink.noise
 import com.darlisonfarich.gadgetlink.Aead
 import com.darlisonfarich.gadgetlink.Hash
 import com.darlisonfarich.gadgetlink.Hkdf
-import java.math.BigInteger
 import java.security.GeneralSecurityException
 import java.security.KeyFactory
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.Security
-import java.security.spec.NamedParameterSpec
 import java.security.spec.PKCS8EncodedKeySpec
-import java.security.spec.XECPrivateKeySpec
-import java.security.spec.XECPublicKeySpec
+import java.security.spec.X509EncodedKeySpec
 import javax.crypto.KeyAgreement
 
 /** Um passo do Noise falhou ou foi chamado fora de ordem; o handshake/cifra não se recupera. */
@@ -56,6 +53,16 @@ object X25519 {
         0x04, 0x22, 0x04, 0x20,
     )
 
+    /**
+     * Prefixo fixo do SubjectPublicKeyInfo (RFC 8410) para X25519: AlgorithmIdentifier = OID
+     * 1.3.101.110, BIT STRING de 33 bytes (0 bits não usados + os 32 bytes do u cru). Concatenado
+     * com os 32 bytes da chave pública, dá o DER completo do X509 (44 bytes). Prefixo confirmado
+     * batendo com `openssl genpkey -algorithm X25519 | openssl pkey -pubout -outform DER`.
+     */
+    private val X509_X25519_PREFIX = byteArrayOf(
+        0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x03, 0x21, 0x00,
+    )
+
     /** Pontos de ordem pequena (libsodium / lista do SDK); o u é comparado com o bit 255 zerado. */
     private val LOW_ORDER: List<ByteArray> = listOf(
         "0000000000000000000000000000000000000000000000000000000000000000",
@@ -81,9 +88,10 @@ object X25519 {
      * Por que o X25519 do provedor não respondeu aqui, se não respondeu. Só diagnóstico
      * (2026-11-12, Claude): a 1ª versão mostrava só a exceção mais externa; rawDh() embrulha a
      * GeneralSecurityException real, então agora desce [Throwable.cause] até o fundo. A causa
-     * encontrada no POCO (InvalidKeySpecException via XECPrivateKeySpec) já foi corrigida trocando
-     * a chave privada para PKCS8EncodedKeySpec; a lista de provedores de KeyFactory.XDH/
-     * KeyAgreement.XDH fica, para o próximo achado que aparecer.
+     * encontrada no POCO (InvalidKeySpecException via XECPrivateKeySpec, depois via
+     * XECPublicKeySpec) já foi corrigida trocando as duas chaves para PKCS8EncodedKeySpec /
+     * X509EncodedKeySpec; a lista de provedores de KeyFactory.XDH/KeyAgreement.XDH fica, para o
+     * próximo achado que aparecer.
      */
     fun unavailableReason(): String? = try {
         rawDh(ByteArray(32) { 1 }, BASE_POINT)
@@ -115,15 +123,16 @@ object X25519 {
 
     private fun rawDh(privateKey: ByteArray, publicKey: ByteArray): ByteArray = try {
         val factory = KeyFactory.getInstance("XDH")
-        val u = BigInteger(1, publicKey.copyOf().also { it[31] = (it[31].toInt() and 0x7F).toByte() }.reversedArray())
+        val u = publicKey.copyOf().also { it[31] = (it[31].toInt() and 0x7F).toByte() }
         val agreement = KeyAgreement.getInstance("XDH")
-        // XECPrivateKeySpec falha num Conscrypt real (achado no POCO, 2026-11-12): InvalidKeySpecException
-        // "Must use XECPrivateKeySpec, PKCS8EncodedKeySpec or Raw EncodedKeySpec; was XECPrivateKeySpec" —
-        // o provedor rejeitando o próprio tipo que diz aceitar. KeyFactory.XDH só tem AndroidOpenSSL e
-        // AndroidKeyStore (sem concorrente). PKCS8EncodedKeySpec (RFC 8410) é o outro caminho que a
-        // própria mensagem de erro lista, e funciona igual no Conscrypt e no JDK desktop.
+        // XECPrivateKeySpec e XECPublicKeySpec falham num Conscrypt real (achado no POCO,
+        // 2026-11-12): InvalidKeySpecException "Must use XEC...Spec, PKCS8/X509EncodedKeySpec or
+        // Raw EncodedKeySpec; was XEC...Spec" — o provedor rejeitando o próprio tipo que diz
+        // aceitar, dos dois lados. KeyFactory.XDH só tem AndroidOpenSSL e AndroidKeyStore (sem
+        // concorrente). PKCS8EncodedKeySpec/X509EncodedKeySpec (RFC 8410) são os outros caminhos
+        // que a própria mensagem de erro lista, e funcionam igual no Conscrypt e no JDK desktop.
         agreement.init(factory.generatePrivate(PKCS8EncodedKeySpec(PKCS8_X25519_PREFIX + privateKey)))
-        agreement.doPhase(factory.generatePublic(XECPublicKeySpec(NamedParameterSpec.X25519, u)), true)
+        agreement.doPhase(factory.generatePublic(X509EncodedKeySpec(X509_X25519_PREFIX + u)), true)
         agreement.generateSecret()
     } catch (e: GeneralSecurityException) {
         throw NoiseProtocolError("x25519: provider failure", e)
