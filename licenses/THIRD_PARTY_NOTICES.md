@@ -244,3 +244,14 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
+
+## Muse Gadget SDK
+
+- Project: https://github.com/facebookincubator/muse-gadget-sdk (commit 55cbf48)
+- License: Apache-2.0
+- Copyright (c) Meta Platforms, Inc. and affiliates.
+- Usage: gadget-link 模块(`gadgetlink/`)把 SDK 的 Linux 实现移植成 Kotlin:BLE 配对协议 v5
+  (pairing.py)、BLE 分包(ble_framing.py)、配对设置命令(ble_setup.py)、设备身份与状态文件
+  (identity.py、config.py)、设备令牌检查(muse_api.py、pair.py);GATT 服务与广播的 UUID 取自
+  ble_server.py。每个移植的源文件头部注明出处与改动。测试里的
+  `link_pairing_v5.json` 是 SDK 公开的合成测试向量,原样复制。

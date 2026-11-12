@@ -1,0 +1,288 @@
+{
+ "first_chunk_id": 1000,
+ "send": [
+  {
+   "name": "start_control_stream",
+   "args": {
+    "op": "start_stream_request",
+    "method": "POST",
+    "path": "/link-control"
+   },
+   "frames": [
+    {
+     "len": 50,
+     "sha256": "55a24861065a802252c795365619f94556d291dae0214ee4631321286b4353f7",
+     "hex": "2bda3ba6e64c6231859185be6486047273c2cbbb6b6d2a8033ab7343bb8e806722e9f23c3de115b5d4984a8e7f485968ab47"
+    }
+   ],
+   "stream_id": 1
+  },
+  {
+   "name": "register_body",
+   "args": {
+    "op": "body_chunk",
+    "stream": 1,
+    "data": "68656c6c6f2d7265676973746572",
+    "end": false
+   },
+   "frames": [
+    {
+     "len": 45,
+     "sha256": "d9759f2d8cebbad279c7db208bb3cdab7be0c93cc4b20d9fefcb6e7a4496dede",
+     "hex": "68544d8ccad5a4999a930d99985756be4e6082fcc66ae4192b9d03c396a54dc46c59eb9402cb89f4ae4e0d738d"
+    }
+   ]
+  },
+  {
+   "name": "http_request_sentinel",
+   "args": {
+    "op": "http_request",
+    "method": "GET",
+    "path": "/x",
+    "body": "616263",
+    "headers": [
+     [
+      "k",
+      "v"
+     ]
+    ],
+    "service": "sentinel"
+   },
+   "frames": [
+    {
+     "len": 55,
+     "sha256": "46e018295df8ed4e277e2e5b40cea9d08eeecd65b8cfa8a518529d0384961fa0",
+     "hex": "31457057d061dbefc94e3f88ae03696c1c6ac960ab43543b8df26f39d10e99d47f5a264a37caf93917896c58e8885277d74b006ab211af"
+    }
+   ],
+   "stream_id": 2
+  },
+  {
+   "name": "big_body_two_records",
+   "args": {
+    "op": "body_chunk",
+    "stream": 1,
+    "data": "pattern70k",
+    "end": false
+   },
+   "frames": [
+    {
+     "len": 65514,
+     "sha256": "688e7aa780a3522d01d625b867f3ee769e92f467b8bbee390022032d7bede005"
+    },
+    {
+     "len": 4551,
+     "sha256": "eeb1d157ef5c43ee6c4fda1742414eebad38fc6879509d7ff5e174d5b2d663da"
+    }
+   ]
+  },
+  {
+   "name": "reset_timeout",
+   "args": {
+    "op": "reset",
+    "stream": 1,
+    "reason": "bye",
+    "code": 2,
+    "service": "daemon"
+   },
+   "frames": [
+    {
+     "len": 36,
+     "sha256": "b5eb9df990b9274bded534cf3aa980b0f91a0df6a6447e4d212bb7281e2386c8",
+     "hex": "af59fa81d510ab0497bebbaf8a9bdd56bffa922245eb74333ca75a831a29e204d05d5d68"
+    }
+   ]
+  },
+  {
+   "name": "end_body_empty",
+   "args": {
+    "op": "body_chunk",
+    "stream": 2,
+    "data": "",
+    "end": true,
+    "service": "vault"
+   },
+   "frames": [
+    {
+     "len": 33,
+     "sha256": "5a7b68049178849c3bb6bddde07bc68e133c3e4a568ec377a626d324999dde18",
+     "hex": "8c8ff3089d6b97800366b37617033f813ff4ef7fb2f352a3dd9ebd4d6f74305d5e"
+    }
+   ]
+  }
+ ],
+ "receive": [
+  {
+   "name": "response_then_chunks_then_reset",
+   "records": [
+    "05614ff70d000c358b9cd3d879346a57ce046af3e15bb82e4f9d7ebc6af252b6d002cd8ad88105725aeeeea4",
+    "6a897fe235503478f8fe5e5eb956bdffad7b24512ca18c98db1491702cc554bcad",
+    "428d60fba7b395f61673f242bdc610fa8b4164015a792099da632607741b86cc723ead",
+    "1e6193b33c6d4bc5a93239bbb2eeff9e011335257283fb0d8302ee9fcb762f71042c"
+   ],
+   "expected": [
+    {
+     "kind": "response",
+     "stream_id": 1,
+     "value": {
+      "status": 200,
+      "headers": [
+       [
+        "a",
+        "b"
+       ]
+      ],
+      "body": "6f6b",
+      "end_body": false
+     }
+    },
+    {
+     "kind": "body_chunk",
+     "stream_id": 1,
+     "value": {
+      "data": "6d31",
+      "end_body": false
+     }
+    },
+    {
+     "kind": "body_chunk",
+     "stream_id": 1,
+     "value": {
+      "data": "6d32",
+      "end_body": true
+     }
+    },
+    {
+     "kind": "reset",
+     "stream_id": 1,
+     "value": {
+      "code": 2,
+      "reason": "t"
+     }
+    }
+   ]
+  },
+  {
+   "name": "big_chunk_two_records",
+   "records": [
+    {
+     "len": 65514,
+     "sha256": "b1334d80e50b65775e7c43cbdae571d825809d667bfd6f4522469b4951622930"
+    },
+    {
+     "len": 4553,
+     "sha256": "8f06d5577d41851336ddbde9ba5570fabfa9656a0f29a5de43d2a40baea0d455"
+    }
+   ],
+   "expected": [
+    "none",
+    {
+     "kind": "body_chunk",
+     "stream_id": 7,
+     "value": {
+      "data": {
+       "len": 70000,
+       "sha256": "967e96f49cd5516ce874502cf34be305f0053b3c0be56c6a19d0328dc0f0ea23"
+      },
+      "end_body": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "frame_without_kind_is_ignored",
+   "records": [
+    "05614ff70d001d359a9cd1847f73c35d1e138674c3983a0d943c19",
+    "6a897fe235503778f7fe5c66be547393d118ebaa647dee637f7cf03367e64fc5"
+   ],
+   "expected": [
+    "none",
+    {
+     "kind": "response",
+     "stream_id": 3,
+     "value": {
+      "status": 204,
+      "headers": [],
+      "body": "",
+      "end_body": false
+     }
+    }
+   ]
+  },
+  {
+   "name": "request_from_server_is_an_error",
+   "records": [
+    "05614ff70d0010359f9cd3d875346a57abc833ff6a25d14be3568922196ebab1",
+    "6a897fe235503078fcfe5d6eb556bcd5d93c9676b66c5785babc420ef0417b2107640c3750",
+    "428d60fba7b390f61b73f27ab8c4da9694ac329cd040ad6b3908229243892bb1"
+   ],
+   "expected": [
+    {
+     "kind": "response",
+     "stream_id": 1,
+     "value": {
+      "status": 200,
+      "headers": [],
+      "body": "",
+      "end_body": false
+     }
+    },
+    "error",
+    "error"
+   ]
+  },
+  {
+   "name": "empty_service_response_payload_is_an_error",
+   "records": [
+    "05614ff70d4c784279fabfb6fa4dd9b30622a160e4",
+    "6a897fe235503778f7fe5e66be547793707f3f7095c485e01ebc8668f9a0c062"
+   ],
+   "expected": [
+    "error",
+    "error"
+   ]
+  },
+  {
+   "name": "garbage_service_response_is_an_error",
+   "records": [
+    "05614ff70d001bc067479eea0329eed8c0d241537d3f2385a5",
+    "6a897fe235503778f7fe5e66be547793707f3f7095c485e01ebc8668f9a0c062"
+   ],
+   "expected": [
+    "error",
+    "error"
+   ]
+  },
+  {
+   "name": "tampered_record_kills_the_transport",
+   "records": [
+    "04614ff70d0010359f9cd3d875346a57abc833ff6a25d14be3568922196ebab1",
+    "6a897fe235503778f7fe5e66be547793707f3f7095c485e01ebc8668f9a0c062"
+   ],
+   "expected": [
+    "error",
+    "error"
+   ]
+  },
+  {
+   "name": "replayed_record_is_an_error",
+   "records": [
+    "05614ff70d0010359f9cd3d875346a57abc833ff6a25d14be3568922196ebab1",
+    "05614ff70d0010359f9cd3d875346a57abc833ff6a25d14be3568922196ebab1"
+   ],
+   "expected": [
+    {
+     "kind": "response",
+     "stream_id": 1,
+     "value": {
+      "status": 200,
+      "headers": [],
+      "body": "",
+      "end_body": false
+     }
+    },
+    "error"
+   ]
+  }
+ ]
+}

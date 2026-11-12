@@ -164,7 +164,7 @@ fun AboutScreen(
             onDiagnostics = { sheet = AboutSheet.Diagnostics },
             onDismiss = close,
         )
-        AboutSheet.Diagnostics -> DiagnosticsSheet(diagnostics, onDismiss = close)
+        AboutSheet.Diagnostics -> DiagnosticsSheet(diagnostics, onDismiss = close, extra = { reload -> GadgetLinkControls(reload) })
         null -> Unit
     }
 }

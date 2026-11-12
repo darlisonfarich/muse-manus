@@ -1,0 +1,965 @@
+{
+ "max_chunk_payload": 65489,
+ "encode": [
+  {
+   "size": 0,
+   "chunk_id": 5,
+   "frames": [
+    {
+     "len": 4,
+     "sha256": "b14f888df36b7d03e259f72cc09bc3c9bc96066420570a6e002631507612037a",
+     "hex": "08051801"
+    }
+   ]
+  },
+  {
+   "size": 1,
+   "chunk_id": -5,
+   "frames": [
+    {
+     "len": 16,
+     "sha256": "aaed9a3036679fc415a642e150ea6e66e98f2cf68608a53688816997b1c0c1db",
+     "hex": "08fbffffffffffffffff011801220103"
+    }
+   ]
+  },
+  {
+   "size": 100,
+   "chunk_id": 123456789012345,
+   "frames": [
+    {
+     "len": 112,
+     "sha256": "2c5ffb539240bed6e3c7c26673797e23a53f1229b8a5028bfdee974a43a6808a",
+     "hex": "08f9beb7b088891c18012264030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8"
+    }
+   ]
+  },
+  {
+   "size": 65489,
+   "chunk_id": 1,
+   "frames": [
+    {
+     "len": 65497,
+     "sha256": "775c6fb128e6e105e81407f2deb52bd96b708d9c7c663f04ab6ff7b108eae395"
+    }
+   ]
+  },
+  {
+   "size": 65490,
+   "chunk_id": -9223372036854775808,
+   "frames": [
+    {
+     "len": 65506,
+     "sha256": "777c1ff33b223ff35ce8c2cb00666c7dd67bc7a9dee96475905da5e23269e6ff"
+    },
+    {
+     "len": 18,
+     "sha256": "a4550a93546911a5b5760e9e03d3f1b6d30625e156a8e2bf746239bb5e2440d2",
+     "hex": "0880808080808080808001100118022201ba"
+    }
+   ]
+  },
+  {
+   "size": 130988,
+   "chunk_id": 9223372036854775807,
+   "frames": [
+    {
+     "len": 65505,
+     "sha256": "48dd66f2ee18fcc3f58bbd03d19a674b9b98e642f68b497627f82277b0452a40"
+    },
+    {
+     "len": 65507,
+     "sha256": "c95f5eb311fc9320ddb9968e2fdd0f682ebb4dfe835d31ac0a34c7f635fb7985"
+    },
+    {
+     "len": 26,
+     "sha256": "733d3ea836f4369fe4986bf72a541128377e517eae62fb445632ae74e50ace93",
+     "hex": "08ffffffffffffffff7f10021803220a71787f868d949ba2a9b0"
+    }
+   ]
+  },
+  {
+   "size": 196467,
+   "chunk_id": 77,
+   "frames": [
+    {
+     "len": 65497,
+     "sha256": "e7bc91816bd39db93a5bbe317625b2c7763c0cbc724097bc178c919b740a9be5"
+    },
+    {
+     "len": 65499,
+     "sha256": "ae81738d8f52d86eb5239c3b8c01f692d75693fc6351a8ee2a4f6ffb930b5b20"
+    },
+    {
+     "len": 65499,
+     "sha256": "b6b702041ca59c459029314ebfb41fcb2216e7cba51279be98ad7809d321bb3c"
+    }
+   ]
+  },
+  {
+   "size": 10,
+   "chunk_id": 0,
+   "frames": [
+    {
+     "len": 14,
+     "sha256": "343d0321db765fbce53b7deedf4bb73393f71ee94ca886db1a626da0b6454e6a",
+     "hex": "1801220a030a11181f262d343b42"
+    }
+   ]
+  }
+ ],
+ "decode": [
+  {
+   "name": "empty",
+   "raw": "",
+   "ok": true,
+   "chunk_id": 0,
+   "chunk_index": 0,
+   "total_chunks": 1,
+   "payload": ""
+  },
+  {
+   "name": "only_payload",
+   "raw": "2203616263",
+   "ok": true,
+   "chunk_id": 0,
+   "chunk_index": 0,
+   "total_chunks": 1,
+   "payload": "616263"
+  },
+  {
+   "name": "unknown_varint_skipped",
+   "raw": "48ac02220178",
+   "ok": true,
+   "chunk_id": 0,
+   "chunk_index": 0,
+   "total_chunks": 1,
+   "payload": "78"
+  },
+  {
+   "name": "unknown_fixed64_skipped",
+   "raw": "490000000000000000220178",
+   "ok": true,
+   "chunk_id": 0,
+   "chunk_index": 0,
+   "total_chunks": 1,
+   "payload": "78"
+  },
+  {
+   "name": "unknown_fixed32_skipped",
+   "raw": "4d00000000220178",
+   "ok": true,
+   "chunk_id": 0,
+   "chunk_index": 0,
+   "total_chunks": 1,
+   "payload": "78"
+  },
+  {
+   "name": "unknown_delimited_skipped",
+   "raw": "4a037a7a7a220178",
+   "ok": true,
+   "chunk_id": 0,
+   "chunk_index": 0,
+   "total_chunks": 1,
+   "payload": "78"
+  },
+  {
+   "name": "total_absent_defaults_to_one",
+   "raw": "0805220171",
+   "ok": true,
+   "chunk_id": 5,
+   "chunk_index": 0,
+   "total_chunks": 1,
+   "payload": "71"
+  },
+  {
+   "name": "total_explicit_zero",
+   "raw": "1800",
+   "ok": true,
+   "chunk_id": 0,
+   "chunk_index": 0,
+   "total_chunks": 0,
+   "payload": ""
+  },
+  {
+   "name": "chunk_id_negative",
+   "raw": "08ffffffffffffffffff01",
+   "ok": true,
+   "chunk_id": -1,
+   "chunk_index": 0,
+   "total_chunks": 1,
+   "payload": ""
+  },
+  {
+   "name": "chunk_id_wrong_wire",
+   "raw": "0a0161",
+   "ok": false
+  },
+  {
+   "name": "index_wrong_wire",
+   "raw": "120161",
+   "ok": false
+  },
+  {
+   "name": "total_wrong_wire",
+   "raw": "1a0161",
+   "ok": false
+  },
+  {
+   "name": "payload_wrong_wire",
+   "raw": "2001",
+   "ok": false
+  },
+  {
+   "name": "truncated_varint",
+   "raw": "0880",
+   "ok": false
+  },
+  {
+   "name": "overlong_varint",
+   "raw": "08ffffffffffffffffff02",
+   "ok": false
+  },
+  {
+   "name": "eleven_byte_varint",
+   "raw": "088080808080808080808000",
+   "ok": false
+  },
+  {
+   "name": "truncated_delimited",
+   "raw": "220561",
+   "ok": false
+  },
+  {
+   "name": "field_zero",
+   "raw": "0001",
+   "ok": false
+  },
+  {
+   "name": "reserved_field_19500",
+   "raw": "e0c20901",
+   "ok": false
+  },
+  {
+   "name": "field_max_ok",
+   "raw": "f8ffffff0f01",
+   "ok": true,
+   "chunk_id": 0,
+   "chunk_index": 0,
+   "total_chunks": 1,
+   "payload": ""
+  },
+  {
+   "name": "field_too_big",
+   "raw": "808080801001",
+   "ok": false
+  },
+  {
+   "name": "wire_type_3",
+   "raw": "0b",
+   "ok": false
+  },
+  {
+   "name": "index_uint32_overflow",
+   "raw": "108080808010",
+   "ok": false
+  },
+  {
+   "name": "truncated_fixed64",
+   "raw": "49000000",
+   "ok": false
+  },
+  {
+   "name": "garbage",
+   "raw": "ffff",
+   "ok": false
+  }
+ ],
+ "scenarios": [
+  {
+   "name": "in_order_three_chunks",
+   "steps": [
+    {
+     "gen": [
+      130988,
+      7,
+      0
+     ]
+    },
+    {
+     "gen": [
+      130988,
+      7,
+      1
+     ]
+    },
+    {
+     "gen": [
+      130988,
+      7,
+      2
+     ]
+    }
+   ],
+   "expected": [
+    "none",
+    "none",
+    {
+     "len": 130988,
+     "sha256": "ed6e1968107d1b6e6028c6f064f82056deabb446b0a0152de971b7bb1fae92e7"
+    }
+   ]
+  },
+  {
+   "name": "out_of_order",
+   "steps": [
+    {
+     "gen": [
+      130988,
+      7,
+      2
+     ]
+    },
+    {
+     "gen": [
+      130988,
+      7,
+      0
+     ]
+    },
+    {
+     "gen": [
+      130988,
+      7,
+      1
+     ]
+    }
+   ],
+   "expected": [
+    "none",
+    "none",
+    {
+     "len": 130988,
+     "sha256": "ed6e1968107d1b6e6028c6f064f82056deabb446b0a0152de971b7bb1fae92e7"
+    }
+   ]
+  },
+  {
+   "name": "single_chunk",
+   "steps": [
+    {
+     "gen": [
+      50,
+      1,
+      0
+     ]
+    }
+   ],
+   "expected": [
+    {
+     "len": 50,
+     "sha256": "9898428b82ee6f679753036472bedb74701161801f29526e7201e0dcc600bcdc"
+    }
+   ]
+  },
+  {
+   "name": "empty_payload",
+   "steps": [
+    {
+     "gen": [
+      0,
+      3,
+      0
+     ]
+    }
+   ],
+   "expected": [
+    {
+     "len": 0,
+     "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+   ]
+  },
+  {
+   "name": "duplicate_index_poisons",
+   "steps": [
+    {
+     "gen": [
+      130988,
+      7,
+      0
+     ]
+    },
+    {
+     "gen": [
+      130988,
+      7,
+      0
+     ]
+    },
+    {
+     "gen": [
+      130988,
+      7,
+      1
+     ]
+    }
+   ],
+   "expected": [
+    "none",
+    "error",
+    "poisoned"
+   ]
+  },
+  {
+   "name": "inconsistent_total",
+   "steps": [
+    {
+     "frame": [
+      9,
+      0,
+      3,
+      1
+     ]
+    },
+    {
+     "frame": [
+      9,
+      1,
+      4,
+      1
+     ]
+    }
+   ],
+   "expected": [
+    "none",
+    "error"
+   ]
+  },
+  {
+   "name": "index_out_of_range",
+   "steps": [
+    {
+     "frame": [
+      1,
+      2,
+      2,
+      1
+     ]
+    }
+   ],
+   "expected": [
+    "error"
+   ]
+  },
+  {
+   "name": "total_zero_raw",
+   "steps": [
+    {
+     "hex": "1800"
+    }
+   ],
+   "expected": [
+    "error"
+   ]
+  },
+  {
+   "name": "total_257",
+   "steps": [
+    {
+     "frame": [
+      1,
+      0,
+      257,
+      1
+     ]
+    }
+   ],
+   "expected": [
+    "error"
+   ]
+  },
+  {
+   "name": "total_256_ok_first",
+   "steps": [
+    {
+     "frame": [
+      1,
+      0,
+      256,
+      1
+     ]
+    }
+   ],
+   "expected": [
+    "none"
+   ]
+  },
+  {
+   "name": "payload_too_big",
+   "steps": [
+    {
+     "frame": [
+      1,
+      0,
+      1,
+      65490
+     ]
+    }
+   ],
+   "expected": [
+    "error"
+   ]
+  },
+  {
+   "name": "payload_max_ok",
+   "steps": [
+    {
+     "frame": [
+      1,
+      0,
+      1,
+      65489
+     ]
+    }
+   ],
+   "expected": [
+    {
+     "len": 65489,
+     "sha256": "1326c84b803fec29443eb593c19a2bc65544ba1adcda4613f256a3301459bf09"
+    }
+   ]
+  },
+  {
+   "name": "too_many_pending",
+   "steps": [
+    {
+     "frame": [
+      100,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      101,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      102,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      103,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      104,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      105,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      106,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      107,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      108,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      109,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      110,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      111,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      112,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      113,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      114,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      115,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      116,
+      0,
+      2,
+      1
+     ]
+    }
+   ],
+   "expected": [
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "error"
+   ]
+  },
+  {
+   "name": "sixteen_pending_ok",
+   "steps": [
+    {
+     "frame": [
+      100,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      101,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      102,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      103,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      104,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      105,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      106,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      107,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      108,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      109,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      110,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      111,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      112,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      113,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      114,
+      0,
+      2,
+      1
+     ]
+    },
+    {
+     "frame": [
+      115,
+      0,
+      2,
+      1
+     ]
+    }
+   ],
+   "expected": [
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none"
+   ]
+  },
+  {
+   "name": "interleaved_two_ids",
+   "steps": [
+    {
+     "gen": [
+      65494,
+      11,
+      0
+     ]
+    },
+    {
+     "gen": [
+      65498,
+      12,
+      0
+     ]
+    },
+    {
+     "gen": [
+      65498,
+      12,
+      1
+     ]
+    },
+    {
+     "gen": [
+      65494,
+      11,
+      1
+     ]
+    }
+   ],
+   "expected": [
+    "none",
+    "none",
+    {
+     "len": 65498,
+     "sha256": "4ffee5b53cbd4ea50efba96d00ba1cd7e296d6a54d03eeee362fc327177966ed"
+    },
+    {
+     "len": 65494,
+     "sha256": "742a38e7c550426080b0c91a0320e73b74cfa6a823a7062f6ab904d2670ca71a"
+    }
+   ]
+  },
+  {
+   "name": "id_reusable_after_done",
+   "steps": [
+    {
+     "gen": [
+      10,
+      21,
+      0
+     ]
+    },
+    {
+     "gen": [
+      11,
+      21,
+      0
+     ]
+    }
+   ],
+   "expected": [
+    {
+     "len": 10,
+     "sha256": "aadd73eb67f4e48bdb358638d0c42f341afcf9f60d717418d863a6f69238e01f"
+    },
+    {
+     "len": 11,
+     "sha256": "74b55c9de0be1e88daf5efc4838719c5b96f707bb47f99f5f4a30d7269b0838d"
+    }
+   ]
+  },
+  {
+   "name": "garbage_poisons",
+   "steps": [
+    {
+     "hex": "ffff"
+    },
+    {
+     "frame": [
+      1,
+      0,
+      1,
+      1
+     ]
+    }
+   ],
+   "expected": [
+    "error",
+    "poisoned"
+   ]
+  },
+  {
+   "name": "negative_chunk_id",
+   "steps": [
+    {
+     "gen": [
+      65490,
+      -42,
+      0
+     ]
+    },
+    {
+     "gen": [
+      65490,
+      -42,
+      1
+     ]
+    }
+   ],
+   "expected": [
+    "none",
+    {
+     "len": 65490,
+     "sha256": "9f14f4ac66428c38387861e5b439d789ada3deb12df176e5d1177a21eaef6c38"
+    }
+   ]
+  }
+ ]
+}

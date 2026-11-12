@@ -24,6 +24,7 @@ import com.wangzan101.mika.core.shell.PairingDiscovery
 import com.wangzan101.mika.core.shell.PermissionCommands
 import com.wangzan101.mika.core.shell.SetupInputs
 import com.wangzan101.mika.core.shell.SetupStep
+import com.wangzan101.mika.gadget.BlePeripheralProbe
 import com.wangzan101.mika.i18n.AppLanguage
 import com.wangzan101.mika.record.RunStore
 import com.wangzan101.mika.settings.AccessibilityState
@@ -103,6 +104,7 @@ object DiagnosticsCollector {
                 DiagnosticsSnapshot.Update(u.status.name, u.latest?.version, u.update?.version)
             },
             speech = speech(app),
+            gadgetLink = gadgetLink(app),
         )
     }
 
@@ -180,6 +182,17 @@ object DiagnosticsCollector {
                 svc.component + (if (svc.open) "" else " (not exported)") + (svc.permission?.let { " needs $it" } ?: "")
             },
         )
+    }.getOrNull()
+
+    /**
+     * BLE 外围能力的一句话结论:真的试一次可连接广播(约 1 秒)和开一个空 GATT server,随即撤掉;
+     * 后面附原始开关作参考。没给「附近设备」权限时不试,结论是 "not tested"。会阻塞最多几秒,
+     * 诊断本来就在后台线程收。见 docs/gadget-link.md 的 B1 阻塞点。
+     */
+    private fun gadgetLink(context: Context): List<Pair<String, String>>? = runCatching {
+        // 配对窗口开着时不再试广播:探针会和正在进行的广播抢同一个通道
+        val probe = if (com.wangzan101.mika.gadget.GadgetLink.running) "skipped (pairing window open)" else BlePeripheralProbe.diagnose(context)
+        listOf("ble peripheral" to probe) + com.wangzan101.mika.gadget.GadgetLink.diagnosticsLines(context)
     }.getOrNull()
 
     /** 最近几次运行:结局和步数取小结,模型取概要;目标、回答、失败原话都不取。 */

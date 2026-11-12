@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "Mika"
-include(":core", ":app")
+include(":core", ":app", ":gadgetlink")

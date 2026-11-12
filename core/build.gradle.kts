@@ -83,6 +83,8 @@ tasks.test {
     inputs.dir(rootProject.file("app/src")).withPropertyName("appSources")
     // updateReadme 先改写 README,同一次构建里测试要读改写后的
     mustRunAfter(updateReadme)
+    // gadgetlink 是纯 JVM 模块(配对密码学,对照官方向量);CI 的 core (JVM) 只跑 :core:test,让它的测试跟着一起跑
+    dependsOn(":gadgetlink:test")
     // 循环场景的消息序列金样;-PupdateSnapshots 时重新生成(见 LoopSnapshot)
     systemProperty("mika.snapshotDir", file("src/test/resources/loop-snapshots").absolutePath)
     // 提示词表面(系统提示词、工具定义、反馈文字)的金样;同样用 -PupdateSnapshots 重新生成(见 PromptSurface)
