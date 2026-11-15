@@ -4,7 +4,9 @@
 // Apache License 2.0). Mudanças: máquina de estados dirigida por eventos do WebSocket (o
 // OkHttp chama callbacks, não há asyncio) e SEM comandos: o device se registra como
 // comunicador, e qualquer link.invoke recebe "unsupported command" (nada é executado).
-// Chat, TTS, voz e imagens do SDK ficam para os passos 5 e 6.
+// Chat, TTS, voz e imagens do SDK ficam para os passos 5 e 6. A voz usa esta mesma classe numa
+// segunda instância com registerDevice = false (como o register_device=False do SDK): sem
+// /link-control e sem link.register, só os streams abertos com openStream.
 package com.darlisonfarich.gadgetlink.noise
 
 import kotlinx.serialization.json.JsonArray
@@ -44,10 +46,39 @@ interface LinkSocket {
 
 interface LinkListener {
     fun onRegistered() {}
+
+    /**
+     * Só em sessão sem registro (`registerDevice = false`): o handshake terminou e a sessão está
+     * pronta para [LinkSession.openStream]. Nada foi enviado ainda além do handshake.
+     */
+    fun onTransportReady() {}
+
     fun onOutcome(outcome: LinkOutcome) {}
 
     /** Linhas de registro: nunca levam token, chave nem o conteúdo das mensagens. */
     fun log(line: String) {}
+}
+
+/**
+ * Quem consome um stream aberto por [LinkSession.openStream]. Os callbacks rodam na thread do
+ * WebSocket, sob o monitor da sessão: não podem bloquear, e só entregam o que o Muse mandou naquele stream.
+ */
+interface StreamSink {
+    fun onResponse(status: Int, body: ByteArray, end: Boolean) {}
+    fun onBody(data: ByteArray, end: Boolean) {}
+    fun onReset(code: ResetCode, reason: String) {}
+}
+
+/** O que aconteceu com um corpo mandado por [LinkSession.sendStreamBody]. */
+enum class StreamSend {
+    /** cifrado e entregue ao socket */
+    SENT,
+
+    /** barrado pela checagem de admissão, antes de cifrar: nada saiu e nenhum nonce foi gasto */
+    GATED,
+
+    /** a sessão não está ativa ou o envio falhou (a sessão se encerra) */
+    FAILED,
 }
 
 /**
@@ -62,6 +93,11 @@ class LinkSession(
     private val newInitiator: () -> NoiseXxInitiator = { NoiseXxInitiator() },
     private val newRequestId: () -> String = { UUID.randomUUID().toString() },
     private val chunkIds: () -> Long = SecureRandom()::nextLong,
+    /**
+     * Verdadeiro (a instância do link do gadget): depois do handshake abre /link-control e manda
+     * link.register. Falso (a sessão da voz do SDK): não manda nada até o [openStream].
+     */
+    private val registerDevice: Boolean = true,
 ) {
     private enum class State { NEW, AWAIT_MSG2, ACTIVE, DONE }
 
@@ -71,6 +107,9 @@ class LinkSession(
     private var controlStreamId = 0L
     private var registerId = ""
     private val decoder = MessageDecoder()
+
+    /** Streams abertos por [openStream], por id. Fica vazio na instância registrada. */
+    private val streams = HashMap<Long, StreamSink>()
 
     @Volatile var isRegistered = false
         private set
@@ -135,6 +174,50 @@ class LinkSession(
         }
     }
 
+    /**
+     * Abre um stream POST em [path] e passa a entregar ao [sink] tudo o que o Muse mandar nele.
+     * @return o id do stream, ou null se a sessão não está ativa ou o envio falhou.
+     */
+    @Synchronized fun openStream(path: String, headers: List<Header>, sink: StreamSink): Long? {
+        val t = transport
+        if (state != State.ACTIVE || t == null) return null
+        return try {
+            val opened = t.startStreamRequest("POST", path, headers = headers)
+            streams[opened.streamId] = sink // antes de enviar: nenhuma resposta se perde
+            if (sendAll(opened.frames)) {
+                opened.streamId
+            } else {
+                streams.remove(opened.streamId)
+                null
+            }
+        } catch (e: Throwable) {
+            fail("could not open a stream", e)
+            null
+        }
+    }
+
+    /**
+     * Manda um pedaço de corpo pelo stream [streamId]. [admissible] é consultado sob o monitor da
+     * sessão, ANTES de cifrar: se disser que não, nada é cifrado, então nenhum nonce nem chunk id é
+     * gasto e o quadro simplesmente some (GATED). Não chame a sessão de dentro dele.
+     */
+    @Synchronized fun sendStreamBody(
+        streamId: Long,
+        data: ByteArray,
+        end: Boolean = false,
+        admissible: () -> Boolean = { true },
+    ): StreamSend {
+        val t = transport
+        if (state != State.ACTIVE || t == null) return StreamSend.FAILED
+        if (!admissible()) return StreamSend.GATED
+        return try {
+            if (sendAll(t.encryptBodyChunk(streamId, data, endBody = end))) StreamSend.SENT else StreamSend.FAILED
+        } catch (e: Throwable) {
+            fail("could not send a stream body", e)
+            StreamSend.FAILED
+        }
+    }
+
     // ---- handshake e registro -----------------------------------------------------------------
     private fun handshake(data: ByteArray) {
         val ini = initiator!!
@@ -150,7 +233,7 @@ class LinkSession(
             fail("Noise handshake failed", t)
             return
         }
-        openControlStream()
+        if (registerDevice) openControlStream() else listener.onTransportReady()
     }
 
     private fun openControlStream() {
@@ -181,7 +264,11 @@ class LinkSession(
             fail("could not read a frame", e)
             return
         } ?: return
-        if (frame.streamId != controlStreamId) return // só existe o stream de controle
+        // Sem registro não há stream de controle (controlStreamId fica em 0, que não é um id de stream de verdade).
+        if (!registerDevice || frame.streamId != controlStreamId) {
+            streams[frame.streamId]?.let { dispatch(frame, it) } // stream que ninguém abriu: descartado
+            return
+        }
 
         val body: ByteArray
         val ended: Boolean
@@ -223,6 +310,25 @@ class LinkSession(
         if (ended) {
             listener.log("control stream ended by VM")
             finish(LinkOutcome.CLOSED)
+        }
+    }
+
+    /** Entrega o quadro ao dono do stream; fim ou reset tiram o stream da tabela. */
+    private fun dispatch(frame: DecryptedFrame, sink: StreamSink) {
+        when (val value = frame.value) {
+            is ApplicationResponse -> {
+                if (value.endBody) streams.remove(frame.streamId)
+                sink.onResponse(value.status, value.body, value.endBody)
+            }
+            is BodyChunk -> {
+                if (value.endBody) streams.remove(frame.streamId)
+                sink.onBody(value.data, value.endBody)
+            }
+            is Reset -> {
+                streams.remove(frame.streamId)
+                sink.onReset(value.code, value.reason)
+            }
+            else -> Unit
         }
     }
 
