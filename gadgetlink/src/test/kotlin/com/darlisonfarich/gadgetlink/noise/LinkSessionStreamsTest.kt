@@ -12,7 +12,8 @@ import org.junit.Test
 
 /**
  * Testes 2, 3 e 4 da refatoração da LinkSession (o teste 1, o da instância registrada, está em
- * [LinkSessionRegisteredInstanceTest]). Foram escritos ANTES da implementação: a API que usam
+ * [LinkSessionRegisteredInstanceTest]), mais o 5 (status não-2xx num stream de dados), pedido na
+ * revisão do PR #35 e escrito depois da implementação. Foram escritos ANTES da implementação: a API que usam
  * (`registerDevice`, `LinkListener.onTransportReady`, `StreamSink`, `openStream`, `sendStreamBody`,
  * `StreamSend`) ainda não existia, então a primeira execução é uma falha de compilação listando
  * exatamente esses nomes. É para a voz do SDK: uma segunda sessão Noise, sem /link-control e sem
@@ -148,6 +149,56 @@ class LinkSessionStreamsTest {
         assertTrue("o reset de um stream não encerra a sessão", r.events.outcomes.isEmpty())
         assertFalse(r.muse.closed)
         assertEquals("a sessão não mandou nada além das duas aberturas", 2, r.muse.seen.size)
+    }
+
+    // ---- teste 5 (pedido na revisão do PR #35) -------------------------------------------------
+    /**
+     * Falha se: um status não-2xx num stream de dados for tratado como o do stream de controle
+     * (encerrar a sessão, fechar o socket, virar FORBIDDEN), se o sink não receber o status, ou se
+     * depois dele a sessão parar de abrir e rotear streams. É o caso do 5.0: a admissão da voz
+     * recusada (4xx/5xx em /voice/realtime) é um resultado da chamada, não uma queda do link.
+     * Contraste no fim: o mesmo 403 no stream de controle da instância registrada encerra FORBIDDEN.
+     */
+    @Test
+    fun aNon2xxStatusOnAnOpenStreamGoesToItsSinkAndDoesNotEndTheSession() {
+        val r = Rig(device, registerDevice = false)
+        r.connect()
+        val refused = Sink()
+        val failing = Sink()
+        val idRefused = r.session.openStream("$callPath&n=403", ndjson, refused)!!
+        val idFailing = r.session.openStream("$callPath&n=500", ndjson, failing)!!
+
+        r.muse.response(idRefused, 403, "denied".toByteArray(), end = true)
+        r.muse.response(idFailing, 500, "oops".toByteArray()) // sem fim: o stream continua aberto
+        r.muse.body(idFailing, "tail".toByteArray(), end = true)
+        r.muse.body(idRefused, "after-end".toByteArray()) // 403 veio com fim: ninguém mais recebe
+        r.pump()
+
+        assertEquals(listOf("response 403 [denied] end=true"), refused.events)
+        assertEquals(listOf("response 500 [oops] end=false", "body tail end=true"), failing.events)
+        assertTrue("status de stream de dados não encerra a sessão", r.events.outcomes.isEmpty())
+        assertFalse("nem fecha o socket", r.muse.closed)
+
+        // A sessão segue viva: abre outro stream e roteia normalmente.
+        val next = Sink()
+        val idNext = r.session.openStream("$callPath&n=next", ndjson, next)
+        assertNotNull("depois do 403/500 a sessão ainda abre streams", idNext)
+        r.muse.response(idNext!!, 200)
+        r.muse.body(idNext, "ok".toByteArray())
+        r.pump()
+        assertEquals(listOf("response 200 [] end=false", "body ok end=false"), next.events)
+        assertEquals(StreamSend.SENT, r.session.sendStreamBody(idNext, "pcm".toByteArray()))
+        assertArrayEquals("pcm".toByteArray(), r.muse.bodyOf(idNext))
+        assertTrue(r.events.outcomes.isEmpty())
+
+        // Contraste: o mesmo 403 no stream de controle da instância registrada encerra a sessão.
+        val registered = Rig(device, registerDevice = true)
+        registered.connect()
+        val control = registered.muse.opened().single().streamId
+        registered.muse.response(control, 403, "denied".toByteArray(), end = true)
+        registered.pump()
+        assertEquals(listOf(LinkOutcome.FORBIDDEN), registered.events.outcomes)
+        assertTrue(registered.muse.closed)
     }
 
     // ---- teste 4 -------------------------------------------------------------------------------
