@@ -108,15 +108,49 @@ object GadgetLink {
         message?.let { log("LINK ERROR: $it") }
     }
 
+    // A intenção do usuário sobre o link fica gravada: é ela que manda no retorno depois do boot.
+    // Sem gravação nenhuma (build antiga), pareamento salvo conta como ligado — parear foi a adesão;
+    // um "Desconectar" explícito grava false e é respeitado até o próximo "Conectar".
+    private const val PREFS = "gadget_link"
+    private const val KEY_LINK_ENABLED = "link_enabled"
+
+    private fun linkEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_LINK_ENABLED, true)
+
+    private fun setLinkEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_LINK_ENABLED, enabled).commit()
+    }
+
     /** Liga o celular ao Muse e o mantém registrado. Só depois de conferir as permissões (a UI faz isso no toque). */
     fun connect(context: Context) {
         val app = context.applicationContext
+        setLinkEnabled(app, true)
         app.startForegroundService(Intent(app, GadgetConnectService::class.java).setAction(GadgetConnectService.ACTION_START))
     }
 
     fun disconnect(context: Context) {
         val app = context.applicationContext
+        setLinkEnabled(app, false)
         app.startService(Intent(app, GadgetConnectService::class.java).setAction(GadgetConnectService.ACTION_STOP))
+    }
+
+    /** A decisão do retorno, pura para testar: só religa se o usuário deixou ligado e há pareamento salvo. */
+    fun shouldResumeLink(linkEnabled: Boolean, hasPairing: Boolean): Boolean = linkEnabled && hasPairing
+
+    /**
+     * Chamado no boot (e na atualização do próprio app): religa o link sozinho quando o usuário o
+     * deixou ligado e existe pareamento salvo. Sem pareamento não há o que religar — parear é manual.
+     * O link é internet pura (o serviço não depende de Bluetooth), então não passa pelo portão de
+     * permissões do setup; se o sistema recusar o serviço em primeiro plano, o erro aparece na
+     * Diagnostics como em qualquer outra subida.
+     */
+    fun resumeLinkAfterBoot(context: Context) {
+        val app = context.applicationContext
+        val hasPairing = runCatching { state(app).pairing() != null }.getOrDefault(false)
+        if (!shouldResumeLink(linkEnabled(app), hasPairing)) return
+        log("LINK resume after boot")
+        connect(app)
     }
 
     internal fun onLinkState(state: SupervisorState, detail: String) {
