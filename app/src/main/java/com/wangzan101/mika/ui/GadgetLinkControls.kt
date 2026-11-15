@@ -130,6 +130,7 @@ fun GadgetLinkControls(reload: () -> Unit) {
                 kind = ButtonKind.Tonal,
             )
         }
+        VoiceAdmissionControls()
     }
 }
 
