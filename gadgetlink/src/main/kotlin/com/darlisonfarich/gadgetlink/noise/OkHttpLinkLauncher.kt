@@ -24,6 +24,11 @@ class OkHttpLinkLauncher(
     private val secure: Boolean = true,
     private val log: (String) -> Unit = {},
     private val userAgent: String = MuseApi.USER_AGENT,
+    /**
+     * app_id da URL do Noise (fixo por conexão, vai no upgrade). null = sem app_id, como o link do
+     * gadget sempre foi; a voz usa "hatch-web" (a única identidade nomeada no SDK).
+     */
+    private val appId: String? = null,
 ) : SessionLauncher {
     companion object {
         const val PING_INTERVAL_S = 20L
@@ -35,18 +40,49 @@ class OkHttpLinkLauncher(
     }
 
     override fun launch(vm: Vm, pairing: PairingRecord, events: SessionLauncher.Events): SessionLauncher.Handle {
+        var registeredAtMs: Long? = null
+        val session = open(vm, pairing, registerDevice = true, listener = object : LinkListener {
+            override fun onRegistered() {
+                registeredAtMs = clock.nowMs()
+                events.onRegistered()
+            }
+
+            override fun onOutcome(outcome: LinkOutcome) {
+                val lasted = registeredAtMs?.let { clock.nowMs() - it } ?: 0L
+                events.onEnded(outcome, lasted)
+            }
+
+            override fun log(line: String) = this@OkHttpLinkLauncher.log(line)
+        }) ?: return Done()
+        return object : SessionLauncher.Handle {
+            override fun stop() = session.stop()
+        }
+    }
+
+    /**
+     * Abre o WebSocket Noise e devolve a [LinkSession] que o roda. [registerDevice] falso é a sessão da
+     * voz (sem /link-control). [onUpgrade] recebe o status HTTP do upgrade: 101 quando abriu, o código
+     * quando foi recusado, null quando caiu sem resposta HTTP. Devolve null (e já entregou CLOSED ao
+     * [listener]) se o noise_host salvo não vira URL.
+     */
+    fun open(
+        vm: Vm,
+        pairing: PairingRecord,
+        registerDevice: Boolean,
+        listener: LinkListener,
+        onUpgrade: (Int?) -> Unit = {},
+    ): LinkSession? {
         val host = pairing.noiseHost.ifEmpty { LinkWire.DEFAULT_NOISE_HOST }
         val vmId = vm.vmId.ifEmpty { vm.vmName }
         val url = try {
-            LinkWire.noiseUrl(host, vmId).let { if (secure) it else it.replaceFirst("wss://", "ws://") }
+            LinkWire.noiseUrl(host, vmId, appId).let { if (secure) it else it.replaceFirst("wss://", "ws://") }
         } catch (e: IllegalArgumentException) {
             // O noise_host vem do celular que pareou: só host:porta puro vira URL (nada de caminho, usuário, consulta).
             log("invalid noise host; not connecting")
-            events.onEnded(LinkOutcome.CLOSED, 0)
-            return Done()
+            listener.onOutcome(LinkOutcome.CLOSED)
+            return null
         }
 
-        var registeredAtMs: Long? = null
         lateinit var ws: WebSocket
         val socket = object : LinkSocket {
             override fun sendBinary(data: ByteArray): Boolean = ws.send(data.toByteString())
@@ -54,23 +90,7 @@ class OkHttpLinkLauncher(
                 ws.close(1000, "done")
             }
         }
-        val session = LinkSession(
-            device = device(pairing),
-            socket = socket,
-            listener = object : LinkListener {
-                override fun onRegistered() {
-                    registeredAtMs = clock.nowMs()
-                    events.onRegistered()
-                }
-
-                override fun onOutcome(outcome: LinkOutcome) {
-                    val lasted = registeredAtMs?.let { clock.nowMs() - it } ?: 0L
-                    events.onEnded(outcome, lasted)
-                }
-
-                override fun log(line: String) = this@OkHttpLinkLauncher.log(line)
-            },
-        )
+        val session = LinkSession(device = device(pairing), socket = socket, listener = listener, registerDevice = registerDevice)
 
         // O bearer da VM vai no cabeçalho do upgrade, nunca na URL nem no log.
         val request = Request.Builder()
@@ -83,12 +103,13 @@ class OkHttpLinkLauncher(
             .connectTimeout(HANDSHAKE_TIMEOUT_S, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.MILLISECONDS) // o ping de 20 s é quem acusa uma conexão morta
             .build()
-        log("connecting to ${vm.vmName.ifEmpty { vm.vmId }}")
+        log("connecting to ${vm.vmName.ifEmpty { vm.vmId }}" + if (appId != null) " (app $appId)" else "")
         ws = http.newWebSocket(request, object : WebSocketListener() {
             private var opened = false
 
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 opened = true
+                onUpgrade(response.code)
                 session.onOpen()
             }
 
@@ -105,11 +126,10 @@ class OkHttpLinkLauncher(
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 // Antes de abrir, uma resposta HTTP é o upgrade recusado; depois, é a conexão que caiu.
+                if (!opened) onUpgrade(response?.code)
                 if (!opened && response != null) session.onUpgradeRejected(response.code) else session.onClosed(t.javaClass.simpleName)
             }
         })
-        return object : SessionLauncher.Handle {
-            override fun stop() = session.stop()
-        }
+        return session
     }
 }

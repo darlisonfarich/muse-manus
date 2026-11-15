@@ -115,6 +115,9 @@ class LinkSession(
         private set
 
     companion object {
+        /** Corpo máximo de um pedido de uma vez só (MAX_INLINE_REQUEST_BYTES do SDK). */
+        const val MAX_INLINE_REQUEST_BYTES = 64 * 1024
+
         /** O upgrade do WebSocket recusado: 401 pede VMs novas, 403 é "agora não"; outro status não é conclusivo. */
         fun outcomeForUpgradeStatus(status: Int): LinkOutcome? = when (status) {
             401 -> LinkOutcome.AUTH_REJECTED
@@ -178,11 +181,38 @@ class LinkSession(
      * Abre um stream POST em [path] e passa a entregar ao [sink] tudo o que o Muse mandar nele.
      * @return o id do stream, ou null se a sessão não está ativa ou o envio falhou.
      */
-    @Synchronized fun openStream(path: String, headers: List<Header>, sink: StreamSink): Long? {
+    @Synchronized fun openStream(path: String, headers: List<Header>, sink: StreamSink): Long? =
+        open(sink) { it.startStreamRequest("POST", path, headers = headers) }
+
+    /**
+     * Pedido de uma vez só (corpo inteiro e end_body no mesmo quadro, como o `request` do SDK, que é
+     * como o end-call da voz sai): a resposta chega ao [sink] como a de um stream. [body] precisa caber
+     * num pedido em linha (o SDK parte acima de 64 KiB; quem chama aqui manda poucos bytes).
+     * @return o id do stream, ou null se a sessão não está ativa ou o envio falhou.
+     */
+    @Synchronized fun openRequest(method: String, path: String, headers: List<Header>, body: ByteArray, sink: StreamSink): Long? {
+        require(body.size <= MAX_INLINE_REQUEST_BYTES) { "request body too large for one frame" }
+        return open(sink) { it.encryptHttpRequest(method, path, body, headers = headers) }
+    }
+
+    /** Cancela um stream aberto (reset do lado do cliente) e para de entregar o que ainda chegar nele. */
+    @Synchronized fun resetStream(streamId: Long, reason: String = ""): Boolean {
+        val t = transport
+        if (state != State.ACTIVE || t == null) return false
+        streams.remove(streamId)
+        return try {
+            sendAll(t.encryptReset(streamId, reason = reason))
+        } catch (e: Throwable) {
+            fail("could not reset a stream", e)
+            false
+        }
+    }
+
+    private fun open(sink: StreamSink, encrypt: (NoiseTransport) -> EncryptedFrames): Long? {
         val t = transport
         if (state != State.ACTIVE || t == null) return null
         return try {
-            val opened = t.startStreamRequest("POST", path, headers = headers)
+            val opened = encrypt(t)
             streams[opened.streamId] = sink // antes de enviar: nenhuma resposta se perde
             if (sendAll(opened.frames)) {
                 opened.streamId

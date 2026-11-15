@@ -100,12 +100,13 @@ class OkHttpLinkLauncherTest {
     private val pairing = PairingRecord("a", "r", "", "", 0, null)
     private val vm = Vm("wss://ignored", "vm-token-123", "Alpha", "vm-id-9", true)
 
-    private fun launcher(clock: LinkClock = Clock(), logs: MutableList<String> = ArrayList()) = OkHttpLinkLauncher(
+    private fun launcher(clock: LinkClock = Clock(), logs: MutableList<String> = ArrayList(), appId: String? = null) = OkHttpLinkLauncher(
         client = OkHttpClient(),
         device = { DeviceDescription("homelink-abc123", "Celular", "0.1.7") },
         clock = clock,
         secure = false,
         log = { logs += it },
+        appId = appId,
     )
 
     private fun museServer(muse: MuseSocket): MockWebServer {
@@ -142,6 +143,45 @@ class OkHttpLinkLauncherTest {
         val (outcome, _) = events.ended.poll(10, TimeUnit.SECONDS)!!
         assertEquals(LinkOutcome.STOPPED, outcome)
         assertTrue("só um desfecho", events.ended.isEmpty())
+    }
+
+    /**
+     * A sessão da voz (5.0): app_id=hatch-web na URL do upgrade, status 101 entregue, nenhum /link-control
+     * nem link.register, e o stream pedido sai pelo socket de verdade. Falha se o app_id não chegar à URL
+     * (o launcher não o repassava antes do 5.0) ou se a instância sem registro abrir o controle.
+     */
+    @Test
+    fun theVoiceSessionCarriesTheHatchWebAppIdAndOpensOnlyTheStreamItIsAskedFor() {
+        val muse = MuseSocket { _, _ -> error("a sessão da voz nunca manda link.register") }
+        val server = museServer(muse)
+        val ready = CountDownLatch(1)
+        val upgrades = LinkedBlockingQueue<Int>()
+        val outcomes = LinkedBlockingQueue<LinkOutcome>()
+        val session = launcher(appId = "hatch-web").open(vm, pairing.at(server), registerDevice = false, listener = object : LinkListener {
+            override fun onTransportReady() = ready.countDown()
+            override fun onOutcome(outcome: LinkOutcome) { outcomes += outcome }
+        }, onUpgrade = { upgrades += it ?: -1 })!!
+        assertTrue("handshake pronto", ready.await(10, TimeUnit.SECONDS))
+        assertEquals(101, upgrades.poll(5, TimeUnit.SECONDS))
+        val upgrade = server.takeRequest(5, TimeUnit.SECONDS)!!
+        assertEquals("/v1/noise?vm_id=vm-id-9&app_id=hatch-web", upgrade.path)
+        assertEquals("Bearer vm-token-123", upgrade.getHeader("Authorization"))
+
+        assertNotNull(session.openStream("/voice/realtime?call_id=c-1", listOf(Header("Content-Type", "application/x-ndjson; charset=utf-8")), object : StreamSink {}))
+        val first = muse.requests.poll(5, TimeUnit.SECONDS)!!
+        assertEquals("o primeiro pedido é o da voz, não /link-control", "/voice/realtime?call_id=c-1", first.path)
+        session.stop()
+        assertEquals(LinkOutcome.STOPPED, outcomes.poll(10, TimeUnit.SECONDS))
+        assertTrue("nenhum outro pedido", muse.requests.isEmpty())
+
+        // Upgrade recusado: o status chega ao chamador antes do desfecho.
+        val refusing = MockWebServer().also { it.enqueue(MockResponse().setResponseCode(403)); it.start(); servers += it }
+        val refused = LinkedBlockingQueue<LinkOutcome>()
+        launcher(appId = "hatch-web").open(vm, pairing.at(refusing), registerDevice = false, listener = object : LinkListener {
+            override fun onOutcome(outcome: LinkOutcome) { refused += outcome }
+        }, onUpgrade = { upgrades += it ?: -1 })
+        assertEquals(403, upgrades.poll(10, TimeUnit.SECONDS))
+        assertEquals(LinkOutcome.FORBIDDEN, refused.poll(10, TimeUnit.SECONDS))
     }
 
     @Test
