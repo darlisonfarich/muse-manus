@@ -34,13 +34,27 @@ fun fieldsNote(names: List<String>?): String =
     // Filtra de novo (o "+N" do teto passa): a nota não confia em quem implementou a porta.
     else names.map { if (Regex("\\+[0-9]{1,6}").matches(it)) it else MuseApi.safeFieldName(it) }.joinToString(",", "fields=[", "]")
 
+/**
+ * A parte da nota do FETCH_VMS com os valores dos campos de metadado da entrada escolhida:
+ * `meta=[vm_ingress_kind=noise,vm_state=running,vm_type=gadget]` (chaves em ordem alfabética, valores já
+ * filtrados por MuseApi.safeMetaValue) ou `meta=unknown` quando a porta não sabe os valores. Só os três
+ * campos da whitelist ([MuseApi.META_FIELD_NAMES]); nenhum outro valor chega aqui.
+ */
+fun metaNote(meta: Map<String, String>?): String =
+    if (meta == null) "meta=unknown"
+    // Filtra de novo e impõe a whitelist: a nota não confia em quem implementou a porta — uma chave
+    // fora de META_FIELD_NAMES (ex.: vm_name) some, mesmo com valor de aparência segura.
+    else meta.entries.sortedBy { it.key }.filter { (k, _) -> k in MuseApi.META_FIELD_NAMES }
+        .joinToString(",", "meta=[", "]") { (k, v) -> "${MuseApi.safeFieldName(k)}=${MuseApi.safeMetaValue(v)}" }
+
 /** Os estágios do 5.0, na ordem. Cada um gera exatamente uma linha de [VoiceStageEntry] quando roda. */
 enum class VoiceStage { PAIRING, FETCH_VMS, UPGRADE, HANDSHAKE, ADMISSION, READINESS, HOLD, END_CALL, END_CALL_REPEAT, CLOSE }
 
 /**
  * Uma linha do registro do 5.0: estágio, status HTTP, TAMANHO do corpo, ms. [note] vem de um vocabulário
- * fixo deste arquivo; nunca é texto do servidor, token, id de chamada nem conteúdo. Única exceção: os
- * NOMES dos campos do fetch_vms no FETCH_VMS ([fieldsNote]), filtrados por MuseApi.safeFieldName.
+ * fixo deste arquivo; nunca é texto do servidor, token, id de chamada nem conteúdo. Exceções: os
+ * NOMES dos campos do fetch_vms no FETCH_VMS ([fieldsNote]), filtrados por MuseApi.safeFieldName, e os
+ * VALORES dos três campos de metadado da whitelist ([metaNote]), filtrados por MuseApi.safeMetaValue.
  */
 data class VoiceStageEntry(val stage: VoiceStage, val ok: Boolean, val status: Int?, val bytes: Long?, val ms: Long, val note: String) {
     fun line(): String =
@@ -198,7 +212,9 @@ class VoiceAdmissionProbe(
         val vm = list.vms.getOrNull(index) ?: return stop(ok = false, status = list.status, note = "$count no_vm")
         // Os nomes dos campos da entrada escolhida (nunca os valores): a VM anuncia alguma capacidade de voz?
         val names = fetched.fieldNames?.takeIf { it.size == list.vms.size }?.get(index)
-        record(true, list.status, null, count + (if (list.vms.size != 1) " not_exactly_one" else "") + " " + fieldsNote(names))
+        // Os valores dos campos de metadado da entrada escolhida (só a whitelist): que TIPO de VM é esta?
+        val meta = fetched.meta?.takeIf { it.size == list.vms.size }?.get(index)
+        record(true, list.status, null, count + (if (list.vms.size != 1) " not_exactly_one" else "") + " " + fieldsNote(names) + " " + metaNote(meta))
         upgrade(vm, pairing)
     }
 

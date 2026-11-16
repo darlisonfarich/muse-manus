@@ -148,7 +148,55 @@ class MuseApiClientTest {
         assertEquals(VmList(MuseApi.parseVmList(extrasBody), 200), detailed.list)
         assertEquals(MuseApi.parseVmEntryFieldNames(extrasBody), detailed.fieldNames)
         val (denied, _) = serve("/fetch_vms", 401, "{}")
-        assertEquals(VmListWithFields(VmList(emptyList(), 401), emptyList()), MuseApi.fetchVmListWithFields("t", denied))
+        assertEquals(VmListWithFields(VmList(emptyList(), 401), emptyList(), emptyList()), MuseApi.fetchVmListWithFields("t", denied))
+    }
+
+    // ---- 5.0.2: valores dos campos de metadado (só a whitelist) -------------------------------
+    private val metaBody = """
+        {"vm_list":[
+          {"vm_ws_url":"https://VAL-a","vm_auth_token":"VAL-tok-a","vm_name":"VAL-a","vm_id":"VAL-id-a","default":true,
+           "vm_type":"VAL-type-a","vm_state":"VAL-state-a","vm_ingress_kind":"VAL-ingress-a","vm_notary_tokens":["VAL-notary"],"region":"VAL-region"},
+          {"vm_url":"https://VAL-b","vm_auth_token":"VAL-tok-b","vm_name":"VAL-b","vm_id":"VAL-id-b","default":false}
+        ]}
+    """.trimIndent()
+
+    @Test
+    fun entryMetaListsOnlyTheWhitelistedValuesAlignedWithTheParsedList() {
+        val meta = MuseApi.parseVmEntryMeta(metaBody)
+        assertEquals(MuseApi.parseVmList(metaBody).size, meta.size)
+        assertEquals(
+            listOf(
+                mapOf("vm_ingress_kind" to "VAL-ingress-a", "vm_state" to "VAL-state-a", "vm_type" to "VAL-type-a"),
+                emptyMap(),
+            ),
+            meta,
+        )
+        // Nenhum outro valor sai: nem token, nem notário, nem URL, nem id, nem nome, nem região.
+        val shown = meta.flatMap { it.values }
+        assertTrue("só os três valores da whitelist", shown.size == 3 && shown.none { it.contains("VAL-tok") || it.contains("VAL-notary") || it.contains("VAL-id") })
+    }
+
+    @Test
+    fun unsafeOrNonScalarMetaValuesAreRedacted() {
+        val odd = """{"vm_list":[{"vm_url":"u","vm_auth_token":"t",
+          "vm_type":"has space","vm_state":{"nested":1},"vm_ingress_kind":"${"k".repeat(41)}","vm_name":"n"}]}"""
+        assertEquals(listOf(mapOf("vm_ingress_kind" to "?", "vm_state" to "?", "vm_type" to "?")), MuseApi.parseVmEntryMeta(odd))
+        assertEquals(listOf(emptyMap<String, String>()), MuseApi.parseVmEntryMeta("""{"vm_list":[{"vm_url":"u","vm_auth_token":"t"}]}"""))
+        assertEquals(listOf(mapOf("vm_type" to "gadget")), MuseApi.parseVmEntryMeta("""{"vm_list":[{"vm_url":"u","vm_auth_token":"t","vm_type":"gadget"}]}"""))
+        for (body in listOf("""{"error_title":"x","vm_list":[{"vm_url":"u","vm_auth_token":"t"}]}""", "[]", "garbage", """{"vm_list":"no"}""")) {
+            assertEquals(body, emptyList<Map<String, String>>(), MuseApi.parseVmEntryMeta(body))
+        }
+    }
+
+    @Test
+    fun theDetailedFetchCarriesMetaToo() {
+        val (root, seen) = serve("/fetch_vms", 200, metaBody)
+        val detailed = MuseApi.fetchVmListWithFields("device-access", root)
+        assertEquals(1, seen.size)
+        assertEquals(VmList(MuseApi.parseVmList(metaBody), 200), detailed.list)
+        assertEquals(MuseApi.parseVmEntryMeta(metaBody), detailed.meta)
+        val (denied, _) = serve("/fetch_vms", 401, "{}")
+        assertEquals(VmListWithFields(VmList(emptyList(), 401), emptyList(), emptyList()), MuseApi.fetchVmListWithFields("t", denied))
     }
 
     // ---- renovação do token -----------------------------------------------------------------------

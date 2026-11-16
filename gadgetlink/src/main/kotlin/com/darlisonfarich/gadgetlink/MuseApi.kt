@@ -31,11 +31,12 @@ data class Vm(val vmUrl: String, val vmAuthToken: String, val vmName: String, va
 data class VmList(val vms: List<Vm>, val status: Int?)
 
 /**
- * O [VmList] mais os NOMES dos campos brutos de cada entrada aceita (nunca os valores), alinhados por
- * índice com [VmList.vms]. fieldNames = null: quem respondeu não sabe os nomes (ex.: porta de teste).
- * Fica separado do [VmList] para não mexer no contrato de igualdade dele.
+ * O [VmList] mais os NOMES dos campos brutos de cada entrada aceita (nunca os valores) e os VALORES dos
+ * três campos de metadado da whitelist ([META_FIELD_NAMES]), alinhados por índice com [VmList.vms].
+ * fieldNames/meta = null: quem respondeu não sabe (ex.: porta de teste). Fica separado do [VmList]
+ * para não mexer no contrato de igualdade dele.
  */
-data class VmListWithFields(val list: VmList, val fieldNames: List<List<String>>?)
+data class VmListWithFields(val list: VmList, val fieldNames: List<List<String>>?, val meta: List<Map<String, String>>? = null)
 
 data class TokenPair(val accessToken: String, val refreshToken: String)
 
@@ -124,7 +125,8 @@ object MuseApi {
 
     /**
      * O mesmo GET de [fetchVmList] (uma chamada só), devolvendo também os nomes dos campos de cada entrada
-     * aceita ([parseVmEntryFieldNames]). Sem corpo utilizável, a lista de nomes é vazia (não null).
+     * aceita ([parseVmEntryFieldNames]) e os valores dos campos de metadado ([parseVmEntryMeta]). Sem corpo
+     * utilizável, as listas são vazias (não null).
      */
     fun fetchVmListWithFields(
         accessToken: String,
@@ -137,11 +139,11 @@ object MuseApi {
             mapOf("Authorization" to "Bearer $accessToken", "X-API-Version" to "1.0.0", "User-Agent" to USER_AGENT),
             null, timeoutMs, totalTimeoutMs,
         )
-        val status = reply.status ?: return VmListWithFields(VmList(emptyList(), null), emptyList())
-        val body = reply.body ?: return VmListWithFields(VmList(emptyList(), status), emptyList())
+        val status = reply.status ?: return VmListWithFields(VmList(emptyList(), null), emptyList(), emptyList())
+        val body = reply.body ?: return VmListWithFields(VmList(emptyList(), status), emptyList(), emptyList())
         val text = runCatching { Utf8.decodeStrict(body) }.getOrNull()
-            ?: return VmListWithFields(VmList(emptyList(), status), emptyList())
-        return VmListWithFields(VmList(parseVmList(text), status), parseVmEntryFieldNames(text))
+            ?: return VmListWithFields(VmList(emptyList(), status), emptyList(), emptyList())
+        return VmListWithFields(VmList(parseVmList(text), status), parseVmEntryFieldNames(text), parseVmEntryMeta(text))
     }
 
     fun fetchVms(
@@ -226,6 +228,29 @@ object MuseApi {
     fun parseVmEntryFieldNames(body: String): List<List<String>> = acceptedEntries(body).map { entry ->
         val names = entry.keys.map(::safeFieldName).sorted()
         if (names.size <= MAX_FIELD_NAMES) names else names.take(MAX_FIELD_NAMES - 1) + "+${names.size - (MAX_FIELD_NAMES - 1)}"
+    }
+
+    /**
+     * Os únicos campos cujos VALORES podem ir para o registro: rótulos de metadado da VM, nunca
+     * segredos (token, URL, id, nome). Qualquer outro campo fica de fora, por desenho.
+     */
+    val META_FIELD_NAMES = listOf("vm_ingress_kind", "vm_state", "vm_type")
+
+    /** Valor de metadado que pode ir para o registro: primitivo curto e só [A-Za-z0-9_.-]. O resto vira "?". */
+    private val SAFE_META_VALUE = Regex("[A-Za-z0-9_.-]{1,40}")
+
+    fun safeMetaValue(text: String): String = if (SAFE_META_VALUE.matches(text)) text else REDACTED_FIELD
+
+    /**
+     * Os VALORES dos campos de [META_FIELD_NAMES] de cada entrada que [parseVmList] aceita, em mapas com
+     * chaves em ordem alfabética e alinhados por índice com ela. Chave ausente some do mapa; valor
+     * presente mas não-primitivo, longo demais ou com outros caracteres sai como [REDACTED_FIELD].
+     */
+    fun parseVmEntryMeta(body: String): List<Map<String, String>> = acceptedEntries(body).map { entry ->
+        META_FIELD_NAMES.mapNotNull { key ->
+            val element = entry[key] ?: return@mapNotNull null
+            key to if (element is JsonPrimitive) safeMetaValue(element.content) else REDACTED_FIELD
+        }.toMap(LinkedHashMap())
     }
 
     /** Mesmo filtro do SDK: objeto, sem error_title/backend_error_code, vm_list com (vm_ws_url ou vm_url) e token. */

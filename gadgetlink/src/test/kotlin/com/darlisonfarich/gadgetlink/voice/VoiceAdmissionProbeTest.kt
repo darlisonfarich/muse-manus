@@ -65,6 +65,8 @@ class VoiceAdmissionProbeTest {
         private val upgrade: Int? = 101,
         /** Nomes dos campos que a porta devolve junto da lista (null = a porta não sabe, como o padrão). */
         private val fieldNames: List<List<String>>? = null,
+        /** Valores de metadado que a porta devolve junto da lista (null = a porta não sabe, como o padrão). */
+        private val meta: List<Map<String, String>>? = null,
     ) {
         val time = Time()
         val muse = StreamMuse(fixedKeys(0x33, 0x44))
@@ -87,7 +89,7 @@ class VoiceAdmissionProbeTest {
                 return if (lists.size > 1) lists.removeAt(0) else lists.first()
             }
             override fun fetchVmListWithFields(accessToken: String, apiRoot: String) =
-                VmListWithFields(fetchVmList(accessToken, apiRoot), fieldNames)
+                VmListWithFields(fetchVmList(accessToken, apiRoot), fieldNames, meta)
             override fun refreshDeviceToken(refreshToken: String, deviceId: String, apiRoot: String, sdkToken: String?): RefreshResult =
                 error("o 5.0 nunca renova o token")
         }
@@ -428,22 +430,22 @@ class VoiceAdmissionProbeTest {
         )
         r.start()
         val fetch = r.stages.single { it.stage == VoiceStage.FETCH_VMS }
-        assertEquals("a VM escolhida é a default (a 2ª)", "vms=2 not_exactly_one fields=[capabilities,default,vm_auth_token,vm_ws_url]", fetch.note)
-        assertEquals("FETCH_VMS ok http=200 bytes=- ms=0 vms=2 not_exactly_one fields=[capabilities,default,vm_auth_token,vm_ws_url]", fetch.line())
+        assertEquals("a VM escolhida é a default (a 2ª)", "vms=2 not_exactly_one fields=[capabilities,default,vm_auth_token,vm_ws_url] meta=unknown", fetch.note)
+        assertEquals("FETCH_VMS ok http=200 bytes=- ms=0 vms=2 not_exactly_one fields=[capabilities,default,vm_auth_token,vm_ws_url] meta=unknown", fetch.line())
 
         val single = Rig(fieldNames = listOf(listOf("default", "vm_auth_token", "vm_id", "vm_name", "vm_ws_url")))
         single.start()
-        assertEquals("vms=1 fields=[default,vm_auth_token,vm_id,vm_name,vm_ws_url]", single.stages[1].note)
+        assertEquals("vms=1 fields=[default,vm_auth_token,vm_id,vm_name,vm_ws_url] meta=unknown", single.stages[1].note)
     }
 
     @Test
     fun unknownOrMisalignedFieldNamesSayUnknown() {
         val r = Rig()
         r.start()
-        assertEquals("vms=1 fields=unknown", r.stages[1].note)
+        assertEquals("vms=1 fields=unknown meta=unknown", r.stages[1].note)
         val misaligned = Rig(fieldNames = listOf(listOf("a"), listOf("b")))
         misaligned.start()
-        assertEquals("vms=1 fields=unknown", misaligned.stages[1].note)
+        assertEquals("vms=1 fields=unknown meta=unknown", misaligned.stages[1].note)
         // O padrão da interface: a mesma lista, nomes desconhecidos.
         val plain = object : MuseApiPort {
             override fun fetchVmList(accessToken: String, apiRoot: String) = VmList(listOf(vm), 200)
@@ -452,13 +454,50 @@ class VoiceAdmissionProbeTest {
         assertEquals(VmListWithFields(VmList(listOf(vm), 200), null), plain.fetchVmListWithFields("t", "r"))
     }
 
+    // ---- 5.0.2: valores dos campos de metadado na nota do FETCH_VMS ------------------------------
+    @Test
+    fun theMetaNoteHasAFixedFormat() {
+        assertEquals("meta=[vm_ingress_kind=noise,vm_state=running,vm_type=gadget]", metaNote(mapOf("vm_type" to "gadget", "vm_state" to "running", "vm_ingress_kind" to "noise")))
+        assertEquals("meta=[]", metaNote(emptyMap()))
+        assertEquals("meta=unknown", metaNote(null))
+        assertEquals("a porta não é de confiança: o valor ruim sai redigido", "meta=[vm_type=?]", metaNote(mapOf("vm_type" to "bad value")))
+        assertEquals("a porta não é de confiança: chave fora da whitelist some", "meta=[vm_type=gadget]", metaNote(mapOf("vm_name" to "LEAK", "vm_type" to "gadget")))
+    }
+
+    @Test
+    fun theFetchStageCarriesTheChosenVmMeta() {
+        val other = vm.copy(vmName = "other", isDefault = false)
+        val r = Rig(
+            lists = mutableListOf(VmList(listOf(other, vm), 200)),
+            fieldNames = listOf(listOf("vm_auth_token", "vm_url"), listOf("capabilities", "default", "vm_auth_token", "vm_ws_url")),
+            meta = listOf(mapOf("vm_type" to "other"), mapOf("vm_ingress_kind" to "noise", "vm_state" to "running", "vm_type" to "gadget")),
+        )
+        r.start()
+        val fetch = r.stages.single { it.stage == VoiceStage.FETCH_VMS }
+        assertEquals("a VM escolhida é a default (a 2ª)", "vms=2 not_exactly_one fields=[capabilities,default,vm_auth_token,vm_ws_url] meta=[vm_ingress_kind=noise,vm_state=running,vm_type=gadget]", fetch.note)
+    }
+
+    @Test
+    fun unknownOrMisalignedMetaSaysUnknown() {
+        val misaligned = Rig(meta = listOf(mapOf("vm_type" to "a"), mapOf("vm_type" to "b")))
+        misaligned.start()
+        assertEquals("vms=1 fields=unknown meta=unknown", misaligned.stages[1].note)
+        // O padrão da interface: a mesma lista, nomes e meta desconhecidos.
+        val plain = object : MuseApiPort {
+            override fun fetchVmList(accessToken: String, apiRoot: String) = VmList(listOf(vm), 200)
+            override fun refreshDeviceToken(refreshToken: String, deviceId: String, apiRoot: String, sdkToken: String?) = RefreshResult(null, null)
+        }
+        assertEquals(VmListWithFields(VmList(listOf(vm), 200), null, null), plain.fetchVmListWithFields("t", "r"))
+    }
+
     @Test
     fun noFetchVmsValueLeaksIntoEntriesResultOrLogs() {
         val body = """
             {"vm_list":[{"vm_ws_url":"wss://LEAKVAL-url","vm_auth_token":"LEAKVAL-token","vm_name":"LEAKVAL-name",
-              "vm_id":"LEAKVAL-id","default":true,"capabilities":{"voice":"LEAKVAL-cap"},"region":"LEAKVAL-region","ttl":987654321}]}
+              "vm_id":"LEAKVAL-id","default":true,"capabilities":{"voice":"LEAKVAL-cap"},"region":"LEAKVAL-region","ttl":987654321,
+              "vm_type":"gadget","vm_state":"running","vm_ingress_kind":"noise","vm_notary_tokens":["LEAKVAL-notary"]}]}
         """.trimIndent()
-        fun leakRig() = Rig(lists = mutableListOf(VmList(MuseApi.parseVmList(body), 200)), fieldNames = MuseApi.parseVmEntryFieldNames(body))
+        fun leakRig() = Rig(lists = mutableListOf(VmList(MuseApi.parseVmList(body), 200)), fieldNames = MuseApi.parseVmEntryFieldNames(body), meta = MuseApi.parseVmEntryMeta(body))
 
         val happy = leakRig()
         happy.admitAndBecomeReady()
@@ -476,7 +515,7 @@ class VoiceAdmissionProbeTest {
 
         for (r in listOf(happy, refused)) {
             val res = r.result!!
-            assertEquals("vms=1 fields=[capabilities,default,region,ttl,vm_auth_token,vm_id,vm_name,vm_ws_url]", r.stages[1].note)
+            assertEquals("vms=1 fields=[capabilities,default,region,ttl,vm_auth_token,vm_id,vm_ingress_kind,vm_name,vm_notary_tokens,vm_state,vm_type,vm_ws_url] meta=[vm_ingress_kind=noise,vm_state=running,vm_type=gadget]", r.stages[1].note)
             val text = (r.stages.map { it.line() } + r.probe.entries().map { it.toString() } + r.logs +
                 res.toString() + VoiceAdmissionDiagnosis.explain(res, r.stages)).joinToString("\n")
             for (value in listOf("LEAKVAL", "987654321", "SECRET")) {
