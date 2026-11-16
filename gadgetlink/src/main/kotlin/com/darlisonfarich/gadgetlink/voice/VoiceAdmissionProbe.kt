@@ -24,12 +24,23 @@ import com.darlisonfarich.gadgetlink.noise.StreamSend
 import com.darlisonfarich.gadgetlink.noise.StreamSink
 import java.util.UUID
 
+/**
+ * A parte da nota do FETCH_VMS com os nomes dos campos da entrada escolhida: `fields=[a,b,c]` (nomes já
+ * filtrados por MuseApi.parseVmEntryFieldNames, em ordem alfabética) ou `fields=unknown` quando a porta não
+ * sabe os nomes. Só nomes, nunca valores; a ordem é a recebida.
+ */
+fun fieldsNote(names: List<String>?): String =
+    if (names == null) "fields=unknown"
+    // Filtra de novo (o "+N" do teto passa): a nota não confia em quem implementou a porta.
+    else names.map { if (Regex("\\+[0-9]{1,6}").matches(it)) it else MuseApi.safeFieldName(it) }.joinToString(",", "fields=[", "]")
+
 /** Os estágios do 5.0, na ordem. Cada um gera exatamente uma linha de [VoiceStageEntry] quando roda. */
 enum class VoiceStage { PAIRING, FETCH_VMS, UPGRADE, HANDSHAKE, ADMISSION, READINESS, HOLD, END_CALL, END_CALL_REPEAT, CLOSE }
 
 /**
  * Uma linha do registro do 5.0: estágio, status HTTP, TAMANHO do corpo, ms. [note] vem de um vocabulário
- * fixo deste arquivo; nunca é texto do servidor, token, id de chamada nem conteúdo.
+ * fixo deste arquivo; nunca é texto do servidor, token, id de chamada nem conteúdo. Única exceção: os
+ * NOMES dos campos do fetch_vms no FETCH_VMS ([fieldsNote]), filtrados por MuseApi.safeFieldName.
  */
 data class VoiceStageEntry(val stage: VoiceStage, val ok: Boolean, val status: Int?, val bytes: Long?, val ms: Long, val note: String) {
     fun line(): String =
@@ -169,7 +180,8 @@ class VoiceAdmissionProbe(
 
     private fun fetchVms(pairing: PairingRecord, rereadAllowed: Boolean) {
         begin(VoiceStage.FETCH_VMS)
-        val list = api.fetchVmList(pairing.accessToken, MuseApi.apiRoot(pairing.apiUrlV2))
+        val fetched = api.fetchVmListWithFields(pairing.accessToken, MuseApi.apiRoot(pairing.apiUrlV2))
+        val list = fetched.list
         val count = "vms=${list.vms.size}"
         if (list.status == 401 && rereadAllowed) {
             // Token vencido/girado pelo serviço do link: relê o store UMA vez. Nunca renova daqui (a voz só lê).
@@ -182,9 +194,11 @@ class VoiceAdmissionProbe(
         }
         if (list.status == null) return stop(ok = false, note = "no_response")
         if (list.status !in 200..299) return stop(ok = false, status = list.status, note = count)
-        val vm = list.vms.firstOrNull { it.isDefault } ?: list.vms.firstOrNull()
-            ?: return stop(ok = false, status = list.status, note = "$count no_vm")
-        record(true, list.status, null, count + if (list.vms.size != 1) " not_exactly_one" else "")
+        val index = list.vms.indexOfFirst { it.isDefault }.takeIf { it >= 0 } ?: 0
+        val vm = list.vms.getOrNull(index) ?: return stop(ok = false, status = list.status, note = "$count no_vm")
+        // Os nomes dos campos da entrada escolhida (nunca os valores): a VM anuncia alguma capacidade de voz?
+        val names = fetched.fieldNames?.takeIf { it.size == list.vms.size }?.get(index)
+        record(true, list.status, null, count + (if (list.vms.size != 1) " not_exactly_one" else "") + " " + fieldsNote(names))
         upgrade(vm, pairing)
     }
 

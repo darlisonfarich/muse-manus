@@ -10,6 +10,7 @@ import com.darlisonfarich.gadgetlink.MuseApi
 import com.darlisonfarich.gadgetlink.RefreshResult
 import com.darlisonfarich.gadgetlink.Vm
 import com.darlisonfarich.gadgetlink.VmList
+import com.darlisonfarich.gadgetlink.VmListWithFields
 
 /** O que o supervisor lê do pairing.json. Tempos em segundos de relógio de parede, como o SDK. */
 data class PairingRecord(
@@ -36,11 +37,17 @@ interface PairingStore {
 /** A API do Muse; a implementação real chama [MuseApi]. */
 interface MuseApiPort {
     fun fetchVmList(accessToken: String, apiRoot: String): VmList
+
+    /** A lista mais os nomes dos campos de cada entrada. Padrão: a mesma lista, nomes desconhecidos (null). */
+    fun fetchVmListWithFields(accessToken: String, apiRoot: String): VmListWithFields =
+        VmListWithFields(fetchVmList(accessToken, apiRoot), null)
+
     fun refreshDeviceToken(refreshToken: String, deviceId: String, apiRoot: String, sdkToken: String?): RefreshResult
 }
 
 class RealMuseApi : MuseApiPort {
     override fun fetchVmList(accessToken: String, apiRoot: String) = MuseApi.fetchVmList(accessToken, apiRoot)
+    override fun fetchVmListWithFields(accessToken: String, apiRoot: String) = MuseApi.fetchVmListWithFields(accessToken, apiRoot)
     override fun refreshDeviceToken(refreshToken: String, deviceId: String, apiRoot: String, sdkToken: String?) =
         MuseApi.refreshDeviceToken(refreshToken, deviceId, apiRoot, sdkToken)
 }

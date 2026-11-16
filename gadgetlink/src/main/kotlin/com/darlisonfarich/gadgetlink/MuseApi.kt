@@ -30,6 +30,13 @@ data class Vm(val vmUrl: String, val vmAuthToken: String, val vmName: String, va
 
 data class VmList(val vms: List<Vm>, val status: Int?)
 
+/**
+ * O [VmList] mais os NOMES dos campos brutos de cada entrada aceita (nunca os valores), alinhados por
+ * índice com [VmList.vms]. fieldNames = null: quem respondeu não sabe os nomes (ex.: porta de teste).
+ * Fica separado do [VmList] para não mexer no contrato de igualdade dele.
+ */
+data class VmListWithFields(val list: VmList, val fieldNames: List<List<String>>?)
+
 data class TokenPair(val accessToken: String, val refreshToken: String)
 
 /** tokens = null em qualquer falha; status = o HTTP que encerrou a tentativa (null = falha de rede). */
@@ -113,16 +120,28 @@ object MuseApi {
         root: String,
         timeoutMs: Int = 15_000,
         totalTimeoutMs: Int = TOTAL_TIMEOUT_MS,
-    ): VmList {
+    ): VmList = fetchVmListWithFields(accessToken, root, timeoutMs, totalTimeoutMs).list
+
+    /**
+     * O mesmo GET de [fetchVmList] (uma chamada só), devolvendo também os nomes dos campos de cada entrada
+     * aceita ([parseVmEntryFieldNames]). Sem corpo utilizável, a lista de nomes é vazia (não null).
+     */
+    fun fetchVmListWithFields(
+        accessToken: String,
+        root: String,
+        timeoutMs: Int = 15_000,
+        totalTimeoutMs: Int = TOTAL_TIMEOUT_MS,
+    ): VmListWithFields {
         val reply = call(
             "GET", root + FETCH_PATH,
             mapOf("Authorization" to "Bearer $accessToken", "X-API-Version" to "1.0.0", "User-Agent" to USER_AGENT),
             null, timeoutMs, totalTimeoutMs,
         )
-        val status = reply.status ?: return VmList(emptyList(), null)
-        val body = reply.body ?: return VmList(emptyList(), status)
-        val text = runCatching { Utf8.decodeStrict(body) }.getOrNull() ?: return VmList(emptyList(), status)
-        return VmList(parseVmList(text), status)
+        val status = reply.status ?: return VmListWithFields(VmList(emptyList(), null), emptyList())
+        val body = reply.body ?: return VmListWithFields(VmList(emptyList(), status), emptyList())
+        val text = runCatching { Utf8.decodeStrict(body) }.getOrNull()
+            ?: return VmListWithFields(VmList(emptyList(), status), emptyList())
+        return VmListWithFields(VmList(parseVmList(text), status), parseVmEntryFieldNames(text))
     }
 
     fun fetchVms(
@@ -181,7 +200,36 @@ object MuseApi {
     fun countVms(body: String): Int = parseVmList(body).size
 
     /** Mesmo filtro do SDK: objeto, sem error_title/backend_error_code, vm_list com (vm_ws_url ou vm_url) e token. */
-    fun parseVmList(body: String): List<Vm> {
+    fun parseVmList(body: String): List<Vm> = acceptedEntries(body).map { entry ->
+        val ws = entry["vm_ws_url"]
+        val url = if (truthy(ws)) ws else entry["vm_url"]
+        Vm(
+            vmUrl = textOf(url), vmAuthToken = textOf(entry["vm_auth_token"]), vmName = textOf(entry["vm_name"]),
+            vmId = textOf(entry["vm_id"]), isDefault = truthy(entry["default"]),
+        )
+    }
+
+    /** Nome de campo que pode ir para o registro: curto e só [A-Za-z0-9_.-]. O resto vira [REDACTED_FIELD]. */
+    private val SAFE_FIELD_NAME = Regex("[A-Za-z0-9_.-]{1,40}")
+    const val REDACTED_FIELD = "?"
+
+    fun safeFieldName(name: String): String = if (SAFE_FIELD_NAME.matches(name)) name else REDACTED_FIELD
+
+    /** Teto de nomes por entrada; acima disso o último item vira "+N" (quantos ficaram de fora). */
+    const val MAX_FIELD_NAMES = 32
+
+    /**
+     * Os NOMES (nunca os valores) dos campos de primeiro nível de cada entrada que [parseVmList] aceita,
+     * em ordem alfabética e alinhados por índice com ela. Um nome fora de [SAFE_FIELD_NAME] (longo demais ou
+     * com outros caracteres — poderia ser um valor disfarçado de chave) sai como [REDACTED_FIELD].
+     */
+    fun parseVmEntryFieldNames(body: String): List<List<String>> = acceptedEntries(body).map { entry ->
+        val names = entry.keys.map(::safeFieldName).sorted()
+        if (names.size <= MAX_FIELD_NAMES) names else names.take(MAX_FIELD_NAMES - 1) + "+${names.size - (MAX_FIELD_NAMES - 1)}"
+    }
+
+    /** Mesmo filtro do SDK: objeto, sem error_title/backend_error_code, vm_list com (vm_ws_url ou vm_url) e token. */
+    private fun acceptedEntries(body: String): List<JsonObject> {
         val data = runCatching { Json.parseToJsonElement(body) }.getOrNull() as? JsonObject ?: return emptyList()
         if (truthy(data["error_title"]) || truthy(data["backend_error_code"])) return emptyList()
         val list = data["vm_list"] as? JsonArray ?: return emptyList()
@@ -189,12 +237,8 @@ object MuseApi {
             if (entry !is JsonObject) return@mapNotNull null
             val ws = entry["vm_ws_url"]
             val url = if (truthy(ws)) ws else entry["vm_url"]
-            val token = entry["vm_auth_token"]
-            if (!truthy(url) || !truthy(token)) return@mapNotNull null
-            Vm(
-                vmUrl = textOf(url), vmAuthToken = textOf(token), vmName = textOf(entry["vm_name"]),
-                vmId = textOf(entry["vm_id"]), isDefault = truthy(entry["default"]),
-            )
+            if (!truthy(url) || !truthy(entry["vm_auth_token"])) return@mapNotNull null
+            entry
         }
     }
 

@@ -1,8 +1,10 @@
 package com.darlisonfarich.gadgetlink.voice
 
+import com.darlisonfarich.gadgetlink.MuseApi
 import com.darlisonfarich.gadgetlink.RefreshResult
 import com.darlisonfarich.gadgetlink.Vm
 import com.darlisonfarich.gadgetlink.VmList
+import com.darlisonfarich.gadgetlink.VmListWithFields
 import com.darlisonfarich.gadgetlink.noise.DeviceDescription
 import com.darlisonfarich.gadgetlink.noise.LinkScheduler
 import com.darlisonfarich.gadgetlink.noise.LinkSession
@@ -61,6 +63,8 @@ class VoiceAdmissionProbeTest {
         loads: List<PairingLoad> = listOf(PairingLoad.Paired(record)),
         private val lists: MutableList<VmList> = mutableListOf(VmList(listOf(vm), 200)),
         private val upgrade: Int? = 101,
+        /** Nomes dos campos que a porta devolve junto da lista (null = a porta não sabe, como o padrão). */
+        private val fieldNames: List<List<String>>? = null,
     ) {
         val time = Time()
         val muse = StreamMuse(fixedKeys(0x33, 0x44))
@@ -82,6 +86,8 @@ class VoiceAdmissionProbeTest {
                 tokensSeen += accessToken
                 return if (lists.size > 1) lists.removeAt(0) else lists.first()
             }
+            override fun fetchVmListWithFields(accessToken: String, apiRoot: String) =
+                VmListWithFields(fetchVmList(accessToken, apiRoot), fieldNames)
             override fun refreshDeviceToken(refreshToken: String, deviceId: String, apiRoot: String, sdkToken: String?): RefreshResult =
                 error("o 5.0 nunca renova o token")
         }
@@ -402,5 +408,82 @@ class VoiceAdmissionProbeTest {
             VoiceStageEntry(VoiceStage.ADMISSION, false, 403, 14, 87, "rejected").line(),
         )
         assertEquals("HANDSHAKE ok http=- bytes=- ms=5", VoiceStageEntry(VoiceStage.HANDSHAKE, true, null, null, 5, "").line())
+    }
+
+    // ---- 5.0.1: nomes dos campos do fetch_vms na nota do FETCH_VMS -------------------------------
+    @Test
+    fun theFieldsNoteHasAFixedFormat() {
+        assertEquals("fields=[a,b_c]", fieldsNote(listOf("a", "b_c")))
+        assertEquals("fields=[]", fieldsNote(emptyList()))
+        assertEquals("fields=unknown", fieldsNote(null))
+        assertEquals("a porta não é de confiança: o nome ruim sai redigido, o +N do teto passa", "fields=[?,+3]", fieldsNote(listOf("bad key", "+3")))
+    }
+
+    @Test
+    fun theFetchStageCarriesTheChosenVmFieldNames() {
+        val other = vm.copy(vmName = "other", isDefault = false)
+        val r = Rig(
+            lists = mutableListOf(VmList(listOf(other, vm), 200)),
+            fieldNames = listOf(listOf("vm_auth_token", "vm_url"), listOf("capabilities", "default", "vm_auth_token", "vm_ws_url")),
+        )
+        r.start()
+        val fetch = r.stages.single { it.stage == VoiceStage.FETCH_VMS }
+        assertEquals("a VM escolhida é a default (a 2ª)", "vms=2 not_exactly_one fields=[capabilities,default,vm_auth_token,vm_ws_url]", fetch.note)
+        assertEquals("FETCH_VMS ok http=200 bytes=- ms=0 vms=2 not_exactly_one fields=[capabilities,default,vm_auth_token,vm_ws_url]", fetch.line())
+
+        val single = Rig(fieldNames = listOf(listOf("default", "vm_auth_token", "vm_id", "vm_name", "vm_ws_url")))
+        single.start()
+        assertEquals("vms=1 fields=[default,vm_auth_token,vm_id,vm_name,vm_ws_url]", single.stages[1].note)
+    }
+
+    @Test
+    fun unknownOrMisalignedFieldNamesSayUnknown() {
+        val r = Rig()
+        r.start()
+        assertEquals("vms=1 fields=unknown", r.stages[1].note)
+        val misaligned = Rig(fieldNames = listOf(listOf("a"), listOf("b")))
+        misaligned.start()
+        assertEquals("vms=1 fields=unknown", misaligned.stages[1].note)
+        // O padrão da interface: a mesma lista, nomes desconhecidos.
+        val plain = object : MuseApiPort {
+            override fun fetchVmList(accessToken: String, apiRoot: String) = VmList(listOf(vm), 200)
+            override fun refreshDeviceToken(refreshToken: String, deviceId: String, apiRoot: String, sdkToken: String?) = RefreshResult(null, null)
+        }
+        assertEquals(VmListWithFields(VmList(listOf(vm), 200), null), plain.fetchVmListWithFields("t", "r"))
+    }
+
+    @Test
+    fun noFetchVmsValueLeaksIntoEntriesResultOrLogs() {
+        val body = """
+            {"vm_list":[{"vm_ws_url":"wss://LEAKVAL-url","vm_auth_token":"LEAKVAL-token","vm_name":"LEAKVAL-name",
+              "vm_id":"LEAKVAL-id","default":true,"capabilities":{"voice":"LEAKVAL-cap"},"region":"LEAKVAL-region","ttl":987654321}]}
+        """.trimIndent()
+        fun leakRig() = Rig(lists = mutableListOf(VmList(MuseApi.parseVmList(body), 200)), fieldNames = MuseApi.parseVmEntryFieldNames(body))
+
+        val happy = leakRig()
+        happy.admitAndBecomeReady()
+        happy.advance(2_000)
+        happy.ackEndCall(0)
+        happy.ackEndCall(1)
+        happy.send(happy.mediaId, end = true)
+
+        val refused = leakRig()
+        refused.start()
+        refused.muse.response(refused.mediaId, 404, ByteArray(0), end = true)
+        refused.settle()
+        refused.ackEndCall(0)
+        refused.ackEndCall(1)
+
+        for (r in listOf(happy, refused)) {
+            val res = r.result!!
+            assertEquals("vms=1 fields=[capabilities,default,region,ttl,vm_auth_token,vm_id,vm_name,vm_ws_url]", r.stages[1].note)
+            val text = (r.stages.map { it.line() } + r.probe.entries().map { it.toString() } + r.logs +
+                res.toString() + VoiceAdmissionDiagnosis.explain(res, r.stages)).joinToString("\n")
+            for (value in listOf("LEAKVAL", "987654321", "SECRET")) {
+                assertFalse("vazou '$value' em:\n$text", text.contains(value))
+            }
+        }
+        assertNull(happy.result!!.failedStage)
+        assertEquals(VoiceStage.ADMISSION, refused.result!!.failedStage)
     }
 }

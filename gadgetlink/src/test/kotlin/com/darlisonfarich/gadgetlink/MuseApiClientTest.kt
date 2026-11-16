@@ -91,6 +91,66 @@ class MuseApiClientTest {
         assertEquals(3, MuseApi.parseVmList(vmBody).size)
     }
 
+    // ---- nomes dos campos (5.0.1) -----------------------------------------------------------------
+    private val extrasBody = """
+        {"vm_list":[
+          {"vm_ws_url":"wss://VAL-url","vm_auth_token":"VAL-tok","vm_name":"VAL-name","vm_id":"VAL-id","default":true,
+           "capabilities":{"voice":"VAL-cap"},"voice_enabled":false,"region":"VAL-region"},
+          {"vm_auth_token":"VAL-dropped","extra_on_dropped":"VAL-x"},
+          {"vm_url":"https://VAL-b","vm_auth_token":"VAL-tok-b","vm_name":"VAL-b","vm_id":"VAL-id-b","default":false}
+        ]}
+    """.trimIndent()
+
+    @Test
+    fun entryFieldNamesListExactlyTheRawKeysSortedAndAlignedWithTheParsedList() {
+        val names = MuseApi.parseVmEntryFieldNames(extrasBody)
+        assertEquals(MuseApi.parseVmList(extrasBody).size, names.size)
+        assertEquals(
+            listOf(
+                listOf("capabilities", "default", "region", "vm_auth_token", "vm_id", "vm_name", "vm_ws_url", "voice_enabled"),
+                listOf("default", "vm_auth_token", "vm_id", "vm_name", "vm_url"),
+            ),
+            names,
+        )
+        assertTrue("nenhum valor sai, só nomes", names.flatten().none { it.contains("VAL") })
+    }
+
+    @Test
+    fun entriesWithoutExtrasReturnOnlyTheKnownFields() {
+        assertEquals(
+            listOf(
+                listOf("default", "vm_auth_token", "vm_id", "vm_name", "vm_ws_url"),
+                listOf("vm_auth_token", "vm_name", "vm_url"),
+                listOf("default", "vm_auth_token", "vm_id", "vm_ws_url"),
+            ),
+            MuseApi.parseVmEntryFieldNames(vmBody),
+        )
+        for (body in listOf("""{"error_title":"x","vm_list":[{"vm_url":"u","vm_auth_token":"t"}]}""", "[]", "garbage", """{"vm_list":"no"}""")) {
+            assertEquals(body, emptyList<List<String>>(), MuseApi.parseVmEntryFieldNames(body))
+        }
+    }
+
+    @Test
+    fun unsafeOrTooManyFieldNamesAreRedactedAndCapped() {
+        val odd = """{"vm_list":[{"vm_url":"u","vm_auth_token":"t","has space":1,"${"k".repeat(41)}":2,"ok.name-1":3}]}"""
+        assertEquals(listOf(listOf("?", "?", "ok.name-1", "vm_auth_token", "vm_url")), MuseApi.parseVmEntryFieldNames(odd))
+        val many = (1..40).joinToString(",") { "\"f%02d\":0".format(it) }
+        val capped = MuseApi.parseVmEntryFieldNames("""{"vm_list":[{"vm_url":"u","vm_auth_token":"t",$many}]}""").single()
+        assertEquals(MuseApi.MAX_FIELD_NAMES, capped.size)
+        assertEquals("+${42 - (MuseApi.MAX_FIELD_NAMES - 1)}", capped.last())
+    }
+
+    @Test
+    fun theDetailedFetchMakesOneCallAndKeepsTheSameVmList() {
+        val (root, seen) = serve("/fetch_vms", 200, extrasBody)
+        val detailed = MuseApi.fetchVmListWithFields("device-access", root)
+        assertEquals(1, seen.size)
+        assertEquals(VmList(MuseApi.parseVmList(extrasBody), 200), detailed.list)
+        assertEquals(MuseApi.parseVmEntryFieldNames(extrasBody), detailed.fieldNames)
+        val (denied, _) = serve("/fetch_vms", 401, "{}")
+        assertEquals(VmListWithFields(VmList(emptyList(), 401), emptyList()), MuseApi.fetchVmListWithFields("t", denied))
+    }
+
     // ---- renovação do token -----------------------------------------------------------------------
     @Test
     fun aRefreshSendsTheRefreshTokenAsBearerAndReturnsTheNewPair() {
