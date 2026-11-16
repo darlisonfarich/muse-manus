@@ -118,6 +118,7 @@ dependencies {
     // 微信绑定二维码只在本机编码，不调用在线图片服务。
     implementation(libs.zxing.core)
     implementation("com.alphacephei:vosk-android:0.3.75")
+    implementation("androidx.datastore:datastore-preferences:1.1.4")
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
