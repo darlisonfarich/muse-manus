@@ -80,6 +80,7 @@ fun SettingsScreen(
     onFix: (Fix) -> Unit,
     onBack: () -> Unit,
     onOpenModels: () -> Unit,
+    onOpenVoice: () -> Unit = {},
     onOpenMemory: (() -> Unit)? = null,
     /** 任务运行里的「自主模式」:当前值和换它的办法。 */
     autonomous: Boolean = false,
@@ -174,7 +175,7 @@ fun SettingsScreen(
         SettingsPage.Home -> SettingsContent(
             status = status, androidRelease = androidRelease,
             mainModel = roles.main?.let { id -> configs.firstOrNull { it.id == id } }?.let(ProviderConnection::displayName),
-            onBack = onBack, onProblem = onProblem, onOpenModels = onOpenModels,
+            onBack = onBack, onProblem = onProblem, onOpenModels = onOpenModels, onOpenVoice = onOpenVoice,
             onOpenPhoneOps = { page = SettingsPage.PhoneOps },
             onOpenAppAccess = { page = SettingsPage.AppAccess },
             onOpenDuringWork = { page = SettingsPage.DuringWork },
@@ -310,6 +311,7 @@ fun SettingsContent(
     onBack: () -> Unit,
     onProblem: (Problem) -> Unit,
     onOpenModels: () -> Unit,
+    onOpenVoice: () -> Unit = {},
     onOpenPhoneOps: () -> Unit = {},
     onOpenAppAccess: () -> Unit = {},
     onOpenDuringWork: () -> Unit = {},
@@ -336,6 +338,7 @@ fun SettingsContent(
                 RowValue(mainModel ?: stringResource(R.string.settings_not_set))
                 RowChevron()
             }
+            ListRow(MikaIcons.Message, "Modo voz", "Gravar, enviar ao Muse e ouvir a resposta", onClick = onOpenVoice) { RowChevron() }
             ListRow(MikaIcons.Phone, stringResource(R.string.settings_phone_ops), onClick = onOpenPhoneOps) {
                 PhoneOpsPill(status)
                 RowChevron()
