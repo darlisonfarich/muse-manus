@@ -117,6 +117,7 @@ dependencies {
     implementation(libs.mlkit.text.recognition.chinese)
     // 微信绑定二维码只在本机编码，不调用在线图片服务。
     implementation(libs.zxing.core)
+    implementation("com.alphacephei:vosk-android:0.3.75")
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
