@@ -136,9 +136,18 @@ fun GadgetLinkControls(reload: () -> Unit) {
         }
         // Medição da Etapa 1 do Gadget Link: anuncia também os 29 stubs phone.* (sem efeito nenhum, todos
         // devolvem not_implemented). Desligado por padrão; vale a partir da próxima conexão.
+        // A linha mostra o que o link.register da conexão atual REALMENTE anunciou (contado do catálogo
+        // registrado); a preferência só aparece como pendente quando ainda não vale.
         var stubs by remember { mutableStateOf(GadgetLinkCommands.measureStubs(context)) }
+        val announced by GadgetLink.announced.collectAsState()
+        val shown = announced
+        val pendingNote = when {
+            shown == null -> if (stubs) " · medição ligada (vale na próxima conexão)" else ""
+            stubs != (shown.stubs > 0) -> " · medição ${if (stubs) "ligada" else "desligada"} (vale na próxima conexão)"
+            else -> ""
+        }
         Text(
-            "Comandos: linktest.*" + if (stubs) " + 29 stubs phone.* (medição)" else "",
+            (if (shown == null) "Comandos: nada anunciado" else "Comandos anunciados: ${shown.commands}" + (if (shown.stubs > 0) " (${shown.stubs} stubs phone.*)" else " (linktest.*)") + ", registro ${shown.registerBytes} B") + pendingNote,
             style = MikaType.Caption, color = c.ink3, modifier = Modifier.padding(top = 6.dp),
         )
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {

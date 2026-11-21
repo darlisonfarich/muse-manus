@@ -56,6 +56,7 @@ object GadgetLinkCommands {
         }
     }
 
+    /** A auditoria roda no executor próprio do despachante (fila limitada): disco lento ou falhando nunca segura um comando. */
     fun dispatcher(context: Context, catalog: CommandCatalog): CommandDispatcher {
         val audit = InvokeAuditLog(auditFile(context))
         return CommandDispatcher(catalog, gate(context), audit = { entry ->

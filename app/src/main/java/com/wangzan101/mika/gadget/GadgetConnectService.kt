@@ -34,8 +34,8 @@ import java.util.concurrent.TimeUnit
  * Serviço em primeiro plano que mantém o celular registrado no Muse (passo 4 do gadget-link) depois do
  * pareamento: renova o token, busca a VM, abre o WebSocket Noise e se registra como homehub anunciando o
  * catálogo do Gadget Link ([GadgetLinkCommands]: linktest.* e, só na medição, os stubs phone.*); os
- * link.invoke vão para o [CommandDispatcher], que vive o serviço inteiro (a deduplicação por id atravessa
- * as reconexões).
+ * link.invoke vão para o [CommandDispatcher], que vive o serviço inteiro (a deduplicação atravessa as
+ * reconexões) e a cada conexão recebe o catálogo que aquele link.register anunciou.
  * Só roda enquanto o usuário deixa ligado ("Conectar ao Muse" na Diagnostics); toda a lógica de decisão
  * está no [LinkSupervisor] (testado na JVM), aqui só mora a cola com o Android.
  */
@@ -114,18 +114,24 @@ class GadgetConnectService : Service() {
             override fun nowMs(): Long = SystemClock.elapsedRealtime()
             override fun wallSeconds(): Long = System.currentTimeMillis() / 1000
         }
-        val catalog = GadgetLinkCommands.catalog(this)
-        val commands = GadgetLinkCommands.dispatcher(this, catalog).also { dispatcher = it }
+        val commands = GadgetLinkCommands.dispatcher(this, GadgetLinkCommands.catalog(this)).also { dispatcher = it }
         // O nome que o Muse mostra é só o modelo do aparelho: nada de nome do dono nem de conta.
         val displayName = "${Build.MODEL} (Muse Manus)"
-        val registerBytes = CommandCatalog.registerBytes(catalog, identity.nodeId, displayName, BuildConfig.VERSION_NAME)
-        GadgetLink.log(
-            "link: commands_v2 ${catalog.announced.size} commands" + (if (catalog.includeStubs) " (with stubs)" else "") +
-                ", link.register $registerBytes bytes",
-        )
         val launcher = OkHttpLinkLauncher(
             client = OkHttpClient(),
-            device = { DeviceDescription(nodeId = identity.nodeId, displayName = displayName, version = BuildConfig.VERSION_NAME, commands = catalog.commandsV2()) },
+            // Chamado a cada conexão: relê a medição ("vale na próxima conexão" é verdade), anuncia ESTE
+            // catálogo e o entrega ao despachante — o que ele atende é exatamente o que o Muse viu anunciado,
+            // e a Diagnostics mostra o anunciado, não a preferência.
+            device = {
+                val catalog = GadgetLinkCommands.catalog(this)
+                commands.catalog = catalog
+                val registerBytes = CommandCatalog.registerBytes(catalog, identity.nodeId, displayName, BuildConfig.VERSION_NAME)
+                GadgetLink.onAnnounced(GadgetLink.Announced(catalog.announced.size, catalog.announcedStubs, registerBytes))
+                GadgetLink.log(
+                    "link: commands_v2 ${catalog.announced.size} commands (${catalog.announcedStubs} stubs), link.register $registerBytes bytes",
+                )
+                DeviceDescription(nodeId = identity.nodeId, displayName = displayName, version = BuildConfig.VERSION_NAME, commands = catalog.commandsV2())
+            },
             clock = clock,
             log = { GadgetLink.log("link: $it") },
             invokes = commands,
