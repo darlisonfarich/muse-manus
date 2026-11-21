@@ -18,6 +18,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -25,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import com.darlisonfarich.gadgetlink.GadgetState
 import com.wangzan101.mika.gadget.GadgetLink
+import com.wangzan101.mika.gadget.GadgetLinkCommands
 import com.wangzan101.mika.ui.components.ButtonKind
 import com.wangzan101.mika.ui.components.MikaButton
 import com.wangzan101.mika.ui.theme.MikaTheme
@@ -127,6 +131,34 @@ fun GadgetLinkControls(reload: () -> Unit) {
                     }
                 },
                 Modifier.weight(1f).testTag("gadget-link-connect"),
+                kind = ButtonKind.Tonal,
+            )
+        }
+        // Medição da Etapa 1 do Gadget Link: anuncia também os 29 stubs phone.* (sem efeito nenhum, todos
+        // devolvem not_implemented). Desligado por padrão; vale a partir da próxima conexão.
+        // A linha mostra o que o link.register da conexão atual REALMENTE anunciou (contado do catálogo
+        // registrado); a preferência só aparece como pendente quando ainda não vale.
+        var stubs by remember { mutableStateOf(GadgetLinkCommands.measureStubs(context)) }
+        val announced by GadgetLink.announced.collectAsState()
+        val shown = announced
+        val pendingNote = when {
+            shown == null -> if (stubs) " · medição ligada (vale na próxima conexão)" else ""
+            stubs != (shown.stubs > 0) -> " · medição ${if (stubs) "ligada" else "desligada"} (vale na próxima conexão)"
+            else -> ""
+        }
+        Text(
+            (if (shown == null) "Comandos: nada anunciado" else "Comandos anunciados: ${shown.commands}" + (if (shown.stubs > 0) " (${shown.stubs} stubs phone.*)" else " (linktest.*)") + ", registro ${shown.registerBytes} B") + pendingNote,
+            style = MikaType.Caption, color = c.ink3, modifier = Modifier.padding(top = 6.dp),
+        )
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            MikaButton(
+                if (stubs) "Medição: desligar stubs" else "Medição: anunciar stubs",
+                {
+                    stubs = !stubs
+                    GadgetLinkCommands.setMeasureStubs(context, stubs)
+                    Toast.makeText(context, "Vale na próxima conexão com o Muse.", Toast.LENGTH_SHORT).show()
+                },
+                Modifier.weight(1f).testTag("gadget-link-stubs"),
                 kind = ButtonKind.Tonal,
             )
         }

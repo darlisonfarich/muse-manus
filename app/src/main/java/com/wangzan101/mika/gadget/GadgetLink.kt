@@ -108,6 +108,18 @@ object GadgetLink {
         message?.let { log("LINK ERROR: $it") }
     }
 
+    /** O commands_v2 que o link.register da conexão atual levou ao Muse (o que foi anunciado, não a preferência). */
+    data class Announced(val commands: Int, val stubs: Int, val registerBytes: Int)
+
+    private val _announced = MutableStateFlow<Announced?>(null)
+
+    /** null = nada anunciado (serviço parado ou ainda sem conexão). */
+    val announced: StateFlow<Announced?> = _announced
+
+    internal fun onAnnounced(announced: Announced?) {
+        _announced.value = announced
+    }
+
     // A intenção do usuário sobre o link fica gravada: é ela que manda no retorno depois do boot.
     // Sem gravação nenhuma (build antiga), pareamento salvo conta como ligado — parear foi a adesão;
     // um "Desconectar" explícito grava false e é respeitado até o próximo "Conectar".
@@ -155,6 +167,7 @@ object GadgetLink {
 
     internal fun onLinkState(state: SupervisorState, detail: String) {
         _link.value = if (state == SupervisorState.STOPPED) null else state
+        if (state == SupervisorState.STOPPED) _announced.value = null
         linkDetail = if (state == SupervisorState.STOPPED) "" else detail
         log("LINK ${state.name}${if (detail.isEmpty()) "" else " $detail"}")
     }
