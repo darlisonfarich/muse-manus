@@ -188,7 +188,17 @@ class AndroidScreen(
     // 不进编号登记表:模型手里最新的 ref 仍然有效
     override suspend fun peek(): ScreenSnapshot = capture(register = false)
 
-    private suspend fun capture(register: Boolean): ScreenSnapshot = withContext(Dispatchers.IO) {
+    /** Resolve a passive reference only at write time, against an identical fresh window. */
+    internal suspend fun bindPassiveReference(matches: (ScreenSnapshot) -> Boolean): ScreenSnapshot? {
+        var candidate: NodeSnapshot? = null
+        val current = capture(register = false) { candidate = it }
+        val nodes = candidate ?: return null
+        if (current.changedDuringRead || !matches(current)) return null
+        ids.put(nodes)
+        return current
+    }
+
+    private suspend fun capture(register: Boolean, candidate: (NodeSnapshot) -> Unit = {}): ScreenSnapshot = withContext(Dispatchers.IO) {
         if (!hasDisplay) return@withContext ScreenSnapshot(snapshotId(), null, emptyList(), screenWidth, screenHeight, hasWindow = false)
         // 上一个动作过了一会儿才开到用户主屏上的:先挪回来再读(只在模型要读的这一屏上做,不在判效果的那一眼里做)
         val late = if (register) lateSpill() else null
@@ -196,7 +206,7 @@ class AndroidScreen(
         val after = treeHash()
         val foreground = if (r.topPackage == null) foregroundTaskPackage() else null
         val snap = NodeSnapshot(snapshotId(), r.entries)
-        if (register) ids.put(snap)
+        if (register) ids.put(snap) else candidate(snap)
         ScreenSnapshot(
             snapshotId = snap.id,
             packageName = r.topPackage,

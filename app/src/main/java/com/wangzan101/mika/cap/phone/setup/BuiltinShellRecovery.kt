@@ -192,7 +192,7 @@ class BuiltinShellRecovery(
     suspend fun restoreAfterBoot(): RestoreOutcome? {
         // 没配对过(助手是电脑经 USB 起的):Mika 自己起不来助手,不去动无线调试;
         // 用 root 启动时看门狗经 su 起助手,也不去动无线调试
-        if (!control.paired || control.rootStart) return null
+        if (!control.paired || control.rootStart || com.wangzan101.mika.gadget.GadgetLink.ownsPhoneRecovery(app)) return null
         val holds = app.checkSelfPermission(PermissionCommands.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
         when (BootRestore.gate(Build.VERSION.SDK_INT, settings.consent.value, holds)) {
             BootRestore.Gate.Skip -> return null

@@ -129,6 +129,10 @@ object GadgetLink {
     private fun linkEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_LINK_ENABLED, true)
 
+    /** An active paired gadget never asks recovery to enable wireless debugging. */
+    internal fun ownsPhoneRecovery(context: Context): Boolean =
+        linkEnabled(context) && File(stateDir(context), GadgetState.PAIRING_FILE).isFile
+
     private fun setLinkEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean(KEY_LINK_ENABLED, enabled).commit()

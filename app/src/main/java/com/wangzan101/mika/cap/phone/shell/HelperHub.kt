@@ -98,6 +98,7 @@ class HelperHub(context: Context) {
             return reject(HelperHandoff.Reject.NoBinder)
         }
         // 换了新的助手:旧的随后会被新的结束,它的死亡通知因为不是当前这个而被忽略
+        lastHandoffRejection = null
         _shell.value = shell
         if (extras?.containsKey(HelperHandoff.KEY_RESTORED_AT) == true) {
             _restores.value = HelperRestoreReport(

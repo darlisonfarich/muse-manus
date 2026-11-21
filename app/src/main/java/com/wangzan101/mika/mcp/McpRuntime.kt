@@ -56,11 +56,7 @@ class McpRuntime(
     @Volatile private var host: RemoteHost? = null
     private var hostListen = McpModes.Listen.Off
     private val records: RunExportSource? = (tasks as? RemoteTaskHub)?.let { hub -> RemoteRunExport(hub) { RunStore(context) } }
-    private val directHost = AndroidDirectPhoneHost(context, settings)
-    internal fun gadgetReadScope(): String? = directHost.gadgetReadScope()
-
-    internal suspend fun readPhoneForGadget(screenshot: Boolean, full: Boolean) =
-        directHost.readForGadget(screenshot, full)
+    internal val directHost = AndroidDirectPhoneHost(context, settings)
 
     private val endpoints = RemoteEndpoints(tasks, BuildConfig.VERSION_NAME, device = device.access, history = history, records = records, directPhone = directHost)
     private val relayAccess = RemoteAccess(token = { if (relaySettings.config.value.enabled) settings.token() else null })

@@ -8,7 +8,6 @@ import com.wangzan101.mika.cap.phone.a11y.DeviceSupport
 import com.wangzan101.mika.core.remote.RemoteOwnership
 import com.wangzan101.mika.settings.AesGcmKeyCipher
 import com.wangzan101.mika.settings.McpSettings
-import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
@@ -26,7 +25,7 @@ import javax.crypto.KeyGenerator
 @RunWith(AndroidJUnit4::class)
 class GadgetDirectSessionTest {
     @Test
-    fun reusesOnlyTheConfiguredDirectOwnerAndCoexistsWithMcpReads() = runBlocking<Unit> {
+    fun registrationOwnsItsSessionWithoutMcpAndReleasesOnlyItsSlot() = runBlocking<Unit> {
         DeviceSupport.shell()
         DeviceSupport.service()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -35,29 +34,30 @@ class GadgetDirectSessionTest {
         val settings = McpSettings(directory, AesGcmKeyCipher { key }).apply { setEnabled(true) }
         val host = AndroidDirectPhoneHost(context, settings)
         val args = JsonObject(emptyMap())
+        val link = GadgetPhoneLease("device", "host", "account", "vm").apply { connected = true }
+        val other = GadgetPhoneLease("device", "host", "account", "other-vm").apply { connected = true }
         try {
-            assertNull(host.gadgetReadScope())
-            assertEquals(ErrorCode.UNAVAILABLE, runCatching { host.readForGadget(false, false) }
-                .exceptionOrNull().let { (it as CommandException).code })
+            assertTrue(host.maintainGadget(link))
+            assertNotNull(host.gadgetReadScope(link))
+            assertNull(host.gadgetReadScope(other))
             assertNull(settings.existingToken())
+            assertFalse(host.readForGadget(link, false, true).getValue("hasWindow").jsonPrimitive.boolean)
             assertTrue(host.call(RemoteOwnership.USB, "phone_observe", args).getValue("ok").jsonPrimitive.boolean)
-            assertNull(host.gadgetReadScope())
-
-            val owner = RemoteOwnership.of(settings.token())
-            assertFalse(host.call(owner, "phone_status", args).getValue("active").jsonPrimitive.boolean)
-            assertTrue(host.call(owner, "phone_observe", args).getValue("ok").jsonPrimitive.boolean)
-            assertNotNull(host.gadgetReadScope())
-            val mcp = async { host.call(owner, "phone_observe", args) }
-            val gadget = async { host.readForGadget(false, true) }
-            assertTrue(mcp.await().getValue("ok").jsonPrimitive.boolean)
-            assertFalse(gadget.await().getValue("hasWindow").jsonPrimitive.boolean)
-
-            settings.regenerate()
-            assertNull(host.gadgetReadScope())
-            assertEquals(ErrorCode.UNAVAILABLE, runCatching { host.readForGadget(false, false) }
+            host.close() // stopping the bridge must leave the registered gadget usable
+            assertNotNull(host.gadgetReadScope(link))
+            assertFalse(host.call(RemoteOwnership.USB, "phone_status", args).getValue("active").jsonPrimitive.boolean)
+            link.connected = false
+            assertNull(host.gadgetReadScope(link))
+            assertEquals(ErrorCode.UNAVAILABLE, runCatching { host.readForGadget(link, false, false) }
                 .exceptionOrNull().let { (it as CommandException).code })
-            assertTrue(host.call(owner, "phone_status", args).getValue("active").jsonPrimitive.boolean)
+            host.releaseGadget(link)
+            assertTrue(host.maintainGadget(other))
+            assertNull(host.gadgetReadScope(link))
+            settings.setEnabled(false)
+            assertFalse(host.maintainGadget(other))
         } finally {
+            host.releaseGadget(link)
+            host.releaseGadget(other)
             host.close()
             directory.deleteRecursively()
         }

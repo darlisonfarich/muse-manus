@@ -1,6 +1,7 @@
 package com.wangzan101.mika.gadget
 
 import android.content.Context
+import com.wangzan101.mika.mcp.GadgetPhoneLease
 import com.darlisonfarich.gadgetlink.commands.CommandCatalog
 import com.darlisonfarich.gadgetlink.commands.CommandDispatcher
 import com.darlisonfarich.gadgetlink.commands.CommandSpec
@@ -36,11 +37,13 @@ object GadgetLinkCommands {
 
     fun auditFile(context: Context) = File(context.applicationContext.filesDir, "gadgetlink/link-invoke-audit.log")
 
-    fun catalog(context: Context): CommandCatalog {
-        val mcp = (context.applicationContext as MikaApp).mcp
+    internal fun catalog(context: Context, lease: GadgetPhoneLease): CommandCatalog {
+        val host = (context.applicationContext as MikaApp).mcp.directHost
+        val scope = { host.gadgetReadScope(lease) }
         return CommandCatalog.museManus(
             includeStubs = measureStubs(context),
-            readCommands = GadgetPhoneReadCommands.specs(mcp::gadgetReadScope, mcp::readPhoneForGadget),
+            readCommands = GadgetPhoneReadCommands.specs(scope) { screenshot, full -> host.readForGadget(lease, screenshot, full) },
+            controlCommands = GadgetPhoneActions.specs(scope) { name, args -> host.callGadget(lease, name, args) },
         )
     }
 

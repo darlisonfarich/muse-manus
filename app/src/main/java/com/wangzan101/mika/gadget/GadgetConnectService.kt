@@ -1,6 +1,25 @@
 package com.wangzan101.mika.gadget
 
 import android.app.Notification
+import com.darlisonfarich.gadgetlink.Vm
+import com.darlisonfarich.gadgetlink.noise.LinkOutcome
+import com.darlisonfarich.gadgetlink.noise.PairingRecord
+import com.darlisonfarich.gadgetlink.noise.SessionLauncher
+import com.wangzan101.mika.MikaApp
+import com.wangzan101.mika.cap.phone.PhoneServices
+import com.wangzan101.mika.mcp.GadgetPhoneLease
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonPrimitive
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
@@ -50,6 +69,10 @@ class GadgetConnectService : Service() {
     private var executor: ScheduledExecutorService? = null
     private var supervisor: LinkSupervisor? = null
     private var dispatcher: CommandDispatcher? = null
+    private val controlScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var controlJob: Job? = null
+    private var lease: GadgetPhoneLease? = null
+    private val phoneHost get() = (applicationContext as MikaApp).mcp.directHost
     private var started = false
     @Volatile private var destroyed = false
 
@@ -57,6 +80,8 @@ class GadgetConnectService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            destroyed = true
+            stopControl(lease)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -114,28 +139,32 @@ class GadgetConnectService : Service() {
             override fun nowMs(): Long = SystemClock.elapsedRealtime()
             override fun wallSeconds(): Long = System.currentTimeMillis() / 1000
         }
-        val commands = GadgetLinkCommands.dispatcher(this, GadgetLinkCommands.catalog(this)).also { dispatcher = it }
-        // O nome que o Muse mostra é só o modelo do aparelho: nada de nome do dono nem de conta.
+        val commands = GadgetLinkCommands.dispatcher(this, CommandCatalog(emptyList())).also { dispatcher = it }
         val displayName = "${Build.MODEL} (Muse Manus)"
-        val launcher = OkHttpLinkLauncher(
-            client = OkHttpClient(),
-            // Chamado a cada conexão: relê a medição ("vale na próxima conexão" é verdade), anuncia ESTE
-            // catálogo e o entrega ao despachante — o que ele atende é exatamente o que o Muse viu anunciado,
-            // e a Diagnostics mostra o anunciado, não a preferência.
-            device = {
-                val catalog = GadgetLinkCommands.catalog(this)
+        val client = OkHttpClient()
+        val launcher = object : SessionLauncher {
+            override fun launch(vm: Vm, pairing: PairingRecord, events: SessionLauncher.Events): SessionLauncher.Handle {
+                val account = (state.pairing()?.get("username") as? JsonPrimitive)?.content.orEmpty()
+                val registration = GadgetPhoneLease(identity.deviceId, pairing.noiseHost, account, vm.vmId.ifBlank { vm.vmUrl })
+                val catalog = GadgetLinkCommands.catalog(this@GadgetConnectService, registration)
                 commands.catalog = catalog
-                val registerBytes = CommandCatalog.registerBytes(catalog, identity.nodeId, displayName, BuildConfig.VERSION_NAME)
-                GadgetLink.onAnnounced(GadgetLink.Announced(catalog.announced.size, catalog.announcedStubs, registerBytes))
-                GadgetLink.log(
-                    "link: commands_v2 ${catalog.announced.size} commands (${catalog.announcedStubs} stubs), link.register $registerBytes bytes",
-                )
-                DeviceDescription(nodeId = identity.nodeId, displayName = displayName, version = BuildConfig.VERSION_NAME, commands = catalog.commandsV2())
-            },
-            clock = clock,
-            log = { GadgetLink.log("link: $it") },
-            invokes = commands,
-        )
+                val bytes = CommandCatalog.registerBytes(catalog, identity.nodeId, displayName, BuildConfig.VERSION_NAME)
+                GadgetLink.onAnnounced(GadgetLink.Announced(catalog.announced.size, catalog.announcedStubs, bytes))
+                val device = DeviceDescription(identity.nodeId, displayName, BuildConfig.VERSION_NAME, catalog.commandsV2())
+                return OkHttpLinkLauncher(client, { device }, clock, log = GadgetLink::log, invokes = commands)
+                    .launch(vm, pairing, object : SessionLauncher.Events {
+                        override fun onRegistered() {
+                            startControl(registration)
+                            events.onRegistered()
+                        }
+
+                        override fun onEnded(outcome: LinkOutcome, lastedMs: Long) {
+                            stopControl(registration)
+                            events.onEnded(outcome, lastedMs)
+                        }
+                    })
+            }
+        }
         val sup = LinkSupervisor(
             deviceId = identity.nodeId,
             sdkToken = sdkToken,
@@ -160,8 +189,49 @@ class GadgetConnectService : Service() {
         if (destroyed) sup.stop()
     }
 
+    @Synchronized private fun startControl(registration: GadgetPhoneLease) {
+        if (destroyed || lease === registration) return
+        stopControl(lease)
+        lease = registration
+        registration.connected = true
+        controlJob = controlScope.launch {
+            val phone = PhoneServices.of(this@GadgetConnectService)
+            var lastStatus: String? = null
+            try {
+                while (isActive) {
+                    val ready = try {
+                        phoneHost.maintainGadget(registration)
+                    } catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { false }
+                    val status = when {
+                        ready -> "ready"
+                        !(applicationContext as MikaApp).mcp.settings.enabled.value -> "remote_access_disabled"
+                        phone.hub.shell.value == null && phone.hub.lastHandoffRejection == "StaleApk" -> "stale_helper"
+                        phone.hub.shell.value == null -> "helper_unavailable"
+                        else -> "awaiting_accessibility_or_slot"
+                    }
+                    if (status != lastStatus) GadgetLink.log("link: phone session $status")
+                    lastStatus = status
+                    delay(if (ready) 5_000L else 1_000L)
+                }
+            } finally {
+                withContext(NonCancellable) { phoneHost.releaseGadget(registration) }
+            }
+        }
+    }
+
+    @Synchronized private fun stopControl(registration: GadgetPhoneLease?) {
+        if (registration == null || lease !== registration) return
+        registration.connected = false
+        controlJob?.cancel()
+        controlJob = null
+        lease = null
+    }
+
     override fun onDestroy() {
         destroyed = true
+        stopControl(lease)
+        controlScope.cancel()
         supervisor?.stop()
         // O stop() devolve o desfecho pelo agendador; dá um instante para ele rodar antes de fechar a thread.
         executor?.let { exec -> runCatching { exec.schedule({ exec.shutdownNow() }, 3, TimeUnit.SECONDS) } }

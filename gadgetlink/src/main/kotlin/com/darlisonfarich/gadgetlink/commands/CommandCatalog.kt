@@ -31,11 +31,16 @@ class CommandCatalog(commands: List<CommandSpec>, val includeStubs: Boolean = fa
             readCommands: List<CommandSpec>,
             includeStubs: Boolean = false,
             clock: () -> Long = System::currentTimeMillis,
+            controlCommands: List<CommandSpec> = emptyList(),
         ): CommandCatalog {
             val reads = readCommands.associateBy { it.name }
             require(reads.size == readCommands.size)
             require(readCommands.all { it.name in PHONE_READS && it.implemented && !it.writes })
-            return CommandCatalog(LinkTestCommands.all(clock) + PhoneCatalog.stubs().map { reads[it.name] ?: it }, includeStubs)
+            val replacements = (readCommands + controlCommands).associateBy { it.name }
+            require(replacements.size == readCommands.size + controlCommands.size)
+            val stubs = PhoneCatalog.stubs()
+            require(controlCommands.all { c -> c.implemented && stubs.any { it.name == c.name && it.writes == c.writes } })
+            return CommandCatalog(LinkTestCommands.all(clock) + stubs.map { replacements[it.name] ?: it }, includeStubs)
         }
 
         private val PHONE_READS = setOf("phone.get_tree", "phone.get_screenshot")

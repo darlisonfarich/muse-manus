@@ -90,10 +90,12 @@ class BuiltinShellManager(context: Context, private val hub: HelperHub, private 
     /** 要起助手时替用户打开无线调试:只由 App 自己写系统设置(要起助手时没有别的连接可用)。 */
     val wirelessAutoOn: WirelessDebuggingAutoOn by lazy {
         WirelessDebuggingAutoOn(
-            wants = { consent().wants(RecoveryCapability.AutoWirelessDebugging) },
+            wants = { !com.wangzan101.mika.gadget.GadgetLink.ownsPhoneRecovery(app) &&
+                consent().wants(RecoveryCapability.AutoWirelessDebugging) },
             canWrite = { app.checkSelfPermission(PermissionCommands.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED },
             read = platform::wirelessDebugging,
-            write = { DeveloperSettings.turnOnWirelessDebugging(app.contentResolver) },
+            write = { !com.wangzan101.mika.gadget.GadgetLink.ownsPhoneRecovery(app) &&
+                DeveloperSettings.turnOnWirelessDebugging(app.contentResolver) },
         )
     }
 
@@ -122,6 +124,16 @@ class BuiltinShellManager(context: Context, private val hub: HelperHub, private 
     fun need() {
         engine.need()
         usbScript.refresh()
+    }
+
+    /** Package replacement may invalidate an already running helper. Use the existing, locally
+     * authorized root launcher and the PackageManager's current APK. Never request a new grant here. */
+    fun recoverGadgetAfterUpdate() {
+        if (!com.wangzan101.mika.gadget.GadgetLink.ownsPhoneRecovery(app) ||
+            com.wangzan101.mika.settings.FeatureFlags.get(app).quitRequested() ||
+            !engine.rootStart || hub.shell.value != null) return
+        start()
+        engine.need()
     }
 
     /** 用户在引导页填了无线调试的端口:下一次连接带上它(只用这一次,连上了就记作缓存),然后重试。 */

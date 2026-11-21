@@ -56,6 +56,8 @@ internal class DirectPhoneReads(
         throw CommandException(ErrorCode.LOCAL_GATE_DENIED, e.code)
     }
 
+    suspend fun checkActionSurface() { guarded { buildJsonObject {} } }
+
     private suspend fun checkedPeek(): ScreenSnapshot {
         val protection = windowProtection()
         when (protection) {

@@ -141,7 +141,9 @@ internal class ScreenSession(
      * 读一屏并登记编号。[internal]:不是给模型看的(按描述找目标时),模型手里那屏过没过时照旧;
      * 端口原样的这一屏留作接着那个动作的「动作前」([probe] 用它,不再读一次)。
      */
-    suspend fun snapshot(internal: Boolean = false): ScreenSnapshot = screen.snapshot().let { p ->
+    suspend fun snapshot(internal: Boolean = false): ScreenSnapshot = remember(screen.snapshot(), internal)
+
+    fun remember(portSnapshot: ScreenSnapshot, internal: Boolean): ScreenSnapshot = portSnapshot.let { p ->
         // Before stable refs, history, diffs, evidence or remote tool serialization.
         val safe = OtpRedaction.snapshot(p)
         (stabilizer?.next(safe)?.screen ?: safe).also { primed = if (internal) it.snapshotId to p else null }

@@ -31,12 +31,14 @@ import com.wangzan101.mika.core.mcp.DirectPhoneHost
 import com.wangzan101.mika.core.model.Part
 import com.wangzan101.mika.core.record.RunEvent
 import com.wangzan101.mika.core.record.RunSink
-import com.wangzan101.mika.core.remote.RemoteOwnership
+import com.wangzan101.mika.settings.FeatureFlags
 import com.wangzan101.mika.core.run.Attendance
 import com.wangzan101.mika.core.run.RunOrigin
 import com.wangzan101.mika.core.run.RunProvenance
 import com.wangzan101.mika.core.tool.ToolDispatcher
 import com.wangzan101.mika.core.uistate.AppAccessScreenPort
+import com.wangzan101.mika.core.uistate.bindPhoneTarget
+import com.wangzan101.mika.core.uistate.ScreenJson
 import com.wangzan101.mika.core.uistate.ScreenPort
 import com.wangzan101.mika.core.uistate.ScreenSnapshot
 import com.wangzan101.mika.settings.McpSettings
@@ -76,6 +78,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
     private val lock = Mutex()
     private val launchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val launchBoundary = DirectPhoneLaunchBoundary(launchScope, 10_000L, ::onLaunchSettled)
+    private val pendingClose = mutableSetOf<String>()
     @Volatile private var closeAfterLaunch = false
     private val journal = File(context.filesDir, "direct-phone-audit.jsonl")
     // GER PR-6: chat approval tokens (Keystore-held HMAC key + fsync'd consumed-id ledger).
@@ -92,6 +95,9 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
     private class Session(
         val owner: String,
         val binding: ShellBinding,
+        val link: GadgetPhoneLease?,
+        val sourcesCurrent: () -> Boolean,
+        val androidScreen: () -> AndroidScreen?,
         val display: LazyAgentDisplay,
         val screen: ScreenPort,
         val tools: ToolDispatcher,
@@ -101,25 +107,39 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         @Volatile var lastUsed: Long,
     ) {
         val readScope = UUID.randomUUID().toString()
+        var passiveTarget: PassiveTarget? = null
 
-        fun close() { display.current?.release(); releaseBinding() }
+        fun close() { try { display.current?.release() } finally { releaseBinding() } }
     }
+
+    private data class PassiveTarget(val id: String, val fingerprint: String, val generation: Long)
+
+    private fun treeFingerprint(tree: JsonObject) =
+        digest(JsonObject(tree.filterKeys { it != "snapshotId" && it != "tree" }).toString())
 
     suspend fun close() {
         // A stopped listener cancels queued calls, but an already issued Binder
         // start cannot safely be interrupted or have its display torn down.
-        app.resources.ger.intentions.cancelAll()
+        app.resources.ger.intentions.cancelMatching { it !in gadgetSlots }
         lock.withLock {
-            if (launchBoundary.isInFlight()) closeAfterLaunch = true else closeActive()
+            sessions.values.filter { it.link == null }.forEach { retire(it.owner) }
         }
+    }
+
+    private fun retire(owner: String) {
+        if (launchBoundary.isInFlight()) {
+            pendingClose.add(owner)
+            closeAfterLaunch = true
+        } else closeActive(owner)
     }
 
     private fun onLaunchSettled() {
         launchScope.launch {
             lock.withLock {
-                if (closeAfterLaunch && !launchBoundary.isInFlight()) {
+                if (!launchBoundary.isInFlight()) {
+                    pendingClose.forEach(::closeActive)
+                    pendingClose.clear()
                     closeAfterLaunch = false
-                    closeActive()
                 }
             }
         }
@@ -127,8 +147,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
 
     private fun directOwner(owner: String): String = "mcp:" + digest(owner)
 
-    private fun closeActive(owner: String? = null) {
-        if (owner == null) { sessions.keys.toList().forEach(::closeActive); return }
+    private fun closeActive(owner: String) {
         val session = sessions[owner] ?: return
         sessions.remove(session.owner)
         val key = directOwner(session.owner)
@@ -136,56 +155,106 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             session.close()
         } finally {
             // Release every package held by this screen before revoking its GER lease.
+            gadgetSlots.remove(key)
             app.resources.releaseOwner(key)
             app.resources.ger.releaseDirect(key)
             app.resources.ger.releaseSlot(key)
         }
     }
 
-    // LAN and relay authenticate as the current computer-access token's owner. USB
-    // has a separate owner and is deliberately never selected by a Gadget invocation.
-    private fun gadgetSession(): Session? {
-        if (!settings.enabled.value || ScreenAccessibility.instance.value == null ||
-            launchBoundary.isInFlight() || closeAfterLaunch
-        ) return null
-        val owner = settings.existingToken()?.let(RemoteOwnership::of) ?: return null
-        return sessions[owner]?.takeIf {
-            System.currentTimeMillis() - it.lastUsed <= ttlMs &&
-                app.resources.ger.canUseSlot(directOwner(owner))
+    private val gadgetSlots = ConcurrentHashMap.newKeySet<String>()
+
+    private fun allowed(link: GadgetPhoneLease) = link.connected && settings.enabled.value &&
+        !FeatureFlags.get(context).quitRequested()
+
+    private fun gadgetSession(link: GadgetPhoneLease): Session? =
+        sessions[link.owner]?.takeIf {
+            it.link === link && allowed(link) && it.sourcesCurrent() && !launchBoundary.isInFlight() &&
+                !closeAfterLaunch && app.resources.ger.canUseSlot(directOwner(link.owner))
+        }
+
+    internal suspend fun maintainGadget(link: GadgetPhoneLease): Boolean = lock.withLock {
+        val old = sessions[link.owner]
+        if (!allowed(link) || ScreenAccessibility.instance.value == null ||
+            PhoneServices.of(context).hub.shell.value == null) {
+            if (old?.link === link) retire(link.owner)
+            return@withLock false
+        }
+        if (launchBoundary.isInFlight() || closeAfterLaunch || busy()) return@withLock false
+        val key = directOwner(link.owner)
+        if (old != null && (old.link !== link || !old.sourcesCurrent())) closeActive(link.owner)
+        if (!app.resources.ger.claimSlot(key).admitted) return@withLock false
+        gadgetSlots.add(key)
+        try {
+            val now = System.currentTimeMillis()
+            val session = sessions[link.owner] ?: create(link.owner, now, link).also { sessions[link.owner] = it }
+            session.lastUsed = now
+            gadgetSession(link) != null
+        } finally {
+            if (!sessions.containsKey(link.owner)) {
+                gadgetSlots.remove(key)
+                app.resources.ger.releaseSlot(key)
+            }
         }
     }
 
-    internal fun gadgetReadScope(): String? {
-        val session = gadgetSession() ?: return null
+    internal suspend fun releaseGadget(link: GadgetPhoneLease) = lock.withLock {
+        if (sessions[link.owner]?.link === link) {
+            app.resources.ger.intentions.cancelOwner(directOwner(link.owner))
+            retire(link.owner)
+        }
+    }
+
+    internal fun gadgetReadScope(link: GadgetPhoneLease): String? {
+        val session = gadgetSession(link) ?: return null
         val access = app.appAccess.current()
         return "${session.readScope}:${access.revision}:${access.available}:${app.appAccess.sensitiveUi}"
     }
 
-    internal suspend fun readForGadget(screenshot: Boolean, full: Boolean): JsonObject = lock.withLock {
+    internal suspend fun readForGadget(link: GadgetPhoneLease, screenshot: Boolean, full: Boolean): JsonObject = lock.withLock {
         if (!settings.enabled.value) throw CommandException(ErrorCode.LOCAL_GATE_DENIED, "remote_access_disabled")
-        val session = gadgetSession() ?: throw CommandException(ErrorCode.UNAVAILABLE)
+        val session = gadgetSession(link) ?: throw CommandException(ErrorCode.UNAVAILABLE)
         val access = app.appAccess.current()
         val guarded = app.appAccess.sensitiveUi
-        val reader = DirectPhoneReads(
-            screen = session.screen,
-            generation = { ScreenAccessibility.windowGeneration() },
-            windowProtection = {
-                val displayId = session.display.current?.displayId
-                if (displayId == null) VirtualWindowProtection.Empty else withContext(Dispatchers.IO) {
-                    val shell = session.binding.shell.value ?: throw CommandException(ErrorCode.UNAVAILABLE)
-                    VirtualWindowProtection.fromCode(shell.virtualWindowProtection(displayId))
-                }
-            },
-            inUseByUser = { snapshot -> withContext(Dispatchers.IO) { inUseOnPhysicalScreen(session, snapshot) } },
-            capture = session.captureVirtualPng,
-            compress = ::compressPhoneScreenshot,
-        )
+        val reader = reader(session)
+        val generation = ScreenAccessibility.windowGeneration()
         val result = if (screenshot) reader.screenshot() else reader.tree(full)
-        if (!settings.enabled.value) throw CommandException(ErrorCode.LOCAL_GATE_DENIED, "remote_access_disabled")
-        if (gadgetSession() !== session) throw CommandException(ErrorCode.UNAVAILABLE)
+        if (gadgetSession(link) !== session) throw CommandException(ErrorCode.UNAVAILABLE)
         if (app.appAccess.current() != access || app.appAccess.sensitiveUi != guarded)
             throw CommandException(ErrorCode.LOCAL_GATE_DENIED, "app_access_changed")
+        if (!screenshot) {
+            val id = (result["snapshotId"] as JsonPrimitive).content
+            session.passiveTarget = PassiveTarget(id, treeFingerprint(result), generation)
+        }
         result
+    }
+
+    private fun reader(session: Session) = DirectPhoneReads(
+        screen = session.screen,
+        generation = { ScreenAccessibility.windowGeneration() },
+        windowProtection = {
+            val displayId = session.display.current?.displayId
+            if (displayId == null) VirtualWindowProtection.Empty else withContext(Dispatchers.IO) {
+                val shell = session.binding.shell.value ?: throw CommandException(ErrorCode.UNAVAILABLE)
+                VirtualWindowProtection.fromCode(shell.virtualWindowProtection(displayId))
+            }
+        },
+        inUseByUser = { snapshot -> withContext(Dispatchers.IO) { inUseOnPhysicalScreen(session, snapshot) } },
+        capture = session.captureVirtualPng,
+        compress = ::compressPhoneScreenshot,
+    )
+
+    private suspend fun bindGadgetTarget(session: Session, args: JsonObject): JsonObject? {
+        val ref = (args["ref"] as? JsonPrimitive)?.content ?: return args.takeUnless { "snapshotId" in it }
+        val target = session.passiveTarget ?: return null
+        if (args["snapshotId"] != JsonPrimitive(target.id) || target.generation != ScreenAccessibility.windowGeneration()) return null
+        val fresh = session.androidScreen()?.bindPassiveReference { snapshot ->
+            !snapshot.protected && snapshot.captureError == null &&
+                treeFingerprint(ScreenJson.passivePhoneTree(snapshot, false)) == target.fingerprint
+        } ?: return null
+        if (target.generation != ScreenAccessibility.windowGeneration()) return null
+        val (modelRef, modelId) = session.tools.bindPhoneTarget(fresh, ref) ?: return null
+        return JsonObject(args + mapOf("ref" to JsonPrimitive(modelRef), "snapshotId" to JsonPrimitive(modelId)))
     }
 
     private fun inUseOnPhysicalScreen(session: Session, snapshot: ScreenSnapshot): Boolean {
@@ -208,7 +277,15 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
      * GER's per-owner FIFO, NOT through TaskCenter's persistent task queue.
      * The host mutex is held for an atomic attempt, never for parked waiting.
      */
-    override suspend fun call(owner: String, name: String, args: JsonObject): JsonObject {
+    override suspend fun call(owner: String, name: String, args: JsonObject): JsonObject =
+        call(owner, name, args, null)
+
+    internal suspend fun callGadget(link: GadgetPhoneLease, name: String, args: JsonObject): JsonObject =
+        call(link.owner, name, args, link)
+
+    private suspend fun call(owner: String, name: String, args: JsonObject, link: GadgetPhoneLease?): JsonObject {
+        fun authorized() = link == null || allowed(link) && sessions[owner]?.link === link
+        if (!authorized()) return fail("phone_unavailable")
         if (owner.isBlank()) return fail("unauthenticated")
         val scheduler = app.resources
         val sessionOwner = directOwner(owner)
@@ -216,7 +293,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             if (!settings.enabled.value) return fail("remote_access_disabled")
             // Read-only and out of the intention queue: no display/session is
             // created, no action is submitted, no pending marker is written.
-            return lock.withLock { reconcile(owner, args) }
+            return lock.withLock { if (authorized()) reconcile(owner, args) else fail("phone_unavailable") }
         }
         if (name == "phone_approval_issue") {
             if (!settings.enabled.value) return fail("remote_access_disabled")
@@ -229,10 +306,10 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         if (name == "phone_cancel") {
             val cancelled = scheduler.ger.intentions.cancelOwner(sessionOwner)
             return lock.withLock {
+                if (!authorized()) return@withLock fail("phone_unavailable")
                 val hadSession = sessions.containsKey(owner)
                 val deferredClose = hadSession && launchBoundary.isInFlight()
-                if (deferredClose) closeAfterLaunch = true
-                else if (hadSession) closeActive(owner)
+                if (hadSession) retire(owner)
                 if (!hadSession && cancelled == 0) fail("session_not_found")
                 else buildJsonObject {
                     put("ok", true); put("closed", hadSession && !deferredClose)
@@ -269,12 +346,13 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             try {
                 if (launchBoundary.isInFlight() || closeAfterLaunch)
                     return@attempt GerIntentAttempt.Done(fail("launch_in_flight"))
+                if (!authorized()) return@attempt GerIntentAttempt.Done(fail("phone_unavailable"))
                 if (isCancelled()) return@attempt GerIntentAttempt.Done(fail("cancelled"))
                 if (!settings.enabled.value) return@attempt GerIntentAttempt.Done(fail("remote_access_disabled"))
                 if (name !in READS && !settings.directWritesEnabled.value)
                     return@attempt GerIntentAttempt.Done(fail("write_disabled"))
                 val now = System.currentTimeMillis()
-                sessions.values.filter { now - it.lastUsed > ttlMs }.map { it.owner }.forEach(::closeActive)
+                sessions.values.filter { it.link == null && now - it.lastUsed > ttlMs }.map { it.owner }.forEach(::closeActive)
                 if (busy()) return@attempt GerIntentAttempt.Blocked("task_running")
                 val admission = scheduler.ger.claimSlot(sessionOwner)
                 if (!admission.admitted) return@attempt GerIntentAttempt.Blocked("slot_budget_exhausted")
@@ -323,6 +401,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                         }
                     }
                 } catch (e: CancellationException) { throw e }
+                catch (e: CommandException) { throw e }
                 catch (_: Exception) { GerIntentAttempt.Done(fail("phone_unavailable")) }
             } finally { lock.unlock() }
         }
@@ -501,7 +580,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             ScreenAccessibility.instance.value != null
     }
 
-    private suspend fun create(owner: String, now: Long): Session {
+    private suspend fun create(owner: String, now: Long, link: GadgetPhoneLease? = null): Session {
         val services = PhoneServices.of(context)
         val binding = services.sharedShell.acquire()
         try {
@@ -553,7 +632,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             }
             val executor = ActionExecutor(
                 tools, OperationGuards(400), confirmations = null,
-                gate = { check(settings.directWritesEnabled.value && settings.enabled.value && !busy() &&
+                gate = { check((link == null || allowed(link)) && settings.directWritesEnabled.value && settings.enabled.value && !busy() &&
                     scheduler.ger.canUseSlot(sessionOwner) && readyForGate(binding)) },
                 recorder = ActionRecorder(sink), approvals = ApprovalSettings.STRICT,
                 // Bridge origin is STRICT in ApprovalPolicy; generic Mcp runs only use ASK.
@@ -572,7 +651,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                 safe.checkAppAccess()
                 result
             }
-            return Session(owner, binding, display, safe, tools, executor, captureVirtualPng, services.sharedShell::release, now)
+            return Session(owner, binding, link, { services.hub.shell.value === shell && ScreenAccessibility.instance.value === a11y }, { physical }, display, safe, tools, executor, captureVirtualPng, services.sharedShell::release, now)
         } catch (e: Exception) {
             services.sharedShell.release()
             throw e
@@ -705,12 +784,17 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         if (busy() || !app.resources.ger.canUseSlot(directOwner(s.owner)))
             return GerIntentAttempt.Blocked("task_running")
         if (!ready(s) || sensitive(s)) return GerIntentAttempt.Done(fail("needs_user"))
+        val actionArgs = if (s.link != null) {
+            if (gadgetSession(s.link) !== s) return GerIntentAttempt.Done(fail("phone_unavailable"))
+            reader(s).checkActionSurface()
+            bindGadgetTarget(s, args) ?: return GerIntentAttempt.Done(fail("stale_snapshot"))
+        } else args
         val request = requestId(args) ?: return GerIntentAttempt.Done(fail("request_id_required"))
         // GER PR-6: a presented chat approval token is gate input, not an
         // action argument — strip it (and request_id) from what executes and
         // from the exact-args digest the token was bound to at issuance.
         val presentedToken = (args["approval_token"] as? JsonPrimitive)?.contentOrNull
-        val clean = JsonObject(args.filterKeys { it != "request_id" && it != "approval_token" })
+        val clean = JsonObject(actionArgs.filterKeys { it != "request_id" && it != "approval_token" })
         // GER PR-7: volume/media execute as one scoped phone_press_key whose
         // arguments are the translated {key} object — the same shape the
         // token issuer binds for those tools.
@@ -734,6 +818,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         // A still-running launch must not commit another request's PENDING.
         if (launchBoundary.isInFlight() || closeAfterLaunch)
             return GerIntentAttempt.Done(fail("launch_in_flight"))
+        if (s.link != null && gadgetSession(s.link) !== s) return GerIntentAttempt.Done(fail("phone_unavailable"))
         val key = digest(s.owner + "|" + request)
         if (!markOnce(key, external, clean.keys.sorted().joinToString(",")))
             return GerIntentAttempt.Done(fail("delivery_unknown"))
