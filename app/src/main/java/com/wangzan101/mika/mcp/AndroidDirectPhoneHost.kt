@@ -180,7 +180,14 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             if (old?.link === link) retire(link.owner)
             return@withLock false
         }
-        if (launchBoundary.isInFlight() || closeAfterLaunch || busy()) return@withLock false
+        if (launchBoundary.isInFlight() || closeAfterLaunch) return@withLock false
+        // A local task takes precedence: hand back the gadget's slot, display and app reservations
+        // instead of parking on them. The next maintenance pass after the task builds a fresh session
+        // (which also requires a fresh passive read before ref-based writes).
+        if (busy()) {
+            if (old?.link === link) retire(link.owner)
+            return@withLock false
+        }
         val key = directOwner(link.owner)
         if (old != null && (old.link !== link || !old.sourcesCurrent())) closeActive(link.owner)
         if (!app.resources.ger.claimSlot(key).admitted) return@withLock false
@@ -284,7 +291,10 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         call(link.owner, name, args, link)
 
     private suspend fun call(owner: String, name: String, args: JsonObject, link: GadgetPhoneLease?): JsonObject {
-        fun authorized() = link == null || allowed(link) && sessions[owner]?.link === link
+        // A gadget session retired for a local task is re-created by maintainGadget; until then its
+        // calls wait in the queue ("task_running") instead of failing.
+        fun authorized() = link == null || allowed(link) &&
+            (sessions[owner]?.link === link || sessions[owner] == null && busy())
         if (!authorized()) return fail("phone_unavailable")
         if (owner.isBlank()) return fail("unauthenticated")
         val scheduler = app.resources
@@ -356,6 +366,11 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                 if (busy()) return@attempt GerIntentAttempt.Blocked("task_running")
                 val admission = scheduler.ger.claimSlot(sessionOwner)
                 if (!admission.admitted) return@attempt GerIntentAttempt.Blocked("slot_budget_exhausted")
+                // Only maintainGadget creates a gadget session (with its lease and identity).
+                if (link != null && sessions[owner]?.link !== link) {
+                    if (!sessions.containsKey(owner)) scheduler.ger.releaseSlot(sessionOwner)
+                    return@attempt GerIntentAttempt.Blocked("phone_session_pending")
+                }
                 val s = try {
                     sessions[owner] ?: create(owner, now).also { sessions[owner] = it }
                 } catch (e: CancellationException) {
