@@ -197,6 +197,7 @@ class GadgetConnectService : Service() {
         controlJob = controlScope.launch {
             val phone = PhoneServices.of(this@GadgetConnectService)
             var lastStatus: String? = null
+            var lastOff: com.wangzan101.mika.core.shell.AutoOffOutcome? = phone.shellManager.wirelessAutoOn.lastOff.value
             try {
                 while (isActive) {
                     val ready = try {
@@ -206,10 +207,17 @@ class GadgetConnectService : Service() {
                     val status = when {
                         ready -> "ready"
                         !(applicationContext as MikaApp).mcp.settings.enabled.value -> "remote_access_disabled"
-                        phone.hub.shell.value == null && phone.hub.lastHandoffRejection == "StaleApk" -> "stale_helper"
-                        phone.hub.shell.value == null -> "helper_unavailable"
+                        phone.hub.shell.value == null -> {
+                            // The watchdog relaunches the helper by itself; ask it once per registration
+                            // (it keeps its own backoff) and otherwise only name what it waits on.
+                            if (lastStatus == null) phone.shellManager.need()
+                            GadgetHelperDiagnosis.helperStatus(phone.shellManager.engine.status.value, phone.hub.lastHandoffRejection)
+                        }
                         else -> "awaiting_accessibility_or_slot"
                     }
+                    val off = phone.shellManager.wirelessAutoOn.lastOff.value
+                    if (off != lastOff && off != null) GadgetLink.log("link: wireless debugging after helper launch: ${off.name}")
+                    lastOff = off
                     if (status != lastStatus) GadgetLink.log("link: phone session $status")
                     lastStatus = status
                     delay(if (ready) 5_000L else 1_000L)
@@ -257,5 +265,23 @@ class GadgetConnectService : Service() {
     private fun updateNotification(label: String) {
         if (destroyed) return
         runCatching { getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification("Muse: $label")) }
+    }
+}
+
+internal object GadgetHelperDiagnosis {
+    /** Diagnostics label for a missing helper; fixed vocabulary, no addresses or error text. */
+    fun helperStatus(status: com.wangzan101.mika.core.shell.BuiltinShellStatus, rejection: String?): String = when {
+        status is com.wangzan101.mika.core.shell.BuiltinShellStatus.Failed -> when (status.reason) {
+            com.wangzan101.mika.core.shell.BuiltinShellFailure.NoWifi -> "helper_needs_wifi"
+            com.wangzan101.mika.core.shell.BuiltinShellFailure.WifiNotAllowed -> "helper_wifi_not_allowed"
+            com.wangzan101.mika.core.shell.BuiltinShellFailure.AuthorizationRevoked,
+            com.wangzan101.mika.core.shell.BuiltinShellFailure.KeyUnreadable -> "helper_needs_pairing"
+            else -> if (rejection == "StaleApk") "stale_helper" else "helper_unavailable"
+        }
+        status == com.wangzan101.mika.core.shell.BuiltinShellStatus.NotPaired -> "helper_not_set_up"
+        status == com.wangzan101.mika.core.shell.BuiltinShellStatus.WirelessDebuggingOff -> "helper_needs_wireless_debugging"
+        rejection == "StaleApk" -> "helper_upgrading"
+        status == com.wangzan101.mika.core.shell.BuiltinShellStatus.Connecting -> "helper_starting"
+        else -> "helper_unavailable"
     }
 }
