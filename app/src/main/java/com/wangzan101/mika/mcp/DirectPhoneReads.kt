@@ -80,6 +80,9 @@ internal class DirectPhoneReads(
 
         suspend fun sensitive(screen: ScreenPort): Boolean = sensitive(screen, screen.peek())
 
+        /** True when the window manager shows an app window the accessibility reader cannot read at all. */
+        fun unreadableWindow(snapshot: ScreenSnapshot, protection: VirtualWindowProtection): Boolean = false
+
         private suspend fun sensitive(screen: ScreenPort, snapshot: ScreenSnapshot): Boolean =
             snapshot.protected || snapshot.captureError != null ||
                 OtpRedaction.hasPasswordField(snapshot) || screen.isProtected()
