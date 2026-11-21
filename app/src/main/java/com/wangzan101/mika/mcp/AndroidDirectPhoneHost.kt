@@ -1,22 +1,22 @@
 package com.wangzan101.mika.mcp
 
-import android.content.Context
 import android.app.KeyguardManager
-import android.os.PowerManager
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import android.content.Context
 import android.hardware.display.DisplayManager
+import android.os.PowerManager
+import com.darlisonfarich.gadgetlink.commands.CommandException
+import com.darlisonfarich.gadgetlink.commands.ErrorCode
 import com.wangzan101.mika.MikaApp
-import com.wangzan101.mika.task.GerIntentAttempt
-import com.wangzan101.mika.task.GerIntentOutcome
 import com.wangzan101.mika.cap.phone.PhoneServices
 import com.wangzan101.mika.cap.phone.a11y.AndroidScreen
 import com.wangzan101.mika.cap.phone.a11y.LazyPhoneScreen
 import com.wangzan101.mika.cap.phone.a11y.ScreenAccessibility
+import com.wangzan101.mika.cap.phone.a11y.VirtualScreenshot
 import com.wangzan101.mika.cap.phone.a11y.launchableApps
 import com.wangzan101.mika.cap.phone.display.AgentDisplay
 import com.wangzan101.mika.cap.phone.display.LazyAgentDisplay
 import com.wangzan101.mika.cap.phone.shell.ShellBinding
+import com.wangzan101.mika.cap.phone.shell.VirtualWindowProtection
 import com.wangzan101.mika.core.action.ActionExecutor
 import com.wangzan101.mika.core.action.ActionRecorder
 import com.wangzan101.mika.core.action.ApprovalSettings
@@ -31,20 +31,22 @@ import com.wangzan101.mika.core.mcp.DirectPhoneHost
 import com.wangzan101.mika.core.model.Part
 import com.wangzan101.mika.core.record.RunEvent
 import com.wangzan101.mika.core.record.RunSink
+import com.wangzan101.mika.core.remote.RemoteOwnership
 import com.wangzan101.mika.core.run.Attendance
 import com.wangzan101.mika.core.run.RunOrigin
 import com.wangzan101.mika.core.run.RunProvenance
 import com.wangzan101.mika.core.tool.ToolDispatcher
 import com.wangzan101.mika.core.uistate.AppAccessScreenPort
 import com.wangzan101.mika.core.uistate.ScreenPort
-import com.wangzan101.mika.core.uistate.UiTreeNode
+import com.wangzan101.mika.core.uistate.ScreenSnapshot
 import com.wangzan101.mika.settings.McpSettings
-import java.io.ByteArrayOutputStream
+import com.wangzan101.mika.task.GerIntentAttempt
+import com.wangzan101.mika.task.GerIntentOutcome
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
-import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -83,7 +85,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
     private val checkpoints = DirectPhoneBatchCheckpoints(File(context.filesDir, "direct-phone-batches.log"))
     private val seen = HashSet<String>()
     private var loaded = false
-    private val sessions = LinkedHashMap<String, Session>()
+    private val sessions = ConcurrentHashMap<String, Session>()
     private var step = 0
     private val ttlMs get() = app.resources.ger.budgets.sessionTtlMs
 
@@ -94,9 +96,12 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         val screen: ScreenPort,
         val tools: ToolDispatcher,
         val executor: ActionExecutor,
+        val captureVirtualPng: suspend () -> VirtualScreenshot,
         val releaseBinding: () -> Unit,
-        var lastUsed: Long,
+        @Volatile var lastUsed: Long,
     ) {
+        val readScope = UUID.randomUUID().toString()
+
         fun close() { display.current?.release(); releaseBinding() }
     }
 
@@ -134,6 +139,67 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             app.resources.releaseOwner(key)
             app.resources.ger.releaseDirect(key)
             app.resources.ger.releaseSlot(key)
+        }
+    }
+
+    // LAN and relay authenticate as the current computer-access token's owner. USB
+    // has a separate owner and is deliberately never selected by a Gadget invocation.
+    private fun gadgetSession(): Session? {
+        if (!settings.enabled.value || ScreenAccessibility.instance.value == null ||
+            launchBoundary.isInFlight() || closeAfterLaunch
+        ) return null
+        val owner = settings.existingToken()?.let(RemoteOwnership::of) ?: return null
+        return sessions[owner]?.takeIf {
+            System.currentTimeMillis() - it.lastUsed <= ttlMs &&
+                app.resources.ger.canUseSlot(directOwner(owner))
+        }
+    }
+
+    internal fun gadgetReadScope(): String? {
+        val session = gadgetSession() ?: return null
+        val access = app.appAccess.current()
+        return "${session.readScope}:${access.revision}:${access.available}:${app.appAccess.sensitiveUi}"
+    }
+
+    internal suspend fun readForGadget(screenshot: Boolean, full: Boolean): JsonObject = lock.withLock {
+        if (!settings.enabled.value) throw CommandException(ErrorCode.LOCAL_GATE_DENIED, "remote_access_disabled")
+        val session = gadgetSession() ?: throw CommandException(ErrorCode.UNAVAILABLE)
+        val access = app.appAccess.current()
+        val guarded = app.appAccess.sensitiveUi
+        val reader = DirectPhoneReads(
+            screen = session.screen,
+            generation = { ScreenAccessibility.windowGeneration() },
+            windowProtection = {
+                val displayId = session.display.current?.displayId
+                if (displayId == null) VirtualWindowProtection.Empty else withContext(Dispatchers.IO) {
+                    val shell = session.binding.shell.value ?: throw CommandException(ErrorCode.UNAVAILABLE)
+                    VirtualWindowProtection.fromCode(shell.virtualWindowProtection(displayId))
+                }
+            },
+            inUseByUser = { snapshot -> withContext(Dispatchers.IO) { inUseOnPhysicalScreen(session, snapshot) } },
+            capture = session.captureVirtualPng,
+            compress = ::compressPhoneScreenshot,
+        )
+        val result = if (screenshot) reader.screenshot() else reader.tree(full)
+        if (!settings.enabled.value) throw CommandException(ErrorCode.LOCAL_GATE_DENIED, "remote_access_disabled")
+        if (gadgetSession() !== session) throw CommandException(ErrorCode.UNAVAILABLE)
+        if (app.appAccess.current() != access || app.appAccess.sensitiveUi != guarded)
+            throw CommandException(ErrorCode.LOCAL_GATE_DENIED, "app_access_changed")
+        result
+    }
+
+    private fun inUseOnPhysicalScreen(session: Session, snapshot: ScreenSnapshot): Boolean {
+        if (snapshot.opened?.onUserScreen == true) return true
+        val packages = (snapshot.windows.filter { it.type == "application" }.mapNotNull { it.packageName } +
+            listOfNotNull(snapshot.packageName, snapshot.unreadableApp)).distinct()
+        if (packages.isEmpty()) return false
+        val shell = session.binding.shell.value ?: throw CommandException(ErrorCode.UNAVAILABLE)
+        val topTask = session.display.current?.let { shell.topTaskId(it.displayId) } ?: -1
+        val topPackage = if (topTask >= 0) shell.packageOfTask(topTask) else null
+        val topUser = if (topTask >= 0) shell.userOfTask(topTask) else -1
+        val androidUser = android.os.Process.myUid() / 100_000
+        return packages.any {
+            shell.visibleOnMainScreen(it, if (it == topPackage && topUser >= 0) topUser else androidUser)
         }
     }
 
@@ -500,52 +566,30 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                     chatApprovalStore.tokens, sessionOwner, "direct", chatApprovalSlot),
                 selfPackage = context.packageName,
             )
-            return Session(owner, binding, display, safe, tools, executor, services.sharedShell::release, now)
+            val captureVirtualPng: suspend () -> VirtualScreenshot = {
+                safe.checkAppAccess()
+                val result = physical?.captureVirtualPng() ?: VirtualScreenshot.Failed
+                safe.checkAppAccess()
+                result
+            }
+            return Session(owner, binding, display, safe, tools, executor, captureVirtualPng, services.sharedShell::release, now)
         } catch (e: Exception) {
             services.sharedShell.release()
             throw e
         }
     }
 
-    private fun secretNode(node: UiTreeNode): Boolean = node.secret || node.children.any(::secretNode)
-    private suspend fun sensitive(s: Session): Boolean {
-        val v = s.screen.peek()
-        return v.protected || v.captureError != null || v.elements.any { it.secret } ||
-            v.windows.any { w -> w.nodes.any(::secretNode) } || s.screen.isProtected()
-    }
+    private suspend fun sensitive(s: Session): Boolean = DirectPhoneReads.sensitive(s.screen)
 
     private suspend fun screenshot(s: Session): JsonObject {
         if (sensitive(s)) return fail("needs_user")
         val png = s.screen.screenshotPng() ?: return fail("screenshot_unavailable")
-        // Recheck after capture, preventing the usual check-then-screen-transition race.
         if (sensitive(s)) return fail("needs_user")
-        if (png.size <= 600_000) return encoded(png, "image/png")
-        val bmp = BitmapFactory.decodeByteArray(png, 0, png.size) ?: return fail("screenshot_unavailable")
-        var scaled: Bitmap = bmp
-        try {
-            var quality = 78
-            repeat(9) {
-                val out = ByteArrayOutputStream()
-                scaled.compress(Bitmap.CompressFormat.JPEG, quality, out)
-                if (out.size() <= 600_000) return encoded(out.toByteArray(), "image/jpeg")
-                quality = (quality - 8).coerceAtLeast(30)
-                val next = Bitmap.createScaledBitmap(scaled,
-                    (scaled.width * 0.75).toInt().coerceAtLeast(1),
-                    (scaled.height * 0.75).toInt().coerceAtLeast(1), true)
-                if (scaled !== bmp) scaled.recycle()
-                scaled = next
-            }
-            return fail("payload_too_large")
-        } finally {
-            if (scaled !== bmp) scaled.recycle()
-            bmp.recycle()
+        return when (val encoded = compressPhoneScreenshot(png, DirectPhoneReads.MCP_SCREENSHOT_BYTES)) {
+            null -> fail("screenshot_unavailable")
+            EncodedPhoneScreenshot.TooLarge -> fail("payload_too_large")
+            is EncodedPhoneScreenshot.Image -> encoded.json()
         }
-    }
-
-    private fun encoded(data: ByteArray, mime: String): JsonObject = buildJsonObject {
-        put("ok", true); put("mimeType", mime)
-        put("data", Base64.getEncoder().encodeToString(data))
-        put("sizeBytes", data.size)
     }
 
     /** Progress for this MCP call; durable success prefix lives in DirectPhoneBatchCheckpoints. */

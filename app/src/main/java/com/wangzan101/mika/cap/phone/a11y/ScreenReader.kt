@@ -4,6 +4,7 @@ import android.graphics.Rect
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.wangzan101.mika.core.cap.phone.WheelMath
+import com.wangzan101.mika.core.uistate.ScreenJson
 import com.wangzan101.mika.core.uistate.ElementLocator
 import com.wangzan101.mika.core.uistate.UiElement
 import com.wangzan101.mika.core.uistate.UiStates
@@ -94,7 +95,7 @@ internal object ScreenReader {
                                 normalize(rect.right, width), normalize(rect.bottom, height),
                             ),
                             // 输入框总带上资源 ID:回车前要靠它认出搜索框(名字常常只是推荐词)
-                            resourceId = if (label.isEmpty() || editable) readableResourceId(rid) else null,
+                            resourceId = if (label.isEmpty() || editable) ScreenJson.readableResourceId(rid) else null,
                             clickable = n.isClickable, editable = editable, scrollable = n.isScrollable,
                             hint = own != null && showingHint(n),
                             focused = n.isFocused,
@@ -305,12 +306,6 @@ internal object ScreenReader {
         walk(n, 0)
         val joined = parts.joinToString(" ")
         return if (joined.length > AGGREGATE_MAX) joined.take(AGGREGATE_MAX) + "…" else joined
-    }
-
-    /** `com.x:id/cart_icon` → `cart_icon`;混淆过的短名认不出用途,不给。 */
-    private fun readableResourceId(id: String?): String? {
-        val short = id?.substringAfterLast('/') ?: return null
-        return short.takeIf { Regex("^[A-Za-z0-9_]{4,}$").matches(it) && Regex("[A-Za-z]{3}").containsMatchIn(it) }
     }
 
     private const val FNV_OFFSET = -0x340d631b7bdddcdbL

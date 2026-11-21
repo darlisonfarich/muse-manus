@@ -9,7 +9,7 @@ import kotlinx.serialization.json.put
 
 /** 给模型看的手机窗口层级;节点完整保留,只省去空字段和默认状态。 */
 object UiTreeJson {
-    fun windows(s: ScreenSnapshot): JsonArray = buildJsonArray {
+    fun windows(s: ScreenSnapshot, sanitize: Boolean = false): JsonArray = buildJsonArray {
         for (w in s.windows) add(buildJsonObject {
             put("id", w.id)
             put("type", w.type)
@@ -18,20 +18,20 @@ object UiTreeJson {
             w.packageName?.let { put("packageName", it) }
             if (w.active) put("active", true)
             if (w.focused) put("focused", true)
-            put("nodes", JsonArray(w.nodes.map(::node)))
+            put("nodes", JsonArray(w.nodes.map { node(it, sanitize) }))
         })
     }
 
-    private fun node(n: UiTreeNode): JsonObject = JsonObject(shallow(n) +
-        (if (n.children.isEmpty()) emptyMap() else mapOf("children" to JsonArray(n.children.map(::node)))))
+    private fun node(n: UiTreeNode, sanitize: Boolean = false): JsonObject = JsonObject(shallow(n, sanitize) +
+        (if (n.children.isEmpty()) emptyMap() else mapOf("children" to JsonArray(n.children.map { node(it, sanitize) }))))
 
-    private fun shallow(n: UiTreeNode): JsonObject = buildJsonObject {
+    private fun shallow(n: UiTreeNode, sanitize: Boolean = false): JsonObject = buildJsonObject {
         put("role", n.role)
         n.ref?.let { put("ref", it) }
-        n.text?.let { put("text", it) }
-        n.description?.let { put("description", it) }
-        n.hintText?.let { put("hintText", it) }
-        n.resourceId?.let { put("resourceId", it) }
+        n.text?.takeUnless { sanitize && n.secret }?.let { put("text", it) }
+        n.description?.takeUnless { sanitize && n.secret }?.let { put("description", it) }
+        n.hintText?.takeUnless { sanitize && n.secret }?.let { put("hintText", it) }
+        (if (sanitize) ScreenJson.readableResourceId(n.resourceId) else n.resourceId)?.let { put("resourceId", it) }
         put("bounds", JsonArray(n.bounds.map(::JsonPrimitive)))
         if (n.clickable) put("clickable", true)
         if (n.editable) put("editable", true)

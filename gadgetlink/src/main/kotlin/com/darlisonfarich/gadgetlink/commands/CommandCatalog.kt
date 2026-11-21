@@ -22,9 +22,23 @@ class CommandCatalog(commands: List<CommandSpec>, val includeStubs: Boolean = fa
     fun commandsV2(): JsonObject = JsonObject(announced.associateTo(LinkedHashMap()) { it.name to it.wire() })
 
     companion object {
-        /** O catálogo do Muse Manus: linktest.* (implementados) + os 29 phone.* (stubs, fora do registro normal). */
+        /** Catálogo da Etapa 1, usado para medir os stubs sem o host Android. */
         fun museManus(includeStubs: Boolean = false, clock: () -> Long = System::currentTimeMillis): CommandCatalog =
-            CommandCatalog(LinkTestCommands.all(clock) + PhoneCatalog.stubs(), includeStubs)
+            museManus(emptyList(), includeStubs, clock)
+
+        /** Substitui no catálogo somente as duas leituras da sessão Android. */
+        fun museManus(
+            readCommands: List<CommandSpec>,
+            includeStubs: Boolean = false,
+            clock: () -> Long = System::currentTimeMillis,
+        ): CommandCatalog {
+            val reads = readCommands.associateBy { it.name }
+            require(reads.size == readCommands.size)
+            require(readCommands.all { it.name in PHONE_READS && it.implemented && !it.writes })
+            return CommandCatalog(LinkTestCommands.all(clock) + PhoneCatalog.stubs().map { reads[it.name] ?: it }, includeStubs)
+        }
+
+        private val PHONE_READS = setOf("phone.get_tree", "phone.get_screenshot")
 
         /** Bytes do link.register serializado como sai no fio (prefixo de tamanho incluído) — o que conta no teto de 256 KiB. */
         fun registerBytes(catalog: CommandCatalog, nodeId: String, displayName: String, version: String): Int =
