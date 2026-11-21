@@ -23,9 +23,13 @@ internal class DirectPhoneReads(
     private val capture: suspend () -> VirtualScreenshot,
     private val compress: (ByteArray, Int) -> EncodedPhoneScreenshot?,
 ) {
-    suspend fun tree(full: Boolean): JsonObject = guarded { ScreenJson.passivePhoneTree(it, full) }
+    suspend fun tree(full: Boolean): JsonObject = guarded { snapshot, protection ->
+        requireReadable(snapshot, protection)
+        ScreenJson.passivePhoneTree(snapshot, full)
+    }
 
-    suspend fun screenshot(): JsonObject = guarded { snapshot ->
+    suspend fun screenshot(): JsonObject = guarded { snapshot, protection ->
+        requireReadable(snapshot, protection)
         if (!snapshot.hasWindow && snapshot.packageName == null && snapshot.unreadableApp == null)
             throw CommandException(ErrorCode.UNAVAILABLE)
         when (val image = capture()) {
@@ -39,16 +43,16 @@ internal class DirectPhoneReads(
         }
     }
 
-    private suspend fun guarded(payload: suspend (ScreenSnapshot) -> JsonObject): JsonObject = try {
+    private suspend fun guarded(payload: suspend (ScreenSnapshot, VirtualWindowProtection) -> JsonObject): JsonObject = try {
         val revision = generation()
-        val first = checkedPeek()
+        val (first, protection) = checkedPeek()
         // Hold the outcome locally until the final checks, even for capture/size failures.
         val result = try {
-            Result.success(payload(first))
+            Result.success(payload(first, protection))
         } catch (e: CommandException) {
             Result.failure(e)
         }
-        val last = checkedPeek()
+        val (last, _) = checkedPeek()
         if (generation() != revision || first.copy(snapshotId = last.snapshotId) != last)
             throw CommandException(ErrorCode.STALE_SNAPSHOT)
         result.getOrThrow()
@@ -56,9 +60,19 @@ internal class DirectPhoneReads(
         throw CommandException(ErrorCode.LOCAL_GATE_DENIED, e.code)
     }
 
-    suspend fun checkActionSurface() { guarded { buildJsonObject {} } }
+    suspend fun checkActionSurface() { guarded { _, _ -> buildJsonObject {} } }
 
-    private suspend fun checkedPeek(): ScreenSnapshot {
+    /**
+     * A passive read of a window that exists but cannot be read is not an answer: the window manager shows an app
+     * there, accessibility gives no content. Reported as unstable first, so the executor's bounded retry can give a
+     * window that is only still opening time to settle; the caller turns the leftover into a specific error. Actions
+     * are not held to this: a coordinate tap does not need to read the screen.
+     */
+    private fun requireReadable(snapshot: ScreenSnapshot, protection: VirtualWindowProtection) {
+        if (unreadableWindow(snapshot, protection)) throw CommandException(ErrorCode.STALE_SNAPSHOT, WINDOW_UNREADABLE)
+    }
+
+    private suspend fun checkedPeek(): Pair<ScreenSnapshot, VirtualWindowProtection> {
         val protection = windowProtection()
         when (protection) {
             VirtualWindowProtection.Secure -> throw CommandException(ErrorCode.LOCAL_GATE_DENIED, "needs_user")
@@ -71,7 +85,7 @@ internal class DirectPhoneReads(
         if (snapshot.changedDuringRead || protection == VirtualWindowProtection.Empty &&
             (snapshot.hasWindow || snapshot.unreadableApp != null || snapshot.windows.isNotEmpty())
         ) throw CommandException(ErrorCode.STALE_SNAPSHOT)
-        return snapshot
+        return snapshot to protection
     }
 
     companion object {
@@ -79,6 +93,18 @@ internal class DirectPhoneReads(
         const val MCP_SCREENSHOT_BYTES = 600_000
 
         suspend fun sensitive(screen: ScreenPort): Boolean = sensitive(screen, screen.peek())
+
+        /** Detail of the `stale_snapshot` raised for, and of the final error about, a window that cannot be read. */
+        const val WINDOW_UNREADABLE = "window_unreadable"
+
+        /**
+         * True when the window manager shows windows on the display (a clear verdict), accessibility enumerates an
+         * app window, and no readable content of it came back. A readable window with no labelled node (a game
+         * canvas) is still an answer and stays one.
+         */
+        fun unreadableWindow(snapshot: ScreenSnapshot, protection: VirtualWindowProtection): Boolean =
+            protection == VirtualWindowProtection.Clear && snapshot.hasWindow &&
+                snapshot.packageName == null && snapshot.elements.isEmpty()
 
         private suspend fun sensitive(screen: ScreenPort, snapshot: ScreenSnapshot): Boolean =
             snapshot.protected || snapshot.captureError != null ||
