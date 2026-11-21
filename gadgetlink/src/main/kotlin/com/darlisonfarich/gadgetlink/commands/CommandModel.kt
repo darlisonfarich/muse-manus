@@ -77,6 +77,8 @@ class CommandSpec(
     val writes: Boolean,
     /** Falso = stub da medição da Etapa 1: só anunciado com includeStubs e sempre not_implemented. */
     val implemented: Boolean,
+    /** Optional live authorization scope for joining or replaying results. Null from it denies the read. */
+    val replayScope: (() -> String?)? = null,
     val handler: CommandHandler,
 ) {
     init {

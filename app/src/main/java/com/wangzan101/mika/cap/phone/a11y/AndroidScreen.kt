@@ -188,7 +188,17 @@ class AndroidScreen(
     // 不进编号登记表:模型手里最新的 ref 仍然有效
     override suspend fun peek(): ScreenSnapshot = capture(register = false)
 
-    private suspend fun capture(register: Boolean): ScreenSnapshot = withContext(Dispatchers.IO) {
+    /** Resolve a passive reference only at write time, against an identical fresh window. */
+    internal suspend fun bindPassiveReference(matches: (ScreenSnapshot) -> Boolean): ScreenSnapshot? {
+        var candidate: NodeSnapshot? = null
+        val current = capture(register = false) { candidate = it }
+        val nodes = candidate ?: return null
+        if (current.changedDuringRead || !matches(current)) return null
+        ids.put(nodes)
+        return current
+    }
+
+    private suspend fun capture(register: Boolean, candidate: (NodeSnapshot) -> Unit = {}): ScreenSnapshot = withContext(Dispatchers.IO) {
         if (!hasDisplay) return@withContext ScreenSnapshot(snapshotId(), null, emptyList(), screenWidth, screenHeight, hasWindow = false)
         // 上一个动作过了一会儿才开到用户主屏上的:先挪回来再读(只在模型要读的这一屏上做,不在判效果的那一眼里做)
         val late = if (register) lateSpill() else null
@@ -196,7 +206,7 @@ class AndroidScreen(
         val after = treeHash()
         val foreground = if (r.topPackage == null) foregroundTaskPackage() else null
         val snap = NodeSnapshot(snapshotId(), r.entries)
-        if (register) ids.put(snap)
+        if (register) ids.put(snap) else candidate(snap)
         ScreenSnapshot(
             snapshotId = snap.id,
             packageName = r.topPackage,
@@ -241,23 +251,30 @@ class AndroidScreen(
         TargetApp(pkg, task, userOf(task))
     }.distinctUntilChanged { a, b -> a.packageName == b.packageName && a.userId == b.userId }
 
-    override suspend fun screenshotPng(): ByteArray? = withContext(Dispatchers.IO) {
-        // Never encode the raw full-resolution frame: re-check the tree around capture.
-        if (!frameServable() || frameBlack() == true) return@withContext null
+    override suspend fun screenshotPng(): ByteArray? =
+        (captureVirtualPng() as? VirtualScreenshot.Png)?.bytes
+
+    internal suspend fun captureVirtualPng(): VirtualScreenshot = withContext(Dispatchers.IO) {
+        if (!frameServable()) return@withContext VirtualScreenshot.Stale
+        if (frameBlack() == true) return@withContext VirtualScreenshot.Failed
         val generation = ScreenAccessibility.windowGeneration()
         val before = read()
-        val raw = display.current?.latestFrameBitmap() ?: return@withContext null
+        val raw = display.current?.latestFrameBitmap() ?: return@withContext VirtualScreenshot.Failed
         try {
             val after = read()
             if (generation != ScreenAccessibility.windowGeneration() || before.hash != after.hash ||
                 !after.hasAppWindow || before.passwordField != after.passwordField
-            ) return@withContext null
-            val previous = SecretRegions.collect(before.entries.map { it.element }, before.windows) ?: return@withContext null
-            val areas = SecretRegions.collect(after.entries.map { it.element }, after.windows) ?: return@withContext null
-            if (areas != previous) return@withContext null
-            val safe = SecretBitmap.redact(raw, areas) ?: return@withContext null
+            ) return@withContext VirtualScreenshot.Stale
+            val previous = SecretRegions.collect(before.entries.map { it.element }, before.windows)
+                ?: return@withContext VirtualScreenshot.Failed
+            val areas = SecretRegions.collect(after.entries.map { it.element }, after.windows)
+                ?: return@withContext VirtualScreenshot.Failed
+            if (areas != previous) return@withContext VirtualScreenshot.Stale
+            val safe = SecretBitmap.redact(raw, areas) ?: return@withContext VirtualScreenshot.Failed
             try {
-                ByteArrayOutputStream().also { safe.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+                val out = ByteArrayOutputStream()
+                if (!safe.compress(Bitmap.CompressFormat.PNG, 100, out)) return@withContext VirtualScreenshot.Failed
+                VirtualScreenshot.Png(out.toByteArray())
             } finally {
                 if (safe !== raw) safe.recycle()
             }

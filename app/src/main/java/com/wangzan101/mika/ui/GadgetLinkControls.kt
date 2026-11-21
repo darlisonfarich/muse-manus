@@ -133,6 +133,12 @@ fun GadgetLinkControls(reload: () -> Unit) {
                 Modifier.weight(1f).testTag("gadget-link-connect"),
                 kind = ButtonKind.Tonal,
             )
+            MikaButton(
+                "Copiar registro do link",
+                { copyLinkLog(context) },
+                Modifier.weight(1f).testTag("gadget-link-copy-log"),
+                kind = ButtonKind.Tonal,
+            )
         }
         // Medição da Etapa 1 do Gadget Link: anuncia também os 29 stubs phone.* (sem efeito nenhum, todos
         // devolvem not_implemented). Desligado por padrão; vale a partir da próxima conexão.
@@ -182,6 +188,17 @@ private fun openIfReady(context: Context, reload: () -> Unit) {
         Toast.makeText(context, "Não deu para abrir: ${it.javaClass.simpleName}", Toast.LENGTH_LONG).show()
     }
     reload()
+}
+
+/** Copia o registro do link (versão, estado do ajudante e eventos) para colar numa conversa. */
+private fun copyLinkLog(context: Context) {
+    val text = runCatching { GadgetLink.copyableLog(context) }.getOrElse {
+        Toast.makeText(context, "Não deu para montar o registro: ${it.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+        return
+    }
+    context.getSystemService(ClipboardManager::class.java)
+        ?.setPrimaryClip(android.content.ClipData.newPlainText("Registro do Gadget Link", text))
+    Toast.makeText(context, "Registro do link copiado.", Toast.LENGTH_SHORT).show()
 }
 
 /** Lê o token do SDK da área de transferência (só no toque) e grava no estado do gadget. */

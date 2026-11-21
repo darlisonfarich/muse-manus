@@ -56,7 +56,8 @@ class McpRuntime(
     @Volatile private var host: RemoteHost? = null
     private var hostListen = McpModes.Listen.Off
     private val records: RunExportSource? = (tasks as? RemoteTaskHub)?.let { hub -> RemoteRunExport(hub) { RunStore(context) } }
-    private val directHost = AndroidDirectPhoneHost(context, settings)
+    internal val directHost = AndroidDirectPhoneHost(context, settings)
+
     private val endpoints = RemoteEndpoints(tasks, BuildConfig.VERSION_NAME, device = device.access, history = history, records = records, directPhone = directHost)
     private val relayAccess = RemoteAccess(token = { if (relaySettings.config.value.enabled) settings.token() else null })
     // 经网关来的请求要另开「允许经网关唤醒和解锁」才看得到屏幕能力;手机上的远程亮屏与解锁许可照样要开。

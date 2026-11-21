@@ -10,6 +10,9 @@ import android.app.AlarmManager
 class BootRestoreReceiver : BootRestoreHandler() {
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
+        if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+            com.wangzan101.mika.cap.phone.PhoneServices.of(context).shellManager.recoverGadgetAfterUpdate()
+        }
         if (intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == Intent.ACTION_TIME_CHANGED ||
             intent.action == AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED ||
             intent.action == Intent.ACTION_TIMEZONE_CHANGED) TriggerRuntime.rearm(context)
@@ -19,7 +22,8 @@ class BootRestoreReceiver : BootRestoreHandler() {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) (context.applicationContext as com.wangzan101.mika.MikaApp).mcp.ensureRunning()
         // 开机或本应用更新后,把用户留着开启的 Muse gadget 链接自动连回(没配对或已手动断开就不动;失败只记日志,不挡开机流程)
         if (intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
-            runCatching { com.wangzan101.mika.gadget.GadgetLink.resumeLinkAfterBoot(context) }
+            val reason = if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) "update" else "boot"
+            runCatching { com.wangzan101.mika.gadget.GadgetLink.resumeLinkAfterBoot(context, reason) }
         }
     }
 }

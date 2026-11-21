@@ -36,7 +36,7 @@ jobs:
       - name: Bootstrap checksum-verified Kotlin compiler
         run: bash tools/ci/bootstrap-kotlin-compiler.sh
       - name: Unit tests
-        run: ./gradlew :core:test --stacktrace
+        run: ./gradlew :core:test :gadgetlink:test --stacktrace
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v7
@@ -92,7 +92,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      MUSE_MANUS_SIGNING_CONFIGURED: ${{ secrets.MUSE_MANUS_KEYSTORE_B64 != '' && secrets.MUSE_MANUS_KEYSTORE_PASSWORD != '' && secrets.MUSE_MANUS_KEY_ALIAS != '' && secrets.MUSE_MANUS_KEY_PASSWORD != '' }}
+      MUSE_MANUS_SIGNING_CONFIGURED: ${{ github.event_name != 'pull_request' && secrets.MUSE_MANUS_KEYSTORE_B64 != '' && secrets.MUSE_MANUS_KEYSTORE_PASSWORD != '' && secrets.MUSE_MANUS_KEY_ALIAS != '' && secrets.MUSE_MANUS_KEY_PASSWORD != '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -132,6 +132,17 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 7
           if-no-files-found: ignore
+      - name: Build unsigned release for device validation
+        if: github.event_name == 'pull_request'
+        run: ./gradlew :app:assembleRelease --stacktrace
+      - name: Upload unsigned universal APK for Ship
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: muse-manus-unsigned-universal
+          path: app/build/outputs/apk/release/*universal*unsigned*.apk
+          if-no-files-found: error
+          retention-days: 7
       # The project key is optional so fork PRs and repositories without secrets retain the debug flow.
       - name: Build and check project-signed update APKs
         if: ${{ env.MUSE_MANUS_SIGNING_CONFIGURED == 'true' }}
