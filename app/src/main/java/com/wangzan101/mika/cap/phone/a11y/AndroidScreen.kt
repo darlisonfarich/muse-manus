@@ -175,6 +175,23 @@ class AndroidScreen(
         packages.ifEmpty { listOfNotNull(foregroundTaskPackage()) }
     }
 
+    /**
+     * One compact line about what the reader sees on this display when a window will not read: for each enumerated
+     * window its type, layer, whether it has a readable root (and that root's package and child count) and whether
+     * it is active or focused, plus the app on top according to the system. Shapes only, never screen content.
+     */
+    internal fun windowDiagnostics(): String {
+        val all = runCatching { windows() }.getOrDefault(emptyList())
+        val parts = all.map { w ->
+            val root = runCatching { w.root }.getOrNull()
+            "t=${w.type},l=${w.layer},root=${if (root == null) "null" else root.packageName ?: "?"},kids=${root?.childCount ?: -1}" +
+                (if (w.isActive) ",active" else "") + (if (w.isFocused) ",focused" else "")
+        }
+        val top = if (hasDisplay) runCatching { shell.topTaskId(displayId) }.getOrDefault(-1) else -1
+        val topPackage = if (top >= 0) runCatching { shell.packageOfTask(top) }.getOrNull() else null
+        return "windows=${all.size}[${parts.joinToString(";")}] topTask=${topPackage ?: "none"}"
+    }
+
     private fun read() = ScreenReader.read(windows(), screenWidth, screenHeight)
     private fun treeHash() = ScreenReader.hash(windows())
 

@@ -87,6 +87,7 @@ class GadgetPhoneActionsTest {
         catalog.find("phone.reconcile")!!.handler.run(json("""{"request_id":"abcdefgh","kind":"batch","commands":$batch}"""))
         assertEquals("phone_reconcile", calls[1].first)
         assertEquals(calls[0].second["commands"], calls[1].second["commands"])
+        assertEquals(json("""{"commands":$internalBatch}""")["commands"], calls[1].second["commands"])
         // An action reconcile has no commands and is untouched.
         catalog.find("phone.reconcile")!!.handler.run(json("""{"request_id":"abcdefgh","kind":"action"}"""))
         assertEquals(json("""{"request_id":"abcdefgh","kind":"action"}"""), calls[2].second)
