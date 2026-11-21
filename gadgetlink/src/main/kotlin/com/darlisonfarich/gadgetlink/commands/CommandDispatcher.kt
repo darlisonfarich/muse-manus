@@ -101,6 +101,7 @@ class CommandDispatcher(
     sweepMs: Long = SWEEP_MS,
 ) : InvokeHandler {
     companion object {
+        private const val LEGACY_SESSION = "direct-dispatcher-call"
         const val MAX_CONCURRENT = 4
         const val CACHE_SIZE = 128
         const val CACHE_TTL_MS = 10 * 60 * 1000L
@@ -169,8 +170,12 @@ class CommandDispatcher(
 
     private class Cached(val result: JsonObject, val resultBytes: Int, val at: Long)
 
+    /** The same response id may be reused on a different Noise connection. */
+    private data class SessionInvokeId(val session: String, val id: String)
+
     private inner class Invocation(
         val key: String,
+        val sessionKey: SessionInvokeId,
         val id: JsonElement,
         val command: String,
         val spec: CommandSpec?,
@@ -179,6 +184,8 @@ class CommandDispatcher(
         first: (JsonObject) -> Boolean,
     ) {
         val replies = ArrayList<(JsonObject) -> Boolean>().apply { add(first) }
+        /** Every session that subscribed to this invocation (including reconnect retries). */
+        val bindingKeys = HashSet<SessionInvokeId>().apply { add(sessionKey) }
         var done = false
 
         /** Parâmetros já conferidos contra o catálogo (só os declarados). */
@@ -194,6 +201,10 @@ class CommandDispatcher(
     private val lock = Any()
     private val cache = LinkedHashMap<String, Cached>()
     private val inFlight = HashMap<String, Invocation>()
+    /** One pending operation per response id within a single Noise session. */
+    private val activeBySessionId = HashMap<SessionInvokeId, Invocation>()
+    private val rejectedCollisions = AtomicInteger()
+    val rejectedIdCollisions: Int get() = rejectedCollisions.get()
     private val queue = ArrayDeque<Invocation>()
     private val slots = Semaphore(maxConcurrent)
     @Volatile private var closed = false
@@ -239,7 +250,10 @@ class CommandDispatcher(
     /** Linhas de auditoria cuja escrita falhou (exceção da auditoria). */
     val auditFailed: Int get() = auditFailures.get()
 
-    override fun onInvoke(message: JsonObject, reply: (JsonObject) -> Boolean) {
+    override fun onInvoke(message: JsonObject, reply: (JsonObject) -> Boolean) =
+        onInvokeFromSession(LEGACY_SESSION, message, reply)
+
+    override fun onInvokeFromSession(sessionId: String, message: JsonObject, reply: (JsonObject) -> Boolean) {
         val id = message["id"] ?: return
         if (!truthy(id)) return
         val receivedAt = nowMs()
@@ -256,10 +270,18 @@ class CommandDispatcher(
         }
         val spec = command?.let { catalog.find(it) }
         val key = fingerprint(id, rawCommand, params)
+        val sessionKey = SessionInvokeId(sessionId, id.toString())
 
         while (true) {
             // Ponto 1: portão ANTES do cache — com a parada ativa nem um resultado guardado sai.
             gateDenial(spec)?.let { return answer(reply, id, shownCommand, receivedAt, receivedWall, error(ErrorCode.LOCAL_GATE_DENIED, it)) }
+            // A command removed from the current link.register must never be revived by a cache hit.
+            if (spec == null) {
+                return answer(reply, id, shownCommand, receivedAt, receivedWall,
+                    if (command == null) error(ErrorCode.EXECUTOR_ERROR, "command must be a string")
+                    else error(ErrorCode.NOT_IMPLEMENTED, "unknown command"))
+            }
+            var collision = false
             var hit: Cached? = null
             var running: Invocation? = null
             var fresh: Invocation? = null
@@ -267,15 +289,27 @@ class CommandDispatcher(
             synchronized(lock) {
                 purge(nowMs())
                 shut = closed // fechou entre a primeira olhada e agora: nada novo entra em inFlight
-                hit = if (shut) null else cache[key]
-                if (!shut && hit == null) {
+                // Two different live operations with the same id cannot both receive unambiguous
+                // link.result replies on this session. Keep the original; do not execute or reply
+                // to the collision (a second result with that id would also be ambiguous).
+                collision = !shut && activeBySessionId[sessionKey]?.let { it.key != key } == true
+                hit = if (shut || collision) null else cache[key]
+                if (!shut && !collision && hit == null) {
                     running = inFlight[key]
                     if (running == null) {
-                        fresh = Invocation(key, id, shownCommand, spec, receivedAt, receivedWall, reply).also { inFlight[key] = it }
+                        fresh = Invocation(key, sessionKey, id, shownCommand, spec, receivedAt, receivedWall, reply).also {
+                            inFlight[key] = it
+                            activeBySessionId[sessionKey] = it
+                        }
                     }
                 }
             }
             if (shut) return answer(reply, id, shownCommand, receivedAt, receivedWall, error(ErrorCode.UNAVAILABLE, "dispatcher closed"))
+            if (collision) {
+                rejectedCollisions.incrementAndGet()
+                record(id, shownCommand, receivedWall, nowMs() - receivedAt, ErrorCode.EXECUTOR_ERROR.wire, false, 0)
+                return
+            }
             hit?.let {
                 // Resposta e auditoria sempre fora do lock (o envio cifra). A linha de auditoria só é
                 // enfileirada (não espera nada), e entra antes da resposta para a ordem das linhas seguir a
@@ -288,12 +322,24 @@ class CommandDispatcher(
                 // Ponto 2: portão ANTES de juntar o reenvio à execução em curso.
                 gateDenial(spec)?.let { return answer(reply, id, shownCommand, receivedAt, receivedWall, error(ErrorCode.LOCAL_GATE_DENIED, it)) }
                 var refused = false
+                var collisionOnJoin = false
                 val joined = synchronized(lock) {
                     when {
                         original.done -> false // terminou entre as duas olhadas: decide de novo (cache ou nova)
+                        activeBySessionId[sessionKey]?.let { it !== original } == true ->
+                            true.also { collisionOnJoin = true }
                         original.replies.size >= maxJoins -> true.also { refused = true }
-                        else -> true.also { original.replies += reply }
+                        else -> true.also {
+                            original.replies += reply
+                            original.bindingKeys += sessionKey
+                            activeBySessionId[sessionKey] = original
+                        }
                     }
+                }
+                if (collisionOnJoin) {
+                    rejectedCollisions.incrementAndGet()
+                    record(id, shownCommand, receivedWall, nowMs() - receivedAt, ErrorCode.EXECUTOR_ERROR.wire, false, 0)
+                    return
                 }
                 if (refused) return answer(reply, id, shownCommand, receivedAt, receivedWall, error(ErrorCode.UNAVAILABLE, "too many resends of this id"))
                 if (joined) return
@@ -419,6 +465,9 @@ class CommandDispatcher(
             if (invocation.done) return
             invocation.done = true
             if (inFlight[invocation.key] === invocation) inFlight.remove(invocation.key)
+            for (sessionKey in invocation.bindingKeys) {
+                if (activeBySessionId[sessionKey] === invocation) activeBySessionId.remove(sessionKey)
+            }
             queue.remove(invocation)
             invocation.deadline?.cancel(false)
             invocation.deadline = null

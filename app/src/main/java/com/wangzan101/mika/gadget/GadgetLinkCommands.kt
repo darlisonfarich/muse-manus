@@ -60,7 +60,7 @@ object GadgetLinkCommands {
     fun dispatcher(context: Context, catalog: CommandCatalog): CommandDispatcher {
         val audit = InvokeAuditLog(auditFile(context))
         return CommandDispatcher(catalog, gate(context), audit = { entry ->
-            runCatching { audit.append(entry) }
+            audit.append(entry)
             GadgetLink.log("link: invoke ${entry.command} ${entry.outcome} ${entry.durationMs}ms" + if (entry.deduplicated) " (dedup)" else "")
         })
     }
