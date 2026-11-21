@@ -257,6 +257,33 @@ object GadgetLink {
         synchronized(this) { events.toList() }.forEach { lines += "link event" to it }
         return lines
     }
+
+    /**
+     * The link log as plain text for the "copy" button: app version and commit, the phone helper's state
+     * (fixed vocabulary: status, launch stage, refusal, exception class only) and every diagnostics line.
+     * Same privacy rules as [diagnosticsLines]: no account token, no addresses, no error text.
+     */
+    fun copyableLog(context: Context): String {
+        val phone = com.wangzan101.mika.cap.phone.PhoneServices.of(context)
+        val manager = phone.shellManager
+        val helper = listOf(
+            "helper" to if (phone.hub.shell.value != null) "running" else "not running",
+            "helper status" to manager.engine.status.value.toString(),
+            "helper launch stage" to (manager.lastHelperLaunchStage ?: "none"),
+            "helper handoff rejection" to (phone.hub.lastHandoffRejection ?: "none"),
+            "helper last error" to (manager.engine.lastError?.substringBefore(':')?.substringBefore('(') ?: "none"),
+            "wireless debugging after launch" to (manager.wirelessAutoOn.lastOff.value?.name ?: "none"),
+        )
+        return logText(
+            "Muse Manus ${com.wangzan101.mika.BuildConfig.VERSION_NAME} (${com.wangzan101.mika.BuildConfig.VERSION_CODE}, " +
+                "${com.wangzan101.mika.BuildConfig.GIT_HASH})",
+            helper + diagnosticsLines(context),
+        )
+    }
+
+    /** Pure formatting of [copyableLog]: a header line, then one "key: value" line each. */
+    internal fun logText(header: String, lines: List<Pair<String, String>>): String =
+        (listOf(header) + lines.map { (k, v) -> "$k: $v" }).joinToString("\n")
 }
 
 /** Rede do aparelho para o setup: o celular já está online, então só informa a "rede atual". */
