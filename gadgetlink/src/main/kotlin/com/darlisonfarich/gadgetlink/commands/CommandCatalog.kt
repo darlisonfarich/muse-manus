@@ -15,6 +15,9 @@ class CommandCatalog(commands: List<CommandSpec>, val includeStubs: Boolean = fa
 
     fun find(name: String): CommandSpec? = all[name]?.takeIf { it.implemented || includeStubs }
 
+    /** Quantos stubs (não implementados) entram neste commands_v2 — a contagem que a Diagnostics mostra. */
+    val announcedStubs: Int get() = announced.count { !it.implemented }
+
     /** O objeto commands_v2 do link.register. */
     fun commandsV2(): JsonObject = JsonObject(announced.associateTo(LinkedHashMap()) { it.name to it.wire() })
 

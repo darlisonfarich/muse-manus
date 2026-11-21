@@ -19,6 +19,12 @@ object LinkTestCommands {
     const val MAX_PROBE_BYTES = 1024 * 1024
     const val DEFAULT_SEED = "muse-gadget-link"
 
+    /** Maior seed aceito (caracteres): cada bloco do probe hasheia o seed inteiro, então ele precisa de teto. */
+    const val MAX_SEED_CHARS = 256
+
+    /** De quantos em quantos caracteres a geração do probe confere se foi interrompida (prazo vencido). */
+    const val PROBE_CHUNK_CHARS = 4096
+
     fun all(clock: () -> Long = System::currentTimeMillis): List<CommandSpec> = listOf(ping(clock), echoVerify(), responseSizeProbe())
 
     fun ping(clock: () -> Long) = CommandSpec(
@@ -80,7 +86,7 @@ object LinkTestCommands {
         description = "Gadget Link test: returns a deterministic ASCII payload of exactly the requested size, with its SHA-256, " +
             "so the receiver can check what arrived. Results over the 240 KiB budget fail with too_large instead of truncating.",
         required = mapOf("bytes" to ParamSpec(ParamType.INTEGER, "Payload size in bytes, 0 to $MAX_PROBE_BYTES.")),
-        optional = mapOf("seed" to ParamSpec(ParamType.STRING, "Seed of the deterministic payload (default $DEFAULT_SEED).")),
+        optional = mapOf("seed" to ParamSpec(ParamType.STRING, "Seed of the deterministic payload (default $DEFAULT_SEED, at most $MAX_SEED_CHARS characters).")),
         timeoutMs = 10_000,
         writes = false,
         implemented = true,
@@ -90,6 +96,10 @@ object LinkTestCommands {
             return@CommandSpec CommandResult.Err(ErrorCode.EXECUTOR_ERROR, "bytes must be from 0 to $MAX_PROBE_BYTES")
         }
         val seed = (params["seed"] as? JsonPrimitive)?.content ?: DEFAULT_SEED
+        if (seed.length > MAX_SEED_CHARS) {
+            return@CommandSpec CommandResult.Err(ErrorCode.EXECUTOR_ERROR, "seed must be at most $MAX_SEED_CHARS characters")
+        }
+        // Interrompível: o prazo do despachante interrompe a thread e a geração para no próximo bloco.
         val data = probePayload(seed, size.toInt())
         CommandResult.Ok(
             JsonObject(
@@ -107,12 +117,22 @@ object LinkTestCommands {
      * [size] caracteres hexadecimais minúsculos (ASCII, sem nada que o JSON precise escapar):
      * SHA-256(seed ‖ ":" ‖ contador decimal) para contador = 0, 1, 2…, concatenados e cortados.
      * Reprodutível em qualquer linguagem — o Ship regenera e compara.
+     * A cada [PROBE_CHUNK_CHARS] caracteres a geração confere a interrupção da thread (o timeout do
+     * despachante) e para com [InterruptedException] em vez de gerar o resto; [onChunk] (testes) é chamado
+     * nesse mesmo ponto, com o número do bloco.
      */
-    fun probePayload(seed: String, size: Int): String {
+    fun probePayload(seed: String, size: Int, onChunk: (Int) -> Unit = {}): String {
         val out = StringBuilder(size)
         val md = MessageDigest.getInstance("SHA-256")
         var counter = 0L
+        var chunk = 0
+        var nextCheck = 0
         while (out.length < size) {
+            if (out.length >= nextCheck) {
+                onChunk(chunk++)
+                if (Thread.currentThread().isInterrupted) throw InterruptedException("probe generation interrupted")
+                nextCheck += PROBE_CHUNK_CHARS
+            }
             val block = sha256Hex(md, "$seed:$counter".toByteArray(Charsets.UTF_8))
             out.append(block, 0, minOf(block.length, size - out.length))
             counter++
