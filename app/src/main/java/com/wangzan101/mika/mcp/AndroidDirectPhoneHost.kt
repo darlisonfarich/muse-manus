@@ -281,10 +281,10 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                 val s = try {
                     sessions[owner] ?: create(owner, now).also { sessions[owner] = it }
                 } catch (e: CancellationException) {
-                    if (owner !in sessions) scheduler.ger.releaseSlot(sessionOwner)
+                    if (!sessions.containsKey(owner)) scheduler.ger.releaseSlot(sessionOwner)
                     throw e
                 } catch (_: Exception) {
-                    if (owner !in sessions) scheduler.ger.releaseSlot(sessionOwner)
+                    if (!sessions.containsKey(owner)) scheduler.ger.releaseSlot(sessionOwner)
                     return@attempt GerIntentAttempt.Done(fail("phone_unavailable"))
                 }
                 if (!scheduler.ger.canUseSlot(sessionOwner))
