@@ -121,6 +121,10 @@ interface IMikaShell {
     // 当前音乐流音量、最大值和静音状态;读不到为 null。
     Bundle musicVolumeState() = 51;
 
+    // Read-only WindowManager protection verdict for a virtual display owned by this helper.
+    // 0=unknown, 1=no visible windows, 2=clear, 3=secure.
+    int virtualWindowProtection(int displayId) = 52;
+
     // 沿用早先定下的销毁事务号;AIDL 要求要么全部方法编号要么都不编号
     void destroy() = 16777114;
 }

@@ -74,10 +74,13 @@ class McpSettings(private val dir: File, private val cipher: KeyCipher, private 
     }
 
     /** 当前的访问令牌;还没有(或读不出来)就生成一个存下。 */
-    @Synchronized fun token(): String {
+    @Synchronized fun token(): String = existingToken() ?: regenerate()
+
+    /** Read the configured credential without minting or replacing one. */
+    @Synchronized internal fun existingToken(): String? {
         cachedToken?.let { return it }
         val stored = runCatching { if (tokenFile.isFile) String(cipher.decrypt(tokenFile.readBytes()), Charsets.UTF_8) else null }.getOrNull()
-        return stored?.takeIf { it.length >= MIN_TOKEN }?.also { cachedToken = it } ?: regenerate()
+        return stored?.takeIf { it.length >= MIN_TOKEN }?.also { cachedToken = it }
     }
 
     /** 换一个新令牌:旧的当场失效,连着的电脑要换上新的才能再用。 */

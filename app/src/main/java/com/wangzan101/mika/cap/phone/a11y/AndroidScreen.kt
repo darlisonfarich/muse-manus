@@ -241,23 +241,30 @@ class AndroidScreen(
         TargetApp(pkg, task, userOf(task))
     }.distinctUntilChanged { a, b -> a.packageName == b.packageName && a.userId == b.userId }
 
-    override suspend fun screenshotPng(): ByteArray? = withContext(Dispatchers.IO) {
-        // Never encode the raw full-resolution frame: re-check the tree around capture.
-        if (!frameServable() || frameBlack() == true) return@withContext null
+    override suspend fun screenshotPng(): ByteArray? =
+        (captureVirtualPng() as? VirtualScreenshot.Png)?.bytes
+
+    internal suspend fun captureVirtualPng(): VirtualScreenshot = withContext(Dispatchers.IO) {
+        if (!frameServable()) return@withContext VirtualScreenshot.Stale
+        if (frameBlack() == true) return@withContext VirtualScreenshot.Failed
         val generation = ScreenAccessibility.windowGeneration()
         val before = read()
-        val raw = display.current?.latestFrameBitmap() ?: return@withContext null
+        val raw = display.current?.latestFrameBitmap() ?: return@withContext VirtualScreenshot.Failed
         try {
             val after = read()
             if (generation != ScreenAccessibility.windowGeneration() || before.hash != after.hash ||
                 !after.hasAppWindow || before.passwordField != after.passwordField
-            ) return@withContext null
-            val previous = SecretRegions.collect(before.entries.map { it.element }, before.windows) ?: return@withContext null
-            val areas = SecretRegions.collect(after.entries.map { it.element }, after.windows) ?: return@withContext null
-            if (areas != previous) return@withContext null
-            val safe = SecretBitmap.redact(raw, areas) ?: return@withContext null
+            ) return@withContext VirtualScreenshot.Stale
+            val previous = SecretRegions.collect(before.entries.map { it.element }, before.windows)
+                ?: return@withContext VirtualScreenshot.Failed
+            val areas = SecretRegions.collect(after.entries.map { it.element }, after.windows)
+                ?: return@withContext VirtualScreenshot.Failed
+            if (areas != previous) return@withContext VirtualScreenshot.Stale
+            val safe = SecretBitmap.redact(raw, areas) ?: return@withContext VirtualScreenshot.Failed
             try {
-                ByteArrayOutputStream().also { safe.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+                val out = ByteArrayOutputStream()
+                if (!safe.compress(Bitmap.CompressFormat.PNG, 100, out)) return@withContext VirtualScreenshot.Failed
+                VirtualScreenshot.Png(out.toByteArray())
             } finally {
                 if (safe !== raw) safe.recycle()
             }

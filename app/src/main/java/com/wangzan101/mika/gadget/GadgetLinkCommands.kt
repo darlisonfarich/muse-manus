@@ -16,7 +16,7 @@ import java.io.File
  *
  * O portão é o MESMO estado que já manda no app — nada novo para o dono aprender, nada contornado:
  *  - "Sair totalmente" do Mika (a parada do app, [FeatureFlags.quitRequested]) nega tudo;
- *  - comandos phone.* (hoje só stubs) exigem o "acesso remoto" das configurações de computador ligado,
+ *  - comandos phone.* exigem o "acesso remoto" das configurações de computador ligado,
  *    e os de escrita exigem também a escrita direta liberada — os mesmos interruptores que o servidor
  *    mika consulta ([com.wangzan101.mika.settings.McpSettings]); os demais portões (confirmações,
  *    superfícies proibidas, tela principal em uso) ficam no executor de cada comando quando ele existir.
@@ -26,7 +26,7 @@ object GadgetLinkCommands {
     private const val PREFS = "gadget_link"
     private const val KEY_STUBS = "link_measure_stubs"
 
-    /** A medição da Etapa 1 (anunciar os 29 stubs phone.*). Desligada por padrão; vale na próxima conexão. */
+    /** A medição da Etapa 1 (anunciar os stubs phone.* restantes). Desligada por padrão; vale na próxima conexão. */
     fun measureStubs(context: Context): Boolean =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_STUBS, false)
 
@@ -36,7 +36,13 @@ object GadgetLinkCommands {
 
     fun auditFile(context: Context) = File(context.applicationContext.filesDir, "gadgetlink/link-invoke-audit.log")
 
-    fun catalog(context: Context): CommandCatalog = CommandCatalog.museManus(includeStubs = measureStubs(context))
+    fun catalog(context: Context): CommandCatalog {
+        val mcp = (context.applicationContext as MikaApp).mcp
+        return CommandCatalog.museManus(
+            includeStubs = measureStubs(context),
+            readCommands = GadgetPhoneReadCommands.specs(mcp::gadgetReadScope, mcp::readPhoneForGadget),
+        )
+    }
 
     fun gate(context: Context): LocalGate {
         val app = context.applicationContext

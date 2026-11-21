@@ -82,7 +82,9 @@ class CommandCatalogTest {
             val props = schema["properties"]?.jsonObject ?: JsonObject(emptyMap())
             val required = schema["required"]?.jsonArray?.map { it.jsonPrimitive.content }?.toSet() ?: emptySet()
             assertEquals(mikaName, required, stub.required.keys)
-            assertEquals(mikaName, props.keys - required, stub.optional.keys)
+            val optional = props.keys - required
+            assertEquals(mikaName, if (gadget == "phone.get_tree") optional + "detail" else optional, stub.optional.keys)
+            if (gadget == "phone.get_tree") assertEquals(ParamType.STRING, stub.optional.getValue("detail").type)
             for ((p, ps) in props) {
                 val spec = stub.required[p] ?: stub.optional[p]!!
                 assertEquals("$mikaName.$p", ps.jsonObject["type"]!!.jsonPrimitive.content, spec.type.wire)

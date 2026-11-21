@@ -146,3 +146,19 @@ Registrado, NÃO corrigido (decisão ou refatoração maior — fila do Claude):
   notify, menor); `Mobile.open` não confronta a sequência de contadores —
   considerado e não adotado: `open()` também serve a releituras no harness, e
   a sequência exata já está fixada no nível do envelope por três testes.
+
+## Etapa 2 — leitura do display virtual
+
+O registro normal anuncia `phone.get_tree` e `phone.get_screenshot`. Ambos usam a sessão direta já existente do proprietário autenticado pelo token atual do mika (LAN ou relay). O USB tem um proprietário separado. A leitura não abre app, não cria sessão ou display, não renova o TTL e não registra refs acionáveis. Com sessão ativa e sem app aberto, a árvore tem `hasWindow: false` e zero elementos, e a captura retorna `unavailable`. Sem sessão ativa ou acessibilidade, ambos retornam `unavailable`.
+
+- `phone.get_tree` aceita `detail: "elements"` (padrão) ou `"full"`. Inclui `snapshotId`, `currentApp`, `hasWindow`, `viewport` e `elements`. O modo completo acrescenta `tree` com IDs de recursos filtrados. Os dois modos aplicam a redação OTP antes da serialização.
+- `phone.get_screenshot` entrega `mimeType`, `data` em base64 e `sizeBytes`. O mesmo codificador do MCP mantém PNG quando cabe e comprime para JPEG quando necessário. O alvo do Gadget Link é 170 KiB de imagem binária. O despachante aplica 240 KiB ao `link.result` completo, inclusive base64 e ID. O excesso retorna `too_large`.
+- Telas de senha e janelas `FLAG_SECURE` retornam `local_gate_denied` com detalhe `needs_user`. A política local de apps continua aplicável. O comando retorna `app_in_use_by_user` quando o app observado está em uso na tela principal e `stale_snapshot` quando a leitura muda. O ajudante verifica os flags do WindowManager apenas para o display virtual vinculado e devolve somente o veredito. Se essa verificação falhar, a leitura é recusada.
+- O reenvio idêntico é deduplicado entre reconexões dentro da mesma sessão e revisão de acesso. Encerramento, expiração ou troca do proprietário impedem a recuperação de conteúdo da sessão anterior.
+
+### Validação pendente no POCO
+
+1. Instalar o APK da branch e garantir que o ajudante foi iniciado com essa versão. Rodar os testes instrumentados de proteção de janelas e compressão Android.
+2. Com uma sessão direta já criada, medir launcher, conversa, feed denso e configurações. Registrar bytes do `link.result` em ambos os modos, número de elementos e nós, estabilidade entre leituras e latência. Registrar o MIME, SHA-256 dos bytes decodificados, dimensões, legibilidade e bytes no fio para cada captura.
+3. Validar a sessão sem display, ausência de sessão, TTL, acessibilidade desligada, isolamento do USB e de outro display. Verificar campo de senha com OTP próximo, janela `FLAG_SECURE` inclusive sobre conteúdo comum, app bloqueado, app na tela principal e mudança durante a leitura. Em cada recusa, verificar a ausência de texto e imagem.
+4. Reenviar um ID após reconexão, verificar deduplicação e repetir após encerrar ou trocar a sessão. Ler em paralelo pelo MCP e pelo Gadget Link, com Tailscale ligado e desligado após criar a sessão. Conferir auditoria, foco e tarefas antes e depois para verificar que a leitura não moveu apps.

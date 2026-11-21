@@ -5,7 +5,7 @@ package com.wangzan101.mika.core.uistate
  * Sanitization happens before live observations, OCR, evidence, or MCP serialization.
  * No credentials are persisted, and references/geometry are kept unchanged.
  */
-internal object OtpRedaction {
+object OtpRedaction {
     private val code = Regex("(?<![\\p{L}\\p{N}])[0-9]{4,8}(?![\\p{L}\\p{N}])")
     private const val MASK = "[OTP REDACTED]"
 
