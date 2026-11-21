@@ -3,6 +3,7 @@ package com.wangzan101.mika.settings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -82,6 +83,17 @@ class McpSettingsTest {
         // 换一个钥匙(比如重装后钥匙库没了)就读不出旧令牌,另生成一个
         val other = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
         assertNotEquals(token, McpSettings(tmp.root, AesGcmKeyCipher { other }).token())
+    }
+
+    @Test fun passiveCredentialLookupNeverGeneratesAToken() {
+        val s = settings()
+        assertNull(s.existingToken())
+        assertFalse(tmp.root.resolve("mcp-token.bin").exists())
+        val token = s.token()
+        assertEquals(token, settings().existingToken())
+        val rotated = s.regenerate()
+        assertNotEquals(token, rotated)
+        assertEquals(rotated, s.existingToken())
     }
 
     @Test fun regenerateReplacesTheToken() {

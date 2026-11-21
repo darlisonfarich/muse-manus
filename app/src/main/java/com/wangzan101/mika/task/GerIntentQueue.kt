@@ -65,13 +65,10 @@ class GerIntentQueue(
         return tickets.size
     }
 
-    @Synchronized fun cancelAll(): Int {
-        val count = pending.values.sumOf { it.size }
-        pending.values.flatten().forEach { it.cancelled = true }
-        pending.clear()
-        notifyChanged()
-        return count
-    }
+    @Synchronized fun cancelAll(): Int = cancelMatching { true }
+
+    @Synchronized fun cancelMatching(matches: (String) -> Boolean): Int =
+        pending.keys.filter(matches).sumOf { cancelOwner(it) }
 
     /**
      * [id] is the original request_id for writes, or a fresh synthetic ID for reads.

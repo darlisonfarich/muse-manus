@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.wangzan101.mika.cap.phone.a11y.DeviceSupport.SETTINGS
 import com.wangzan101.mika.cap.phone.a11y.DeviceSupport.TEST_PACKAGE
 import com.wangzan101.mika.cap.phone.a11y.DeviceSupport.pollUntil
+import com.wangzan101.mika.cap.phone.shell.VirtualWindowProtection
 import com.wangzan101.mika.core.uistate.ActionResult
 import com.wangzan101.mika.core.uistate.ScreenSnapshot
 import com.wangzan101.mika.core.uistate.ScreenState
@@ -172,6 +173,25 @@ class AndroidScreenTest {
         snapUntil { it.packageName == TEST_PACKAGE }
         val r = ok(screen.tapXY(360, 1400))
         assertEquals(TEST_PACKAGE, r.appSwitched)
+    }
+
+    @Test
+    fun windowProtectionReadsOnlyTheRequestedVirtualDisplay() {
+        val shell = DeviceSupport.shell()
+        val other = DeviceSupport.newAgent()
+        try {
+            // Keep each Activity in a separate task, even though both share the test APK.
+            DeviceSupport.sh("am start --display ${agent.display.displayId} -f 0x18000000 -n $TEST_PACKAGE/${SecureTestActivity::class.java.name}")
+            DeviceSupport.sh("am start --display ${other.display.displayId} -f 0x18000000 -n $TEST_PACKAGE/${PlainTestActivity::class.java.name}")
+            assertNotNull(pollUntil(5_000) {
+                val secure = VirtualWindowProtection.fromCode(shell.virtualWindowProtection(agent.display.displayId))
+                val clear = VirtualWindowProtection.fromCode(shell.virtualWindowProtection(other.display.displayId))
+                Unit.takeIf { secure == VirtualWindowProtection.Secure && clear == VirtualWindowProtection.Clear }
+            })
+            assertEquals(VirtualWindowProtection.Unknown, VirtualWindowProtection.fromCode(shell.virtualWindowProtection(android.view.Display.DEFAULT_DISPLAY)))
+        } finally {
+            other.release()
+        }
     }
 
     @Test

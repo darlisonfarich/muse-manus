@@ -146,3 +146,12 @@ internal suspend fun ToolContext.lastOrSnapshot(): ScreenSnapshot = session.last
 
 /** 确认申报的 app 按当前那块屏的写法校验(手机上是包名,网页上是站点主机名)。 */
 internal fun ToolContext.confirmTarget(app: String): String = surface.declaredTarget(app)
+
+/** At the write boundary, translate a checked port ref into the same namespace used by ActionExecutor. */
+fun com.wangzan101.mika.core.tool.ToolDispatcher.bindPhoneTarget(snapshot: ScreenSnapshot, ref: String): Pair<String, String>? {
+    val session = ctx.sessions["phone"] ?: return null
+    val index = snapshot.elements.indexOfFirst { it.ref == ref && it.meaningful }
+    if (index < 0) return null
+    val model = session.remember(snapshot, internal = true)
+    return model.elements[index].ref to model.snapshotId
+}

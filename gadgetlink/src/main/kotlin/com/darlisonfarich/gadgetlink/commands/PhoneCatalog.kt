@@ -5,6 +5,8 @@
 package com.darlisonfarich.gadgetlink.commands
 
 object PhoneCatalog {
+    val TREE_DETAIL = ParamSpec(ParamType.STRING, "elements (default) or full (includes the window tree).")
+
     /** Comando gadget -> ferramenta mika correspondente (1:1). */
     val MIKA: Map<String, String> = linkedMapOf(
         "phone.run_task" to "mika_run_task",
@@ -173,7 +175,9 @@ object PhoneCatalog {
             name = "phone.get_tree",
             description = "Read sanitized Android accessibility elements and current application. Password screens require the user.",
             required = emptyMap(),
-            optional = emptyMap(),
+            optional = linkedMapOf(
+                "detail" to TREE_DETAIL,
+            ),
             timeoutMs = 30_000L,
             writes = false,
         ),
