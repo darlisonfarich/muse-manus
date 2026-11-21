@@ -81,6 +81,9 @@ class BuiltinShellEngineTest {
         /** How long the engine should wait for a stale helper's self-upgrade (read once per launch). */
         var selfUpgradeWait = 0L
         override fun selfUpgradeWaitMs() = selfUpgradeWait.also { selfUpgradeWait = 0L }
+
+        var devOptions: Boolean? = null
+        override fun developerOptions() = devOptions
     }
 
     private val platform = FakePlatform()
@@ -812,5 +815,54 @@ class BuiltinShellEngineTest {
         advanceUntilIdle()
         assertEquals(BuiltinShellStatus.Running, e.status.value)
         assertEquals(1, launches())
+    }
+
+    private var offWrites = 0
+    private fun TestScope.gadgetAutoOn() = WirelessDebuggingAutoOn(
+        wants = { true }, canWrite = { true }, read = { platform.wireless },
+        write = { switchWrites++; platform.wireless = true; true },
+        now = { testScheduler.currentTime },
+        restoreAfterLaunch = { true },
+        writeOff = { offWrites++; platform.wireless = false; true },
+    )
+
+    @Test
+    fun developerOptionsOffStopsTheAdbLoopAndClosesTheSwitch() = runTest {
+        platform.pairedFlag = true
+        platform.wireless = false
+        platform.devOptions = false
+        val e = engine(autoOn = gadgetAutoOn())
+        e.start()
+        advanceUntilIdle()
+        assertEquals(0, launches())
+        assertEquals(0, switchWrites)
+        assertEquals(BuiltinShellStatus.WirelessDebuggingOff, e.status.value)
+        // Asked again (a gadget call, a switch change): still no connection attempts.
+        e.need()
+        e.wirelessDebuggingChanged()
+        advanceUntilIdle()
+        assertEquals(0, launches())
+        // Turned back on by the user: the paired connection works again.
+        platform.devOptions = true
+        e.developerOptionsChanged()
+        advanceUntilIdle()
+        assertEquals(1, launches())
+        assertEquals(BuiltinShellStatus.Running, e.status.value)
+    }
+
+    @Test
+    fun aSwitchOpenedForAFailedLaunchIsClosedWhenTheWatchdogGivesUp() = runTest {
+        platform.pairedFlag = true
+        platform.wireless = false
+        repeat(3) { platform.launchResults.addLast(AdbConnectionException.Reason.CONNECT_FAILED) }
+        val auto = gadgetAutoOn()
+        val e = engine(autoOn = auto)
+        e.start()
+        advanceUntilIdle()
+        assertEquals(3, launches())
+        assertEquals(1, switchWrites)
+        assertEquals(1, offWrites)
+        assertEquals(false, platform.wireless)
+        assertEquals(AutoOffOutcome.Restored, auto.lastOff.value)
     }
 }

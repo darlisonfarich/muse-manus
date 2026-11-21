@@ -167,6 +167,13 @@ class BuiltinShellManager(context: Context, private val hub: HelperHub, private 
                 override fun onChange(selfChange: Boolean) = e.wirelessDebuggingChanged()
             },
         )
+        // Developer options turned back on: the paired connection can work again, try at once.
+        app.contentResolver.registerContentObserver(
+            DeveloperSettings.developerOptionsUri, false,
+            object : ContentObserver(Handler(Looper.getMainLooper())) {
+                override fun onChange(selfChange: Boolean) = e.developerOptionsChanged()
+            },
+        )
         // 卡在「没有 Wi-Fi」或无线调试关着时,一连上任意 Wi-Fi(不用能上网)就再试
         runCatching {
             app.getSystemService(ConnectivityManager::class.java).registerNetworkCallback(
@@ -212,6 +219,9 @@ class BuiltinShellManager(context: Context, private val hub: HelperHub, private 
             root.requestStart()
             return true
         }
+
+        override fun developerOptions(): Boolean? =
+            runCatching { DeveloperSettings.developerOptions(app.contentResolver) }.getOrNull()
 
         override fun selfUpgradeWaitMs(): Long {
             val sinceStale = hub.staleRejectedAt.takeIf { it > 0 }?.let { android.os.SystemClock.elapsedRealtime() - it }

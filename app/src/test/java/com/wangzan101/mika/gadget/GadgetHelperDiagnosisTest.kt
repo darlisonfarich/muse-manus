@@ -24,4 +24,13 @@ class GadgetHelperDiagnosisTest {
         assertEquals("helper_not_set_up", label(BuiltinShellStatus.NotPaired))
         assertEquals("helper_unavailable", label(BuiltinShellStatus.Failed(BuiltinShellFailure.ConnectFailed)))
     }
+
+    @Test
+    fun developerOptionsOffIsNamed() {
+        assertEquals("helper_needs_developer_options",
+            GadgetHelperDiagnosis.helperStatus(BuiltinShellStatus.WirelessDebuggingOff, null, developerOptions = false))
+        // A self-upgrade in progress needs no developer options at all.
+        assertEquals("helper_upgrading",
+            GadgetHelperDiagnosis.helperStatus(BuiltinShellStatus.Connecting, "StaleApk", developerOptions = false))
+    }
 }

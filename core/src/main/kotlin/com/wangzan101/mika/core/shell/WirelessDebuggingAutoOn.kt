@@ -175,6 +175,25 @@ class WirelessDebuggingAutoOn(
         return outcome
     }
 
+    /**
+     * The launch this class opened the switch for will not happen (the watchdog stopped, or developer
+     * options are off): write it back to off right away when [restoreAfterLaunch] asks for it.
+     */
+    fun abandonOpened(): AutoOffOutcome {
+        if (!openedByUs) return AutoOffOutcome.NotOurs
+        openedByUs = false
+        val outcome = if (!restoreAfterLaunch()) AutoOffOutcome.KeptOn else {
+            writing = true
+            try {
+                if (runCatching(writeOff).getOrDefault(false)) AutoOffOutcome.Restored else AutoOffOutcome.Refused
+            } finally {
+                writing = false
+            }
+        }
+        _lastOff.value = outcome
+        return outcome
+    }
+
     /** Another path (the boot restore) opened the switch for a launch: close it like one of ours afterwards. */
     fun adoptOpened() {
         openedByUs = true

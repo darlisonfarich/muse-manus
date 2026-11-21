@@ -212,7 +212,12 @@ class GadgetConnectService : Service() {
                             // The watchdog relaunches the helper by itself; ask it once per registration
                             // (it keeps its own backoff) and otherwise only name what it waits on.
                             if (lastStatus == null) phone.shellManager.need()
-                            GadgetHelperDiagnosis.helperStatus(phone.shellManager.engine.status.value, phone.hub.lastHandoffRejection)
+                            GadgetHelperDiagnosis.helperStatus(
+                                phone.shellManager.engine.status.value, phone.hub.lastHandoffRejection,
+                                developerOptions = runCatching {
+                                    com.wangzan101.mika.cap.phone.setup.DeveloperSettings.developerOptions(contentResolver)
+                                }.getOrDefault(true),
+                            )
                         }
                         else -> "awaiting_accessibility_or_slot"
                     }
@@ -271,7 +276,11 @@ class GadgetConnectService : Service() {
 
 internal object GadgetHelperDiagnosis {
     /** Diagnostics label for a missing helper; fixed vocabulary, no addresses or error text. */
-    fun helperStatus(status: com.wangzan101.mika.core.shell.BuiltinShellStatus, rejection: String?): String = when {
+    fun helperStatus(
+        status: com.wangzan101.mika.core.shell.BuiltinShellStatus, rejection: String?, developerOptions: Boolean = true,
+    ): String = when {
+        rejection == "StaleApk" && status == com.wangzan101.mika.core.shell.BuiltinShellStatus.Connecting -> "helper_upgrading"
+        !developerOptions -> "helper_needs_developer_options"
         status is com.wangzan101.mika.core.shell.BuiltinShellStatus.Failed -> when (status.reason) {
             com.wangzan101.mika.core.shell.BuiltinShellFailure.NoWifi -> "helper_needs_wifi"
             com.wangzan101.mika.core.shell.BuiltinShellFailure.WifiNotAllowed -> "helper_wifi_not_allowed"
