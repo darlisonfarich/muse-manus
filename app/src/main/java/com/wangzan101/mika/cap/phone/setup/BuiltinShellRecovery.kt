@@ -56,6 +56,8 @@ class BuiltinShellRecovery(
     private val runner: ShellCommandRunner,
     private val settings: RecoverySettings,
     private val control: BuiltinShellControl,
+    /** The boot restore opened wireless debugging for a gadget-owned launch: the watchdog closes it after the handoff. */
+    private val openedForGadgetLaunch: () -> Unit = {},
 ) {
     private val app = context.applicationContext
 
@@ -192,7 +194,7 @@ class BuiltinShellRecovery(
     suspend fun restoreAfterBoot(): RestoreOutcome? {
         // 没配对过(助手是电脑经 USB 起的):Mika 自己起不来助手,不去动无线调试;
         // 用 root 启动时看门狗经 su 起助手,也不去动无线调试
-        if (!control.paired || control.rootStart || com.wangzan101.mika.gadget.GadgetLink.ownsPhoneRecovery(app)) return null
+        if (!control.paired || control.rootStart) return null
         val holds = app.checkSelfPermission(PermissionCommands.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
         when (BootRestore.gate(Build.VERSION.SDK_INT, settings.consent.value, holds)) {
             BootRestore.Gate.Skip -> return null
@@ -200,9 +202,12 @@ class BuiltinShellRecovery(
             BootRestore.Gate.Act -> Unit
         }
         val cr = app.contentResolver
+        val wasOn = DeveloperSettings.wirelessDebugging(cr)
         // 能力检测:写入被拒(抛异常/返回 false)或写了读回来不是 1,都当这台手机不支持
         val written = DeveloperSettings.turnOnWirelessDebugging(cr) && DeveloperSettings.wirelessDebugging(cr)
         if (!written) return RestoreOutcome.SettingUnavailable.also(settings::recordRestore)
+        // With a paired gadget the owner's debugging setting stays off: opened only for this launch.
+        if (!wasOn && com.wangzan101.mika.gadget.GadgetLink.ownsPhoneRecovery(app)) openedForGadgetLaunch()
 
         val outcome = withTimeoutOrNull(BOOT_BUDGET_MS) {
             RecoveryPolicy.recover(

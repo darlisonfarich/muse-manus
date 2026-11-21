@@ -175,7 +175,12 @@ class WirelessDebuggingAutoOn(
         return outcome
     }
 
-    /** The helper went away. Shortly after closing the switch, blame the close (see [closeAfterLaunch]). */
+    /** Another path (the boot restore) opened the switch for a launch: close it like one of ours afterwards. */
+    fun adoptOpened() {
+        openedByUs = true
+    }
+
+    /** The helper went away. Right after closing the switch, blame the close (see [closeAfterLaunch]). */
     fun helperStopped() {
         val at = closedAt
         if (at == 0L || now() - at > OFF_BLAME_MS) return
@@ -205,8 +210,8 @@ class WirelessDebuggingAutoOn(
         const val MAX_GAP_MS = 5 * 60_000L
         /** How long the helper is watched after the switch is closed again. */
         const val OFF_WATCH_MS = 5_000L
-        /** A helper loss this soon after closing the switch is attributed to the close. */
-        const val OFF_BLAME_MS = 60_000L
+        /** A helper loss this soon after closing the switch is attributed to the close (kept short: later losses have other causes). */
+        const val OFF_BLAME_MS = 15_000L
 
         /** 写过 [writes] 次之后,下一次至少隔多久:第一次不等,之后 10 秒、20 秒……封顶 5 分钟。 */
         fun gapAfter(writes: Int): Long =

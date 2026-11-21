@@ -101,8 +101,9 @@ class BuiltinShellManager(context: Context, private val hub: HelperHub, private 
             write = { DeveloperSettings.turnOnWirelessDebugging(app.contentResolver) },
             restoreAfterLaunch = { com.wangzan101.mika.gadget.GadgetLink.ownsPhoneRecovery(app) },
             writeOff = { DeveloperSettings.turnOffWirelessDebugging(app.contentResolver) },
-            offStopsHelper = { prefs.getBoolean(KEY_OFF_STOPS_HELPER, false) },
-            learnOffStopsHelper = { prefs.edit().putBoolean(KEY_OFF_STOPS_HELPER, true).apply() },
+            // Learned per phone and re-tested after a while: a one-off helper loss must not keep the switch on for good.
+            offStopsHelper = { System.currentTimeMillis() - prefs.getLong(KEY_OFF_STOPS_HELPER_AT, 0L) in 0..OFF_STOPS_HELPER_TTL_MS },
+            learnOffStopsHelper = { prefs.edit().putLong(KEY_OFF_STOPS_HELPER_AT, System.currentTimeMillis()).apply() },
         )
     }
 
@@ -214,7 +215,9 @@ class BuiltinShellManager(context: Context, private val hub: HelperHub, private 
 
         override fun selfUpgradeWaitMs(): Long {
             val sinceStale = hub.staleRejectedAt.takeIf { it > 0 }?.let { android.os.SystemClock.elapsedRealtime() - it }
-            val sinceUpdate = runCatching {
+            // Right after an update the old helper may not have tried its handoff yet; only gadget-owned
+            // recovery waits for that, everyone else relaunches at once unless a StaleApk refusal was seen.
+            val sinceUpdate = if (!com.wangzan101.mika.gadget.GadgetLink.ownsPhoneRecovery(app)) null else runCatching {
                 System.currentTimeMillis() - app.packageManager.getPackageInfo(app.packageName, 0).lastUpdateTime
             }.getOrNull()
             return listOfNotNull(sinceStale, sinceUpdate).filter { it >= 0 }
@@ -349,7 +352,8 @@ class BuiltinShellManager(context: Context, private val hub: HelperHub, private 
         private const val HANDOFF_WAIT_MS = 15_000L
         /** After an update or a StaleApk refusal, how long the old helper gets to start its successor. */
         private const val SELF_UPGRADE_WINDOW_MS = 20_000L
-        private const val KEY_OFF_STOPS_HELPER = "wirelessOffStopsHelper"
+        private const val KEY_OFF_STOPS_HELPER_AT = "wirelessOffStopsHelperAt"
+        private const val OFF_STOPS_HELPER_TTL_MS = 7 * 24 * 60 * 60_000L
         /** 看门狗经 su 起助手时等 su 回话(授权过的马上回;要弹授权框时给用户一点时间)。 */
         private const val ROOT_ASK_MS = 45_000L
     }

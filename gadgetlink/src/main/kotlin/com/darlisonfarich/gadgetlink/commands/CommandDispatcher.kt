@@ -102,6 +102,8 @@ class CommandDispatcher(
 ) : InvokeHandler {
     companion object {
         private const val LEGACY_SESSION = "direct-dispatcher-call"
+        /** Detail of a write whose result was withheld after it ran: reconcile by the same id. */
+        const val RECONCILE_DETAIL = "reconcile_request_id"
         const val MAX_CONCURRENT = 4
         const val CACHE_SIZE = 128
         const val CACHE_TTL_MS = 10 * 60 * 1000L
@@ -433,10 +435,15 @@ class CommandDispatcher(
             Thread.interrupted()
             val final = if (spec.replayScope == null) result else {
                 val denied = gateDenial(spec)
+                val revoked = denied != null || replayScope(spec) != invocation.scope
                 when {
+                    !revoked -> result
+                    // The handler already ran: a write must not be reported as "not executed" (the
+                    // caller would retry under a new id and repeat it). Withhold the result and point
+                    // to reconciliation by the same id instead.
+                    spec.writes -> error(ErrorCode.EXECUTOR_ERROR, RECONCILE_DETAIL)
                     denied != null -> error(ErrorCode.LOCAL_GATE_DENIED, denied)
-                    replayScope(spec) != invocation.scope -> error(ErrorCode.UNAVAILABLE)
-                    else -> result
+                    else -> error(ErrorCode.UNAVAILABLE)
                 }
             }
             complete(invocation, final)

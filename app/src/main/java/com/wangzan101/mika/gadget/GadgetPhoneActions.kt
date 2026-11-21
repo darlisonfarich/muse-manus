@@ -22,11 +22,17 @@ internal object GadgetPhoneActions {
         "phone.cancel" to setOf("closed", "cancelledIntents", "closePending"),
     )
 
+    /**
+     * [scope] is the live registration (see [GadgetPhoneLease.scope]), deliberately not the session's read
+     * scope: a write that already ran must never be reported as `unavailable` because a local task or a
+     * helper restart retired the session meanwhile, and reconcile/status/cancel must keep answering
+     * exactly then. The host's journal deduplicates writes by request_id across sessions.
+     */
     fun specs(scope: () -> String?, call: suspend (String, JsonObject) -> JsonObject): List<CommandSpec> =
         PhoneCatalog.stubs().filter { it.name in actions || it.name in metadata }.map { stub ->
             CommandSpec(stub.name, stub.description.removePrefix(CommandSpec.STUB_PREFIX),
                 stub.required, stub.optional, stub.timeoutMs, stub.writes, implemented = true,
-                // Cancel retires the current scope as its expected effect.
+                // Cancel ends the registration's pending work as its expected effect.
                 replayScope = if (stub.name == "phone.cancel") null else scope,
             ) { args ->
                 val raw = runBlocking { call(PhoneCatalog.MIKA.getValue(stub.name), args) }
@@ -40,11 +46,18 @@ internal object GadgetPhoneActions {
             // Screen content is available only via the two checked passive reads.
             return CommandResult.Ok(JsonObject(raw.filterKeys { it == "ok" || it in metadata[name].orEmpty() }))
         }
-        val failedStep = (raw["results"] as? JsonArray)?.lastOrNull() as? JsonObject
-        val error = (failedStep ?: raw)["error"] as? JsonPrimitive
+        val failedStep = ((raw["results"] as? JsonArray)?.lastOrNull() as? JsonObject)
+            ?.takeIf { it["ok"] != JsonPrimitive(true) }
+        val error = (failedStep?.get("error") ?: raw["error"]) as? JsonPrimitive
         val cause = (raw["cause"] as? JsonPrimitive)?.content
         val reason = error?.content
+        // Part of a batch already ran: whatever stopped the rest, Muse must reconcile instead of retrying.
+        val completed = (raw["completed"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0
+        if (completed > 0 || raw["executed"] == JsonPrimitive(true))
+            return CommandResult.Err(ErrorCode.EXECUTOR_ERROR, "reconcile_request_id")
+        val gate = (failedStep ?: raw)["gateDenied"] == JsonPrimitive(true)
         return when {
+            gate -> CommandResult.Err(ErrorCode.LOCAL_GATE_DENIED, reason?.takeIf { SAFE_CODE.matches(it) })
             reason == "app_in_use_by_user" || cause == "app_in_use_by_user" -> CommandResult.Err(ErrorCode.APP_IN_USE_BY_USER)
             reason in setOf("target_unresolved", "stale_ref", "stale_snapshot") -> CommandResult.Err(ErrorCode.STALE_SNAPSHOT)
             reason in setOf("needs_user", "payment_requires_takeover", "password_requires_takeover", "approval_unavailable",
@@ -58,4 +71,7 @@ internal object GadgetPhoneActions {
             else -> CommandResult.Err(ErrorCode.EXECUTOR_ERROR)
         }
     }
+
+    /** Fixed local refusal codes only; anything else is withheld from the detail. */
+    private val SAFE_CODE = Regex("[a-z_]{1,40}")
 }

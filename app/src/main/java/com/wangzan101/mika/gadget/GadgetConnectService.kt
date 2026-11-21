@@ -150,8 +150,9 @@ class GadgetConnectService : Service() {
                 commands.catalog = catalog
                 val bytes = CommandCatalog.registerBytes(catalog, identity.nodeId, displayName, BuildConfig.VERSION_NAME)
                 GadgetLink.onAnnounced(GadgetLink.Announced(catalog.announced.size, catalog.announcedStubs, bytes))
+                GadgetLink.log("link: commands_v2 ${catalog.announced.size} commands (${catalog.announcedStubs} stubs), link.register $bytes bytes")
                 val device = DeviceDescription(identity.nodeId, displayName, BuildConfig.VERSION_NAME, catalog.commandsV2())
-                return OkHttpLinkLauncher(client, { device }, clock, log = GadgetLink::log, invokes = commands)
+                return OkHttpLinkLauncher(client, { device }, clock, log = { GadgetLink.log("link: $it") }, invokes = commands)
                     .launch(vm, pairing, object : SessionLauncher.Events {
                         override fun onRegistered() {
                             startControl(registration)

@@ -120,7 +120,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
     suspend fun close() {
         // A stopped listener cancels queued calls, but an already issued Binder
         // start cannot safely be interrupted or have its display torn down.
-        app.resources.ger.intentions.cancelMatching { it !in gadgetSlots }
+        app.resources.ger.intentions.cancelMatching { it !in gadgetOwners }
         lock.withLock {
             sessions.values.filter { it.link == null }.forEach { retire(it.owner) }
         }
@@ -163,6 +163,8 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
     }
 
     private val gadgetSlots = ConcurrentHashMap.newKeySet<String>()
+    /** Queue keys of connected gadget registrations, held or not: stopping the MCP bridge never cancels them. */
+    private val gadgetOwners = ConcurrentHashMap.newKeySet<String>()
 
     private fun allowed(link: GadgetPhoneLease) = link.connected && settings.enabled.value &&
         !FeatureFlags.get(context).quitRequested()
@@ -175,6 +177,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
 
     internal suspend fun maintainGadget(link: GadgetPhoneLease): Boolean = lock.withLock {
         val old = sessions[link.owner]
+        if (link.connected) gadgetOwners.add(directOwner(link.owner))
         if (!allowed(link) || ScreenAccessibility.instance.value == null ||
             PhoneServices.of(context).hub.shell.value == null) {
             if (old?.link === link) retire(link.owner)
@@ -206,6 +209,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
     }
 
     internal suspend fun releaseGadget(link: GadgetPhoneLease) = lock.withLock {
+        if (sessions[link.owner]?.link === link || sessions[link.owner] == null) gadgetOwners.remove(directOwner(link.owner))
         if (sessions[link.owner]?.link === link) {
             app.resources.ger.intentions.cancelOwner(directOwner(link.owner))
             retire(link.owner)
@@ -291,10 +295,10 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         call(link.owner, name, args, link)
 
     private suspend fun call(owner: String, name: String, args: JsonObject, link: GadgetPhoneLease?): JsonObject {
-        // A gadget session retired for a local task is re-created by maintainGadget; until then its
-        // calls wait in the queue ("task_running") instead of failing.
-        fun authorized() = link == null || allowed(link) &&
-            (sessions[owner]?.link === link || sessions[owner] == null && busy())
+        // A gadget call is authorized by its live registration, not by its session: a session retired
+        // for a local task or a helper restart is re-created by maintainGadget, and until then queued
+        // calls wait ("phone_session_pending"), while reconcile, status and cancel answer at once.
+        fun authorized() = link == null || allowed(link)
         if (!authorized()) return fail("phone_unavailable")
         if (owner.isBlank()) return fail("unauthenticated")
         val scheduler = app.resources
@@ -317,7 +321,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             val cancelled = scheduler.ger.intentions.cancelOwner(sessionOwner)
             return lock.withLock {
                 if (!authorized()) return@withLock fail("phone_unavailable")
-                val hadSession = sessions.containsKey(owner)
+                val hadSession = sessions[owner]?.let { link == null || it.link === link } == true
                 val deferredClose = hadSession && launchBoundary.isInFlight()
                 if (hadSession) retire(owner)
                 if (!hadSession && cancelled == 0) fail("session_not_found")
@@ -801,7 +805,13 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         if (!ready(s) || sensitive(s)) return GerIntentAttempt.Done(fail("needs_user"))
         val actionArgs = if (s.link != null) {
             if (gadgetSession(s.link) !== s) return GerIntentAttempt.Done(fail("phone_unavailable"))
-            reader(s).checkActionSurface()
+            // Nothing has executed for this step yet: report the refusal as this step's result
+            // (a batch then still says how many earlier steps ran) instead of throwing past it.
+            try {
+                reader(s).checkActionSurface()
+            } catch (e: CommandException) {
+                return GerIntentAttempt.Done(surfaceRefusal(e))
+            }
             bindGadgetTarget(s, args) ?: return GerIntentAttempt.Done(fail("stale_snapshot"))
         } else args
         val request = requestId(args) ?: return GerIntentAttempt.Done(fail("request_id_required"))
@@ -922,6 +932,16 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         put("ok", false); put("error", "launch_timeout_unknown")
         put("cause", cause); put("executed", false)
         put("executionUnknown", true); put("retryable", false)
+    }
+
+    private fun surfaceRefusal(e: CommandException): JsonObject = when (e.code) {
+        ErrorCode.APP_IN_USE_BY_USER -> fail("app_in_use_by_user")
+        ErrorCode.STALE_SNAPSHOT -> fail("stale_snapshot")
+        ErrorCode.LOCAL_GATE_DENIED -> buildJsonObject {
+            put("ok", false); put("error", e.detail ?: "needs_user"); put("gateDenied", true)
+        }
+        ErrorCode.UNAVAILABLE -> fail("phone_unavailable")
+        else -> fail("surface_check_failed")
     }
 
     private fun fail(code: String) = buildJsonObject {

@@ -1305,10 +1305,7 @@ class ShellService(
         return ok
     }
 
-    /**
-     * 该包([userId] 那份用户里的)在主屏上有看得见的任务:用户正在主屏用它。静音按包作用,这时静了它用户手上的也没声了,
-     * Mika 据此不去静它。看不清主屏时按「在用」答,宁可不静也不把用户正在用的静了。
-     */
+    /** Window protection verdict (secure/password flags) for Mika's own virtual display only; never window content. */
     override fun virtualWindowProtection(displayId: Int): Int {
         val unknown = VirtualWindowProtection.Unknown.code
         if (displayId == Display.DEFAULT_DISPLAY || !ownDisplay(displayId)) return unknown
@@ -1331,6 +1328,10 @@ class ShellService(
         }
     }
 
+    /**
+     * 该包([userId] 那份用户里的)在主屏上有看得见的任务:用户正在主屏用它。静音按包作用,这时静了它用户手上的也没声了,
+     * Mika 据此不去静它。看不清主屏时按「在用」答,宁可不静也不把用户正在用的静了。
+     */
     override fun visibleOnMainScreen(packageName: String, userId: Int): Boolean =
         try {
             inUseOnMainScreen(packageName, userId)

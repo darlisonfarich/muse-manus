@@ -79,7 +79,7 @@ class WirelessDebuggingAutoOffTest {
         val a = autoOn()
         assertTrue(a.turnOn())
         assertEquals(AutoOffOutcome.Restored, a.closeAfterLaunch { true })
-        testScheduler.advanceTimeBy(20_000)
+        testScheduler.advanceTimeBy(5_000)
         a.helperStopped()
         assertEquals(1, learned)
         assertEquals(AutoOffOutcome.HelperStopped, a.lastOff.value)
@@ -106,5 +106,14 @@ class WirelessDebuggingAutoOffTest {
         assertTrue(a.turnOn())
         assertEquals(AutoOffOutcome.Refused, a.closeAfterLaunch { true })
         assertEquals(0, learned)
+    }
+
+    @Test
+    fun aSwitchOpenedByTheBootRestoreIsClosedLikeOurs() = runTest {
+        on = true // written on by the boot restore, not by turnOn
+        val a = autoOn()
+        a.adoptOpened()
+        assertEquals(AutoOffOutcome.Restored, a.closeAfterLaunch { helperAlive })
+        assertEquals(false, on)
     }
 }

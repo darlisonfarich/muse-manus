@@ -40,6 +40,38 @@ class GadgetPhoneActionsTest {
         assertNull(code("""{"ok":false,"error":"private user content"}""").detail)
     }
 
+    @Test fun aBatchStoppedAfterSuccessfulStepsKeepsItsTopLevelCause() {
+        fun err(raw: String) = GadgetPhoneActions.result("phone.run_batch", json(raw)) as CommandResult.Err
+        // Nothing ran yet: the top-level cause wins over an earlier successful step.
+        assertEquals(ErrorCode.TIMEOUT, err("""{"ok":false,"error":"wait_timeout","executed":false,"results":[]}""").code)
+        // Some steps ran: Muse must reconcile by request_id instead of retrying the batch.
+        val partial = err("""{"ok":false,"error":"wait_timeout","executed":true,"completed":1,"results":[{"ok":true}]}""")
+        assertEquals(ErrorCode.EXECUTOR_ERROR, partial.code)
+        assertEquals("reconcile_request_id", partial.detail)
+        val refused = err("""{"ok":false,"completed":1,"results":[{"ok":true},{"ok":false,"error":"app_in_use_by_user"}]}""")
+        assertEquals("reconcile_request_id", refused.detail)
+    }
+
+    @Test fun aLocalSurfaceRefusalIsAGateDenialWithAFixedCode() {
+        fun err(raw: String) = GadgetPhoneActions.result("phone.tap", json(raw)) as CommandResult.Err
+        val denied = err("""{"ok":false,"error":"app_access_denied","gateDenied":true}""")
+        assertEquals(ErrorCode.LOCAL_GATE_DENIED, denied.code)
+        assertEquals("app_access_denied", denied.detail)
+        assertNull(err("""{"ok":false,"error":"Some Private Text","gateDenied":true}""").detail)
+    }
+
+    @Test fun controlScopeFollowsTheRegistrationNotTheSession() {
+        val lease = GadgetPhoneLease("device", "host", "a", "vm")
+        assertNull(lease.scope())
+        lease.connected = true
+        val live = lease.scope()
+        assertNotNull(live)
+        assertEquals(live, lease.scope())
+        lease.connected = false
+        assertNull(lease.scope())
+        assertNotEquals(live, GadgetPhoneLease("device", "host", "a", "vm").apply { connected = true }.scope())
+    }
+
     @Test fun journalOwnerIsStableButPermissionIsPerRegistration() {
         fun lease(account: String, vm: String) = GadgetPhoneLease("device", "host", account, vm)
         val first = lease("a", "vm")

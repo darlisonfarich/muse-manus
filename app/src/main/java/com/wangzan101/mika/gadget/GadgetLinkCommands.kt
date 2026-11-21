@@ -43,7 +43,7 @@ object GadgetLinkCommands {
         return CommandCatalog.museManus(
             includeStubs = measureStubs(context),
             readCommands = GadgetPhoneReadCommands.specs(scope) { screenshot, full -> host.readForGadget(lease, screenshot, full) },
-            controlCommands = GadgetPhoneActions.specs(scope) { name, args -> host.callGadget(lease, name, args) },
+            controlCommands = GadgetPhoneActions.specs(lease::scope) { name, args -> host.callGadget(lease, name, args) },
         )
     }
 

@@ -8,4 +8,8 @@ import kotlinx.serialization.json.JsonPrimitive
 internal class GadgetPhoneLease(device: String, authority: String, account: String, vm: String) {
     val owner = "gadget:" + RemoteOwnership.of(JsonArray(listOf(device, authority, account, vm).map(::JsonPrimitive)).toString())
     @Volatile var connected = false
+    private val registration = java.util.UUID.randomUUID().toString()
+
+    /** Replay/authorization scope of this one registration; null once it ended. */
+    fun scope(): String? = registration.takeIf { connected }
 }
