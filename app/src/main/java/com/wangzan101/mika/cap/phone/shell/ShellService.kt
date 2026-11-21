@@ -1305,6 +1305,29 @@ class ShellService(
         return ok
     }
 
+    /** Window protection verdict (secure/password flags) for Mika's own virtual display only; never window content. */
+    override fun virtualWindowProtection(displayId: Int): Int {
+        val unknown = VirtualWindowProtection.Unknown.code
+        if (displayId == Display.DEFAULT_DISPLAY || !ownDisplay(displayId)) return unknown
+        val process = try {
+            ProcessBuilder("/system/bin/dumpsys", "-t", "2", "window", "--proto").redirectErrorStream(true).start()
+        } catch (_: Exception) {
+            return unknown
+        }
+        val read = java.util.concurrent.FutureTask {
+            process.inputStream.use { VirtualWindowProtection.inspect(it, displayId) }
+        }
+        Thread(read, "mika-window-protection").apply { isDaemon = true; start() }
+        return try {
+            if (!process.waitFor(3, TimeUnit.SECONDS) || process.exitValue() != 0 || !ownDisplay(displayId)) unknown
+            else read.get(1, TimeUnit.SECONDS).code
+        } catch (_: Exception) {
+            unknown
+        } finally {
+            process.destroyForcibly()
+        }
+    }
+
     /**
      * 该包([userId] 那份用户里的)在主屏上有看得见的任务:用户正在主屏用它。静音按包作用,这时静了它用户手上的也没声了,
      * Mika 据此不去静它。看不清主屏时按「在用」答,宁可不静也不把用户正在用的静了。

@@ -102,6 +102,8 @@ class CommandDispatcher(
 ) : InvokeHandler {
     companion object {
         private const val LEGACY_SESSION = "direct-dispatcher-call"
+        /** Detail of a write whose result was withheld after it ran: reconcile by the same id. */
+        const val RECONCILE_DETAIL = "reconcile_request_id"
         const val MAX_CONCURRENT = 4
         const val CACHE_SIZE = 128
         const val CACHE_TTL_MS = 10 * 60 * 1000L
@@ -179,6 +181,7 @@ class CommandDispatcher(
         val id: JsonElement,
         val command: String,
         val spec: CommandSpec?,
+        val scope: String?,
         val receivedAt: Long,
         val receivedWall: Long,
         first: (JsonObject) -> Boolean,
@@ -269,7 +272,6 @@ class CommandDispatcher(
             return answer(reply, id, shownCommand, receivedAt, receivedWall, error(ErrorCode.EXECUTOR_ERROR, "id is longer than $maxIdChars characters"))
         }
         val spec = command?.let { catalog.find(it) }
-        val key = fingerprint(id, rawCommand, params)
         val sessionKey = SessionInvokeId(sessionId, id.toString())
 
         while (true) {
@@ -281,6 +283,10 @@ class CommandDispatcher(
                     if (command == null) error(ErrorCode.EXECUTOR_ERROR, "command must be a string")
                     else error(ErrorCode.NOT_IMPLEMENTED, "unknown command"))
             }
+            val scope = replayScope(spec)
+            if (spec.replayScope != null && scope == null)
+                return answer(reply, id, shownCommand, receivedAt, receivedWall, error(ErrorCode.UNAVAILABLE))
+            val key = fingerprint(id, rawCommand, params) + scope.orEmpty()
             var collision = false
             var hit: Cached? = null
             var running: Invocation? = null
@@ -297,7 +303,7 @@ class CommandDispatcher(
                 if (!shut && !collision && hit == null) {
                     running = inFlight[key]
                     if (running == null) {
-                        fresh = Invocation(key, sessionKey, id, shownCommand, spec, receivedAt, receivedWall, reply).also {
+                        fresh = Invocation(key, sessionKey, id, shownCommand, spec, scope, receivedAt, receivedWall, reply).also {
                             inFlight[key] = it
                             activeBySessionId[sessionKey] = it
                         }
@@ -309,6 +315,10 @@ class CommandDispatcher(
                 rejectedCollisions.incrementAndGet()
                 record(id, shownCommand, receivedWall, nowMs() - receivedAt, ErrorCode.EXECUTOR_ERROR.wire, false, 0)
                 return
+            }
+            if (hit != null && spec.replayScope != null) {
+                gateDenial(spec)?.let { return answer(reply, id, shownCommand, receivedAt, receivedWall, error(ErrorCode.LOCAL_GATE_DENIED, it)) }
+                if (replayScope(spec) != scope) continue
             }
             hit?.let {
                 // Resposta e auditoria sempre fora do lock (o envio cifra). A linha de auditoria só é
@@ -401,6 +411,7 @@ class CommandDispatcher(
             // Ponto 3: portão IMEDIATAMENTE antes de executar — vale para quem esperou na fila durante uma
             // parada ou uma revogação.
             gateDenial(spec)?.let { return complete(invocation, error(ErrorCode.LOCAL_GATE_DENIED, it)) }
+            if (replayScope(spec) != invocation.scope) return complete(invocation, error(ErrorCode.UNAVAILABLE))
             synchronized(lock) {
                 if (invocation.done) return
                 invocation.thread = Thread.currentThread()
@@ -422,7 +433,20 @@ class CommandDispatcher(
             // O interrupt só acontece sob o lock com a thread registrada: limpar aqui impede que ele vaze
             // para a próxima tarefa desta thread do pool.
             Thread.interrupted()
-            complete(invocation, result)
+            val final = if (spec.replayScope == null) result else {
+                val denied = gateDenial(spec)
+                val revoked = denied != null || replayScope(spec) != invocation.scope
+                when {
+                    !revoked -> result
+                    // The handler already ran: a write must not be reported as "not executed" (the
+                    // caller would retry under a new id and repeat it). Withhold the result and point
+                    // to reconciliation by the same id instead.
+                    spec.writes -> error(ErrorCode.EXECUTOR_ERROR, RECONCILE_DETAIL)
+                    denied != null -> error(ErrorCode.LOCAL_GATE_DENIED, denied)
+                    else -> error(ErrorCode.UNAVAILABLE)
+                }
+            }
+            complete(invocation, final)
         } finally {
             synchronized(lock) { invocation.thread = null }
             Thread.interrupted()
@@ -492,6 +516,9 @@ class CommandDispatcher(
         // Um id gigante faria a própria recusa estourar o orçamento: nesse caso não há resposta possível.
         if (bytes <= maxResultBytes) deliver(listOf(reply), id, result)
     }
+
+    private fun replayScope(spec: CommandSpec): String? =
+        runCatching { spec.replayScope?.invoke() }.getOrNull()
 
     private fun gateDenial(spec: CommandSpec?): String? = try {
         gate.deny(spec ?: GATE_PROBE)

@@ -5,7 +5,7 @@ Entrada: gadgetlink/src/test/resources/mika_tools.json (saída de tools/mika-dum
 Saída: gadgetlink/src/main/kotlin/com/darlisonfarich/gadgetlink/commands/PhoneCatalog.kt
 
 Regras (especificação Gadget Link §2.1/§2.3):
-  * correspondência 1:1 com as ferramentas mika — mesma semântica, mesmos parâmetros;
+  * correspondência 1:1 com as ferramentas mika, mais o seletor de árvore do Gadget Link;
   * os parâmetros viram {type, description} com os seis tipos fechados do protocolo; o que o JSON
     Schema do mika diz além do tipo (mínimo/máximo, tamanho, formato, itens) vai para o fim da
     descrição, para nada da semântica se perder;
@@ -123,6 +123,8 @@ def main():
     w("package com.darlisonfarich.gadgetlink.commands")
     w("")
     w("object PhoneCatalog {")
+    w('    val TREE_DETAIL = ParamSpec(ParamType.STRING, "elements (default) or full (includes the window tree).")')
+    w("")
     w("    /** Comando gadget -> ferramenta mika correspondente (1:1). */")
     w("    val MIKA: Map<String, String> = linkedMapOf(")
     for t in tools:
@@ -141,11 +143,16 @@ def main():
         w(f"            name = {kstr(gadget)},")
         w(f"            description = {kstr(t['description'])},")
         for label, keys in (("required", [k for k in props if k in req]), ("optional", [k for k in props if k not in req])):
+            if mika == "phone_observe" and label == "optional" and "detail" not in keys:
+                keys.append("detail")
             if not keys:
                 w(f"            {label} = emptyMap(),")
                 continue
             w(f"            {label} = linkedMapOf(")
             for k in keys:
+                if mika == "phone_observe" and k == "detail":
+                    w('                "detail" to TREE_DETAIL,')
+                    continue
                 ty, desc = param(mika, k, props[k])
                 w(f"                {kstr(k)} to ParamSpec(ParamType.{ty.upper()}, {kstr(desc)}),")
             w("            ),")

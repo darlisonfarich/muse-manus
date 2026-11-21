@@ -42,6 +42,10 @@ class HelperHub(context: Context) {
     @Volatile var lastHandoffRejection: String? = null
         private set
 
+    /** [SystemClock.elapsedRealtime] of the last StaleApk refusal; 0 when none. Such a helper may be upgrading itself. */
+    @Volatile var staleRejectedAt: Long = 0L
+        private set
+
     /** 经助手代连本进程的 WebView 调试套接字;助手不在时抛 IOException,助手拒绝或连不上为 null。 */
     fun openDevtoolsSocket(endpoint: String): ParcelFileDescriptor? {
         val sh = shell.value ?: throw IOException("phone helper is not running")
@@ -93,12 +97,14 @@ class HelperHub(context: Context) {
         }
         val next = gate.accept(nonce) ?: return reject(HelperHandoff.Reject.BadNonce)
         try {
-            binder.linkToDeath({ _shell.compareAndSet(shell, null) }, 0)
+            binder.linkToDeath({ if (_shell.compareAndSet(shell, null)) recordLoss() }, 0)
         } catch (e: Exception) {
             return reject(HelperHandoff.Reject.NoBinder)
         }
         // 换了新的助手:旧的随后会被新的结束,它的死亡通知因为不是当前这个而被忽略
+        lastHandoffRejection = null
         _shell.value = shell
+        runCatching { app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putLong(KEY_HANDED_OFF_AT, System.currentTimeMillis()).apply() }
         if (extras?.containsKey(HelperHandoff.KEY_RESTORED_AT) == true) {
             _restores.value = HelperRestoreReport(
                 extras.getLong(HelperHandoff.KEY_RESTORED_AT), extras.getInt(HelperHandoff.KEY_RESTORES), extras.getLong(HelperHandoff.KEY_GAVE_UP_AT),
@@ -112,8 +118,40 @@ class HelperHub(context: Context) {
         }
     }
 
+    /**
+     * The running helper's process died while Mika was alive. Kept across app updates (prefs), with the
+     * debugging switches as they were right then: when they are all off, adbd stopped and took the helper.
+     */
+    private fun recordLoss() {
+        runCatching {
+            val cr = app.contentResolver
+            fun global(name: String) = android.provider.Settings.Global.getInt(cr, name, 0) == 1
+            app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putLong(KEY_LOST_AT, System.currentTimeMillis())
+                .putBoolean(KEY_LOST_USB, global(android.provider.Settings.Global.ADB_ENABLED))
+                .putBoolean(KEY_LOST_WIFI, global("adb_wifi_enabled"))
+                .putBoolean(KEY_LOST_DEV, global(android.provider.Settings.Global.DEVELOPMENT_SETTINGS_ENABLED))
+                .apply()
+        }
+    }
+
+    /** Last helper loss and handoff, for the copied link log; fixed vocabulary only. */
+    fun lifecycleLines(format: (Long) -> String): List<Pair<String, String>> {
+        val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        fun onOff(key: String) = if (prefs.getBoolean(key, false)) "on" else "off"
+        val handedOff = prefs.getLong(KEY_HANDED_OFF_AT, 0L)
+        val lost = prefs.getLong(KEY_LOST_AT, 0L)
+        return listOf(
+            "helper last handoff" to (if (handedOff > 0) format(handedOff) else "none"),
+            "helper last lost" to (if (lost > 0) format(lost) +
+                " (usb debugging ${onOff(KEY_LOST_USB)}, wireless debugging ${onOff(KEY_LOST_WIFI)}, developer options ${onOff(KEY_LOST_DEV)})"
+            else "none"),
+        )
+    }
+
     private fun reject(why: HelperHandoff.Reject): Bundle {
         lastHandoffRejection = why.name
+        if (why == HelperHandoff.Reject.StaleApk) staleRejectedAt = SystemClock.elapsedRealtime()
         Log.w(TAG, "helper handoff rejected: $why")
         return Bundle().apply {
             putBoolean(HelperHandoff.KEY_ACCEPTED, false)
@@ -124,6 +162,11 @@ class HelperHub(context: Context) {
     private companion object {
         const val TAG = "MikaHelperHub"
         const val PREFS = "builtin_helper"
+        const val KEY_HANDED_OFF_AT = "handedOffAt"
+        const val KEY_LOST_AT = "lostAt"
+        const val KEY_LOST_USB = "lostUsbDebugging"
+        const val KEY_LOST_WIFI = "lostWirelessDebugging"
+        const val KEY_LOST_DEV = "lostDeveloperOptions"
     }
 
     private class PrefsNonceStore(context: Context) : NonceStore {

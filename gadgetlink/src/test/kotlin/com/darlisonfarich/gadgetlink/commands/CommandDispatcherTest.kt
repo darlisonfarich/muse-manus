@@ -519,4 +519,38 @@ class CommandDispatcherTest {
         assertTrue(lines.toString(), lines.any { it.contains("|a?forged?line|linktest.echo_verify|ok|") })
         assertTrue(lines.toString(), lines.any { it.contains("|b|nope.nope|not_implemented|") })
     }
+
+    // ---- escopo revogado depois de executar ------------------------------------------------------
+    @Test
+    fun aWriteThatRanIsNeverReportedAsUnavailableWhenItsScopeEndsMeanwhile() {
+        var scope: String? = "registration-1"
+        val runs = AtomicInteger()
+        val write = CommandSpec("test.tap", "test write", timeoutMs = 5_000, writes = true, implemented = true,
+            replayScope = { scope }) {
+            runs.incrementAndGet()
+            scope = null // the registration ended while the action ran
+            CommandResult.Ok(JsonPrimitive("tapped"))
+        }
+        val r = Replies()
+        dispatcher(write).onInvoke(invoke("w-1", "test.tap"), r.sink)
+        val reply = r.single()
+        assertEquals(1, runs.get())
+        assertEquals("executor_error", reply.error())
+        assertEquals(CommandDispatcher.RECONCILE_DETAIL, (reply["detail"] as JsonPrimitive).content)
+    }
+
+    @Test
+    fun aReadWhoseScopeEndsMeanwhileStillWithholdsItsContent() {
+        var scope: String? = "session-1"
+        val read = CommandSpec("test.read", "test read", timeoutMs = 5_000, writes = false, implemented = true,
+            replayScope = { scope }) {
+            scope = "session-2"
+            CommandResult.Ok(JsonPrimitive("screen content"))
+        }
+        val r = Replies()
+        dispatcher(read).onInvoke(invoke("r-1", "test.read"), r.sink)
+        val reply = r.single()
+        assertEquals("unavailable", reply.error())
+        assertFalse(reply.toString().contains("screen content"))
+    }
 }

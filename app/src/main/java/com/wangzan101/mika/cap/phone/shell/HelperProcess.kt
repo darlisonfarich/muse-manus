@@ -79,6 +79,8 @@ object HelperProcess {
         /** Mika 进程交给我们的令牌;为 null 表示 Mika 现在不在。 */
         private var appToken: IBinder? = null
         private var retrying = false
+        /** A successor from the updated APK has been started; this process only waits to be stopped. */
+        private var upgrading = false
         /** Mika 最后交来的心愿;助手刚起来时什么都不做。 */
         private var wish = RestoreWish.NONE
         private val restorePolicy = HelperRestorePolicy()
@@ -102,12 +104,61 @@ object HelperProcess {
                     killOtherInstances()
                     watchUid()
                 }
+                Outcome.Stale -> upgrade(launchNonce)
                 Outcome.Rejected -> exitProcess(0)
                 Outcome.Failed -> exitProcess(1)
             }
         }
 
-        private enum class Outcome { Accepted, Rejected, Failed }
+        /** [Stale]: Mika was updated and refused this helper only because it runs the previous APK. */
+        private enum class Outcome { Accepted, Stale, Rejected, Failed }
+
+        /**
+         * Self-upgrade after an app update. This process already holds the shell UID, so it starts its
+         * successor from the APK the PackageManager reports now, with the same arguments and the handoff
+         * nonce that Mika has not consumed (a StaleApk rejection happens before the nonce check).
+         * No adbd, root or debugging setting is involved. The successor passes the same checks as any
+         * helper (shell UID, current APK, nonce, certificate pin) and stops this process once accepted.
+         */
+        private fun upgrade(n: String?) {
+            // One successor per update: later uid-importance callbacks must not start another one.
+            if (upgrading) return
+            upgrading = true
+            val running = System.getProperty("java.class.path")
+            val current = currentApk()
+            if (n == null || current == null || current == running || !File(current).isFile || !signedAsPinned()) {
+                Log.w(TAG, "stale helper cannot upgrade itself; exiting")
+                exitProcess(0)
+            }
+            try {
+                val p = ProcessBuilder("/system/bin/sh", "-c", HelperHandoff.command(current, packageName, appUid, certPin))
+                    .redirectErrorStream(true).redirectOutput(File("/dev/null")).start()
+                // The nonce goes through stdin, never the command line (see HelperHandoff.command).
+                p.outputStream.use { it.write(HelperHandoff.stdinLine(n)) }
+                p.waitFor()
+                Log.i(TAG, "started a helper from the updated APK")
+            } catch (t: Throwable) {
+                Log.w(TAG, "self-upgrade failed", t)
+                exitProcess(1)
+            }
+            // The successor normally stops us right after its handoff; never linger as a stale copy.
+            worker.postDelayed({ exitProcess(0) }, UPGRADE_WAIT_MS)
+        }
+
+        /** The installed APK path of [packageName] for this user; null when it cannot be read. */
+        @SuppressLint("DiscouragedPrivateApi")
+        private fun currentApk(): String? = runCatching { packageInfo(0).applicationInfo?.sourceDir }.getOrElse { t ->
+            Log.w(TAG, "cannot read the installed APK of $packageName", t)
+            null
+        }
+
+        @SuppressLint("DiscouragedPrivateApi")
+        private fun packageInfo(flags: Int): PackageInfo {
+            val pm = context.packageManager
+            return if (userId == 0) pm.getPackageInfo(packageName, flags)
+            else pm.javaClass.getMethod("getPackageInfoAsUser", String::class.java, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+                .invoke(pm, packageName, flags, userId) as PackageInfo
+        }
 
         /** 经 ActivityManager 拿 Mika 的 provider(同 `content call` 的做法),把 Binder 和自报的 uid/pid 交过去。 */
         @SuppressLint("PrivateApi", "DiscouragedPrivateApi")
@@ -156,8 +207,9 @@ object HelperProcess {
                 val caller = AttributionSource.Builder(Process.myUid()).setPackageName(ShellContext.SHELL_PACKAGE).build()
                 val result = call.invoke(provider, caller, authority, HelperHandoff.METHOD_ATTACH, null, extras) as Bundle?
                 if (result?.getBoolean(HelperHandoff.KEY_ACCEPTED) != true) {
-                    Log.w(TAG, "handoff rejected: ${result?.getString(HelperHandoff.KEY_REASON)}")
-                    return Outcome.Rejected
+                    val reason = result?.getString(HelperHandoff.KEY_REASON)
+                    Log.w(TAG, "handoff rejected: $reason")
+                    return if (reason == HelperHandoff.Reject.StaleApk.name) Outcome.Stale else Outcome.Rejected
                 }
                 val appBinder = result.getBinder(HelperHandoff.KEY_TOKEN) ?: return Outcome.Rejected
                 nonce = result.getString(HelperHandoff.KEY_NEXT)
@@ -201,6 +253,7 @@ object HelperProcess {
          * Application 照常创建,胶囊和别的服务跟着起来。shell 能拿任意 App 的 provider(`content` 命令用的同一条路)。
          */
         private fun maybeRestore() {
+            if (upgrading) return
             val now = System.currentTimeMillis()
             when (val d = restorePolicy.decide(wish, appBack = appToken != null || retrying, now, forceStopped = forceStopped())) {
                 HelperRestorePolicy.Decision.Restore -> Unit
@@ -278,7 +331,7 @@ object HelperProcess {
 
         private fun onUidImportance(uid: Int, importance: Int) {
             if (uid != appUid || importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_GONE) return
-            worker.post { if (appToken == null && !retrying) redeliver(0) }
+            worker.post { if (appToken == null && !retrying && !upgrading) redeliver(0) }
         }
 
         /** 重新交接;provider 暂时不可用时隔一会儿再试几次,还不行就等下一次 Mika 起来。 */
@@ -286,6 +339,8 @@ object HelperProcess {
             if (appToken != null) return
             when (deliver(nonce)) {
                 Outcome.Accepted -> retrying = false
+                // Mika 更新过:从新的 APK 起一个接班的助手
+                Outcome.Stale -> upgrade(nonce)
                 // Mika 不认这个助手了(重装过、解除了配对、或者已经换了新的):退出
                 Outcome.Rejected -> exitProcess(0)
                 Outcome.Failed -> {
@@ -298,11 +353,7 @@ object HelperProcess {
         /** 现在装着的 [packageName] 仍是这个 uid、签名证书指纹与启动时 Mika 给的一致。看不清一律当不一致。 */
         @SuppressLint("DiscouragedPrivateApi")
         private fun signedAsPinned(): Boolean = runCatching {
-            val pm = context.packageManager
-            val flags = PackageManager.GET_SIGNING_CERTIFICATES
-            val info = if (userId == 0) pm.getPackageInfo(packageName, flags)
-            else pm.javaClass.getMethod("getPackageInfoAsUser", String::class.java, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
-                .invoke(pm, packageName, flags, userId) as PackageInfo
+            val info = packageInfo(PackageManager.GET_SIGNING_CERTIFICATES)
             val signers = info.signingInfo?.apkContentsSigners?.map { it.toByteArray() }
             info.applicationInfo?.uid == appUid && HelperHandoff.certPin(signers) == certPin
         }.getOrElse { t ->
@@ -329,6 +380,8 @@ object HelperProcess {
         companion object {
             private const val PER_USER_RANGE = 100_000
             private val RETRY_DELAYS_MS = longArrayOf(0, 1_000, 3_000, 10_000)
+            /** How long a stale helper waits for its successor's handoff before exiting on its own. */
+            private const val UPGRADE_WAIT_MS = 30_000L
         }
     }
 }
