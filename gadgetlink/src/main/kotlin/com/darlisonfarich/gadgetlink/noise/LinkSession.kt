@@ -66,6 +66,14 @@ interface LinkListener {
  */
 fun interface InvokeHandler {
     fun onInvoke(message: JsonObject, reply: (JsonObject) -> Boolean)
+
+    /**
+     * Each Noise connection has its own reply-id namespace. The default preserves existing
+     * handlers; CommandDispatcher uses the session identity to reject ambiguous concurrent ids.
+     * This identity is local and is never sent over the wire.
+     */
+    fun onInvokeFromSession(sessionId: String, message: JsonObject, reply: (JsonObject) -> Boolean) =
+        onInvoke(message, reply)
 }
 
 /**
@@ -112,6 +120,7 @@ class LinkSession(
 ) {
     private enum class State { NEW, AWAIT_MSG2, ACTIVE, DONE }
 
+    private val invokeSessionId = UUID.randomUUID().toString()
     private var state = State.NEW
     private var initiator: NoiseXxInitiator? = null
     private var transport: NoiseTransport? = null
@@ -399,7 +408,7 @@ class LinkSession(
                 refuseInvoke(message)
             } else {
                 try {
-                    handler.onInvoke(message) { reply -> sendControl(reply) }
+                    handler.onInvokeFromSession(invokeSessionId, message) { reply -> sendControl(reply) }
                 } catch (e: Throwable) {
                     listener.log("invoke handler failed (${e.javaClass.simpleName})")
                 }

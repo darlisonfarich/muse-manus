@@ -163,20 +163,57 @@ class CommandDispatcherHardeningTest {
     }
 
     @Test
-    fun aReusedIdForAnotherOperationWhileTheFirstStillRunsDoesNotJoinIt() {
+    fun aConcurrentDifferentOperationWithTheSameIdOnOneSessionIsDroppedWithoutAmbiguousResults() {
+        val release = latch()
+        val other = AtomicInteger()
+        val d = dispatcher(blocking("test.block", release), counting("test.other", other))
+        val replies = Replies()
+        d.onInvokeFromSession("session-one", invoke("same", "test.block"), replies.sink)
+        until(what = "original executando") { blockStarted.get() == 1 }
+        d.onInvokeFromSession("session-one", invoke("same", "test.other"), replies.sink)
+        assertEquals(1, d.rejectedIdCollisions)
+        assertEquals(0, other.get())
+        release.countDown()
+        assertEquals(JsonPrimitive("released"), replies.single()["payload"])
+        Thread.sleep(80)
+        assertEquals("never send two distinct link.result for the same live id", 1, replies.all.size)
+        // Once the original has completed, a reused id for a new operation is safe.
+        d.onInvokeFromSession("session-one", invoke("same", "test.other"), replies.sink)
+        assertEquals(JsonPrimitive("test.other done"), replies.await(2).last()["payload"])
+        assertEquals(1, other.get())
+    }
+
+    @Test
+    fun theSameIdInDifferentNoiseSessionsMayRunDifferentOperationsConcurrently() {
         val release = latch()
         val other = AtomicInteger()
         val d = dispatcher(blocking("test.block", release), counting("test.other", other))
         val first = Replies()
         val second = Replies()
-        d.onInvoke(invoke("same", "test.block"), first.sink)
+        d.onInvokeFromSession("old-session", invoke("same", "test.block"), first.sink)
         until(what = "original executando") { blockStarted.get() == 1 }
-        d.onInvoke(invoke("same", "test.other"), second.sink)
+        d.onInvokeFromSession("new-session", invoke("same", "test.other"), second.sink)
         assertEquals(JsonPrimitive("test.other done"), second.single()["payload"])
-        assertTrue("a original ainda não respondeu", first.all.isEmpty())
+        assertTrue(first.all.isEmpty())
         release.countDown()
         assertEquals(JsonPrimitive("released"), first.single()["payload"])
         assertEquals(1, other.get())
+        assertEquals(0, d.rejectedIdCollisions)
+    }
+
+    @Test
+    fun aRemovedCommandIsNeverServedFromTheOldSessionCache() {
+        val runs = AtomicInteger()
+        val d = dispatcher(counting("test.temporary", runs))
+        val r = Replies()
+        d.onInvoke(invoke("id", "test.temporary"), r.sink)
+        assertEquals(JsonPrimitive(true), r.single()["ok"])
+        assertEquals(1, runs.get())
+        // A different link.register no longer advertises this command.
+        d.catalog = CommandCatalog(LinkTestCommands.all())
+        d.onInvoke(invoke("id", "test.temporary"), r.sink)
+        assertEquals("not_implemented", r.await(2).last().error())
+        assertEquals(1, runs.get())
     }
 
     @Test
