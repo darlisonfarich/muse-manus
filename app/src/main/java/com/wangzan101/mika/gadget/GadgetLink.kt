@@ -161,11 +161,11 @@ object GadgetLink {
      * permissões do setup; se o sistema recusar o serviço em primeiro plano, o erro aparece na
      * Diagnostics como em qualquer outra subida.
      */
-    fun resumeLinkAfterBoot(context: Context) {
+    fun resumeLinkAfterBoot(context: Context, reason: String = "boot") {
         val app = context.applicationContext
         val hasPairing = runCatching { state(app).pairing() != null }.getOrDefault(false)
         if (!shouldResumeLink(linkEnabled(app), hasPairing)) return
-        log("LINK resume after boot")
+        log("LINK resume after $reason")
         connect(app)
     }
 
@@ -266,14 +266,23 @@ object GadgetLink {
     fun copyableLog(context: Context): String {
         val phone = com.wangzan101.mika.cap.phone.PhoneServices.of(context)
         val manager = phone.shellManager
+        val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+        val bootedAt = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime()
         val helper = listOf(
+            "phone booted" to stamp.format(Date(bootedAt)),
+            "usb debugging now" to runCatching {
+                if (com.wangzan101.mika.cap.phone.setup.DeveloperSettings.usbDebugging(context.contentResolver)) "on" else "off"
+            }.getOrDefault("unknown"),
+            "wireless debugging now" to runCatching {
+                if (com.wangzan101.mika.cap.phone.setup.DeveloperSettings.wirelessDebugging(context.contentResolver)) "on" else "off"
+            }.getOrDefault("unknown"),
             "helper" to if (phone.hub.shell.value != null) "running" else "not running",
             "helper status" to manager.engine.status.value.toString(),
             "helper launch stage" to (manager.lastHelperLaunchStage ?: "none"),
             "helper handoff rejection" to (phone.hub.lastHandoffRejection ?: "none"),
             "helper last error" to (manager.engine.lastError?.substringBefore(':')?.substringBefore('(') ?: "none"),
             "wireless debugging after launch" to (manager.wirelessAutoOn.lastOff.value?.name ?: "none"),
-        )
+        ) + phone.hub.lifecycleLines { stamp.format(Date(it)) }
         return logText(
             "Muse Manus ${com.wangzan101.mika.BuildConfig.VERSION_NAME} (${com.wangzan101.mika.BuildConfig.VERSION_CODE}, " +
                 "${com.wangzan101.mika.BuildConfig.GIT_HASH})",

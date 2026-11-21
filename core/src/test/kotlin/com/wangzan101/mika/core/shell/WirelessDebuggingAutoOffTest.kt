@@ -16,6 +16,7 @@ class WirelessDebuggingAutoOffTest {
     private var learned = 0
     private var offWrites = 0
     private var helperAlive = true
+    private var usbDebugging = true
 
     private fun TestScope.autoOn() = WirelessDebuggingAutoOn(
         wants = { true }, canWrite = { true }, read = { on }, write = { on = true; true },
@@ -24,6 +25,7 @@ class WirelessDebuggingAutoOffTest {
         writeOff = { offWrites++; if (refuseOff) false else { on = false; true } },
         offStopsHelper = { stopsHelper },
         learnOffStopsHelper = { stopsHelper = true; learned++ },
+        closingStopsAdb = { !usbDebugging },
     )
 
     @Test
@@ -115,5 +117,17 @@ class WirelessDebuggingAutoOffTest {
         a.adoptOpened()
         assertEquals(AutoOffOutcome.Restored, a.closeAfterLaunch { helperAlive })
         assertEquals(false, on)
+    }
+
+    @Test
+    fun neverClosesTheLastDebuggingTransportUnderTheHelper() = runTest {
+        // USB debugging off: closing wireless debugging stops adbd, and init kills the helper adbd started.
+        usbDebugging = false
+        val a = autoOn()
+        assertTrue(a.turnOn())
+        assertEquals(AutoOffOutcome.KeptOnAdbWouldStop, a.closeAfterLaunch { helperAlive })
+        assertEquals(true, on)
+        assertEquals(0, offWrites)
+        assertEquals(0, learned)
     }
 }

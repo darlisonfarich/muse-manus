@@ -23,6 +23,8 @@ enum class AutoOffOutcome {
     KeptOn,
     /** Earlier on this phone, closing the switch stopped the helper: left on. */
     KeptOnStopsHelper,
+    /** USB debugging is off too: closing the switch would stop adbd and, with it, the helper adbd started. Left on. */
+    KeptOnAdbWouldStop,
     /** Written back to off and the helper survived the watch window. */
     Restored,
     /** The system refused the write. */
@@ -91,6 +93,11 @@ class WirelessDebuggingAutoOn(
     private val offStopsHelper: () -> Boolean = { false },
     private val learnOffStopsHelper: () -> Unit = {},
     private val offWatchMs: Long = OFF_WATCH_MS,
+    /**
+     * Closing the switch now would leave no debugging transport at all (USB debugging off), so adbd stops
+     * and init kills every process it started, the helper included, setsid or not.
+     */
+    private val closingStopsAdb: () -> Boolean = { false },
 ) {
     private val _blocked = MutableStateFlow<AutoOnBlock?>(null)
     /** 停下来的原因;没停下为 null。给设置页和状态说一句。 */
@@ -150,6 +157,7 @@ class WirelessDebuggingAutoOn(
         openedByUs = false
         val outcome = when {
             !restoreAfterLaunch() -> AutoOffOutcome.KeptOn
+            closingStopsAdb() -> AutoOffOutcome.KeptOnAdbWouldStop
             offStopsHelper() -> AutoOffOutcome.KeptOnStopsHelper
             else -> {
                 writing = true

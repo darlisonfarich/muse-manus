@@ -104,6 +104,7 @@ class BuiltinShellManager(context: Context, private val hub: HelperHub, private 
             // Learned per phone and re-tested after a while: a one-off helper loss must not keep the switch on for good.
             offStopsHelper = { System.currentTimeMillis() - prefs.getLong(KEY_OFF_STOPS_HELPER_AT, 0L) in 0..OFF_STOPS_HELPER_TTL_MS },
             learnOffStopsHelper = { prefs.edit().putLong(KEY_OFF_STOPS_HELPER_AT, System.currentTimeMillis()).apply() },
+            closingStopsAdb = { runCatching { !DeveloperSettings.usbDebugging(app.contentResolver) }.getOrDefault(true) },
         )
     }
 
