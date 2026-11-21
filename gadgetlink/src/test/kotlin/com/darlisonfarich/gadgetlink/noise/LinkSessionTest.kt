@@ -9,6 +9,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -152,6 +153,36 @@ class LinkSessionTest {
             Thread.sleep(5)
         }
         throw AssertionError("a sessão não mandou $n mensagens de controle")
+    }
+
+    @Test
+    fun eachNoiseSessionHasItsOwnInvokeResponseIdNamespace() {
+        val seen = ArrayList<String>()
+        val observer = object : InvokeHandler {
+            override fun onInvoke(message: JsonObject, reply: (JsonObject) -> Boolean) {
+                throw AssertionError("registered LinkSession must supply the connection identity")
+            }
+
+            override fun onInvokeFromSession(sessionId: String, message: JsonObject, reply: (JsonObject) -> Boolean) {
+                seen += sessionId
+            }
+        }
+        val first = Rig(device, registerId, observer)
+        first.connect()
+        first.ack()
+        first.muse.control(obj("method" to "link.invoke", "id" to "1", "command" to "linktest.ping"))
+        first.muse.control(obj("method" to "link.invoke", "id" to "2", "command" to "linktest.ping"))
+        first.pump()
+
+        val second = Rig(device, registerId, observer)
+        second.connect()
+        second.ack()
+        second.muse.control(obj("method" to "link.invoke", "id" to "1", "command" to "linktest.ping"))
+        second.pump()
+
+        assertEquals(3, seen.size)
+        assertEquals("calls on one connection share a namespace", seen[0], seen[1])
+        assertNotEquals("new connection gets a new response-id namespace", seen[0], seen[2])
     }
 
     // ---- caminho feliz -------------------------------------------------------------------------
