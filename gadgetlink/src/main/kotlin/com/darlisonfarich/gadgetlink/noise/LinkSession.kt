@@ -60,6 +60,15 @@ interface LinkListener {
 }
 
 /**
+ * Quem atende os link.invoke da instância registrada (o despachante de comandos). Chamado na thread do
+ * WebSocket, sob o monitor da sessão: não pode bloquear. [reply] manda um link.result pelo stream de
+ * controle (de qualquer thread; devolve false se a sessão já não está ativa).
+ */
+fun interface InvokeHandler {
+    fun onInvoke(message: JsonObject, reply: (JsonObject) -> Boolean)
+}
+
+/**
  * Quem consome um stream aberto por [LinkSession.openStream]. Os callbacks rodam na thread do
  * WebSocket, sob o monitor da sessão: não podem bloquear, e só entregam o que o Muse mandou naquele stream.
  */
@@ -98,6 +107,8 @@ class LinkSession(
      * link.register. Falso (a sessão da voz do SDK): não manda nada até o [openStream].
      */
     private val registerDevice: Boolean = true,
+    /** null = nenhum comando: todo link.invoke é recusado como sempre foi. */
+    private val invokes: InvokeHandler? = null,
 ) {
     private enum class State { NEW, AWAIT_MSG2, ACTIVE, DONE }
 
@@ -382,11 +393,22 @@ class LinkSession(
             listener.log("the Muse removed this device")
             return LinkOutcome.UNPAIRED
         }
-        if (method is JsonPrimitive && method.isString && method.content == "link.invoke") refuseInvoke(message)
+        if (method is JsonPrimitive && method.isString && method.content == "link.invoke") {
+            val handler = invokes
+            if (handler == null) {
+                refuseInvoke(message)
+            } else {
+                try {
+                    handler.onInvoke(message) { reply -> sendControl(reply) }
+                } catch (e: Throwable) {
+                    listener.log("invoke handler failed (${e.javaClass.simpleName})")
+                }
+            }
+        }
         return null
     }
 
-    /** Este device não registra comandos: todo link.invoke é recusado, sem executar nada. */
+    /** Sem despachante, este device não registra comandos: todo link.invoke é recusado, sem executar nada. */
     private fun refuseInvoke(message: JsonObject) {
         val invokeId = message["id"] ?: return
         if (!truthy(invokeId)) return

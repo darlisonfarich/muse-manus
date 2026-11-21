@@ -118,11 +118,11 @@ class LinkSessionTest {
     private val registerId = "11111111-2222-3333-4444-555555555555"
     private val device = DeviceDescription("homelink-abc123", "Celular", "0.1.7")
 
-    private class Rig(device: DeviceDescription, private val registerId: String) {
+    private class Rig(device: DeviceDescription, private val registerId: String, invokes: InvokeHandler? = null) {
         val muse = FakeMuse()
         val rec = Recorder()
         var nextChunk = 100L
-        val session = LinkSession(device, muse.socket, rec, newRequestId = { registerId }, chunkIds = { nextChunk++ })
+        val session = LinkSession(device, muse.socket, rec, newRequestId = { registerId }, chunkIds = { nextChunk++ }, invokes = invokes)
 
         /** Entrega à sessão tudo o que o Muse tem na caixa de saída (e o que isso gerar). */
         fun pump() {
@@ -143,6 +143,16 @@ class LinkSessionTest {
     }
 
     private fun rig() = Rig(device, registerId)
+
+    /** Espera a sessão mandar [n] mensagens de controle (as respostas do despachante saem de outra thread). */
+    private fun Rig.awaitControl(n: Int): List<JsonObject> {
+        val until = System.currentTimeMillis() + 5_000
+        while (System.currentTimeMillis() < until) {
+            synchronized(session) { if (muse.controlMessages.size >= n) return muse.controlMessages.toList() }
+            Thread.sleep(5)
+        }
+        throw AssertionError("a sessão não mandou $n mensagens de controle")
+    }
 
     // ---- caminho feliz -------------------------------------------------------------------------
     @Test
@@ -245,6 +255,50 @@ class LinkSessionTest {
         val reply = r.muse.controlMessages.last()
         assertEquals(obj("method" to "link.result", "id" to "inv-1", "ok" to false, "error" to "unsupported command: system.run"), reply)
         assertTrue(r.rec.outcomes.isEmpty())
+    }
+
+    // ---- com o despachante de comandos (Gadget Link Etapa 0) ---------------------------------------
+    @Test
+    fun withTheDispatcherTheRegisterAnnouncesCommandsAndAnInvokeGetsItsResultById() {
+        val catalog = com.darlisonfarich.gadgetlink.commands.CommandCatalog.museManus(clock = { 1_700_000_000_000 })
+        val dispatcher = com.darlisonfarich.gadgetlink.commands.CommandDispatcher(catalog)
+        try {
+            val r = Rig(DeviceDescription("homelink-abc123", "Celular", "0.1.7", catalog.commandsV2()), registerId, dispatcher)
+            r.connect()
+            val commands = r.muse.controlMessages.single()["params"]!!.jsonObject["commands_v2"]!!.jsonObject
+            assertEquals(listOf("linktest.ping", "linktest.echo_verify", "linktest.response_size_probe"), commands.keys.toList())
+            r.ack()
+            r.muse.control(obj("method" to "link.invoke", "id" to "inv-ping", "command" to "linktest.ping", "params" to obj()))
+            r.muse.control(obj("method" to "link.invoke", "id" to "inv-echo", "command" to "linktest.echo_verify", "params" to obj("data" to "abc")))
+            r.pump()
+            val results = r.awaitControl(3).drop(1).associateBy { it["id"]!!.jsonPrimitive.content }
+            assertEquals(
+                obj("method" to "link.result", "id" to "inv-ping", "ok" to true,
+                    "payload" to obj("reply" to "pong", "device_time_ms" to 1_700_000_000_000, "device_time" to "2023-11-14T22:13:20Z")),
+                results["inv-ping"],
+            )
+            assertEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                results["inv-echo"]!!["payload"]!!.jsonObject["sha256"]!!.jsonPrimitive.content)
+
+            // O mesmo id de novo (reconexão do lado do Muse): o resultado guardado, nada reexecutado.
+            r.muse.control(obj("method" to "link.invoke", "id" to "inv-ping", "command" to "linktest.ping"))
+            r.pump()
+            assertEquals(results["inv-ping"], r.awaitControl(4)[3])
+            assertTrue(r.rec.outcomes.isEmpty())
+        } finally {
+            dispatcher.close()
+        }
+    }
+
+    @Test
+    fun withoutTheDispatcherNothingChanges() {
+        val r = rig()
+        r.connect()
+        assertEquals(JsonObject(emptyMap()), r.muse.controlMessages.single()["params"]!!.jsonObject["commands_v2"])
+        r.ack()
+        r.muse.control(obj("method" to "link.invoke", "id" to "i", "command" to "linktest.ping"))
+        r.pump()
+        assertEquals("unsupported command: linktest.ping", r.muse.controlMessages.last()["error"]!!.jsonPrimitive.content)
     }
 
     @Test
