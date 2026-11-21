@@ -290,6 +290,57 @@ class LinkSessionTest {
         }
     }
 
+    /**
+     * Reconexão de ponta a ponta, pelo protocolo real (item 10 das correções do PR nº 37): a sessão A cai com
+     * uma escrita em curso; na sessão B o reenvio idêntico recebe o resultado guardado sem reexecutar, e o
+     * mesmo id com OUTRA operação (o Muse renumerando depois de reiniciar) executa a operação nova.
+     */
+    @Test
+    fun theDedupSurvivesAReconnectButAnIdReusedForAnotherCommandRunsFresh() {
+        val release = java.util.concurrent.CountDownLatch(1)
+        val writes = java.util.concurrent.atomic.AtomicInteger()
+        val write = com.darlisonfarich.gadgetlink.commands.CommandSpec(
+            "test.write", "write for the reconnect test", timeoutMs = 5_000, writes = true, implemented = true,
+        ) {
+            writes.incrementAndGet()
+            release.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            com.darlisonfarich.gadgetlink.commands.CommandResult.Ok(JsonPrimitive("written"))
+        }
+        val catalog = com.darlisonfarich.gadgetlink.commands.CommandCatalog(
+            com.darlisonfarich.gadgetlink.commands.LinkTestCommands.all { 1_700_000_000_000 } + write,
+        )
+        val dispatcher = com.darlisonfarich.gadgetlink.commands.CommandDispatcher(catalog)
+        try {
+            val a = Rig(DeviceDescription("homelink-abc123", "Celular", "0.1.7", catalog.commandsV2()), registerId, dispatcher)
+            a.connect()
+            a.ack()
+            a.muse.control(obj("method" to "link.invoke", "id" to "inv-9", "command" to "test.write", "params" to obj("request_id" to "r-1")))
+            a.pump()
+            val until = System.currentTimeMillis() + 2_000
+            while (writes.get() == 0 && System.currentTimeMillis() < until) Thread.sleep(2)
+            a.session.onClosed("network lost") // a sessão A cai com a escrita em curso
+            release.countDown()
+            Thread.sleep(100)
+            assertEquals("só o link.register saiu por A", 1, a.muse.controlMessages.size)
+
+            val b = Rig(DeviceDescription("homelink-abc123", "Celular", "0.1.7", catalog.commandsV2()), registerId, dispatcher)
+            b.connect()
+            b.ack()
+            b.muse.control(obj("method" to "link.invoke", "id" to "inv-9", "command" to "test.write", "params" to obj("request_id" to "r-1")))
+            b.pump()
+            assertEquals(obj("method" to "link.result", "id" to "inv-9", "ok" to true, "payload" to "written"), b.awaitControl(2)[1])
+            assertEquals("a escrita não repetiu na reconexão", 1, writes.get())
+
+            b.muse.control(obj("method" to "link.invoke", "id" to "inv-9", "command" to "linktest.ping"))
+            b.pump()
+            val fresh = b.awaitControl(3)[2]
+            assertEquals("pong", fresh["payload"]!!.jsonObject["reply"]!!.jsonPrimitive.content)
+        } finally {
+            release.countDown()
+            dispatcher.close()
+        }
+    }
+
     @Test
     fun withoutTheDispatcherNothingChanges() {
         val r = rig()

@@ -101,6 +101,9 @@ class CommandDispatcherTest {
         assertEquals(original, again.single())
         assertEquals(1, runs.get())
         assertEquals(obj("method" to "link.result", "id" to "inv-1", "ok" to true, "payload" to "done"), original)
+        // A auditoria agora é escrita no executor próprio (P2-9): espera as duas linhas chegarem.
+        val until = System.currentTimeMillis() + 2_000
+        while (audit.size < 2 && System.currentTimeMillis() < until) Thread.sleep(2)
         val lines = synchronized(audit) { audit.toList() }
         assertEquals(listOf(false, true), lines.map { it.deduplicated })
         assertTrue(lines.all { it.id == "inv-1" && it.command == "test.write" && it.outcome == "ok" })
@@ -145,8 +148,12 @@ class CommandDispatcherTest {
         val runs = AtomicInteger()
         val d = dispatcher(counting("test.write", runs))
         val r = Replies()
-        for (i in 0 until 129) d.onInvoke(invoke("id-$i", "test.write"), r.sink)
-        r.await(129)
+        // Um por vez: com a fila limitada (P2-7), 129 de uma vez esbarrariam em "queue full" — que não é o
+        // que este teste mede.
+        for (i in 0 until 129) {
+            d.onInvoke(invoke("id-$i", "test.write"), r.sink)
+            r.await(i + 1)
+        }
         assertEquals(129, runs.get())
         d.onInvoke(invoke("id-128", "test.write"), r.sink) // ainda no cache
         r.await(130)
@@ -502,7 +509,9 @@ class CommandDispatcherTest {
         d.onInvoke(invoke("a\nforged|line", LinkTestCommands.ECHO_VERIFY, obj("data" to "SEGREDO-DO-PAYLOAD")), r.sink)
         d.onInvoke(invoke("b", "nope.nope"), r.sink)
         r.await(2)
-        Thread.sleep(50)
+        // A auditoria agora é escrita no executor próprio (P2-9): espera as duas linhas chegarem.
+        val until = System.currentTimeMillis() + 2_000
+        while (audit.size < 2 && System.currentTimeMillis() < until) Thread.sleep(2)
         val lines = synchronized(audit) { audit.map { it.line() } }
         assertEquals(2, lines.size)
         assertTrue(lines.none { it.contains("SEGREDO") || it.contains("\n") })
