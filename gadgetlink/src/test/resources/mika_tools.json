@@ -1,0 +1,845 @@
+[
+ {
+  "name": "mika_run_task",
+  "description": "Hand Mika a task to do on the Android phone. Mika runs its own agent on the phone (apps, web, files) and records the task in a conversation the user can see in the app. Returns a task_id right away; follow it with mika_wait_task. Payments and confirmations are never approved over MCP.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "goal": {
+     "type": "string",
+     "description": "What to get done, in plain words, as you would tell a person."
+    },
+    "request_id": {
+     "type": "string",
+     "format": "uuid",
+     "description": "Choose a lowercase UUID before submitting. It is also the task_id for status after a lost reply. Reuse only for the same request."
+    },
+    "conversation": {
+     "type": "string",
+     "description": "Optional: continue a conversation returned by an earlier task so Mika keeps its context."
+    }
+   },
+   "required": [
+    "goal"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": true
+  }
+ },
+ {
+  "name": "mika_task_status",
+  "description": "Current state of a task: status, latest progress note, the question it is waiting on, or the final answer.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "task_id": {
+     "type": "string",
+     "description": "The task_id returned by mika_run_task."
+    }
+   },
+   "required": [
+    "task_id"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "mika_wait_task",
+  "description": "Wait until the task's status changes or it finishes, up to timeout_s seconds (default 30, at most 50), then return its state. Call again to keep waiting.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "task_id": {
+     "type": "string",
+     "description": "The task_id returned by mika_run_task."
+    },
+    "timeout_s": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 50,
+     "description": "Longest wait in seconds."
+    }
+   },
+   "required": [
+    "task_id"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "mika_answer",
+  "description": "Answer the question Mika asked in this task (status waiting_for_answer). Cannot approve payments, confirmations or steps handed to the user; those stay on the phone.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "task_id": {
+     "type": "string",
+     "description": "The task_id returned by mika_run_task."
+    },
+    "text": {
+     "type": "string",
+     "description": "The answer."
+    }
+   },
+   "required": [
+    "task_id",
+    "text"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": false,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "mika_steer_task",
+  "description": "Add instructions to a running remote task, keeping its task_id and context. Accepted means queued, not executed; check steers in mika_task_status for the message_id. Does not answer questions, approve payments, resume paused tasks, or start a new task.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "task_id": {
+     "type": "string",
+     "description": "The task_id returned by mika_run_task."
+    },
+    "text": {
+     "type": "string",
+     "minLength": 1,
+     "maxLength": 4000
+    }
+   },
+   "required": [
+    "task_id",
+    "text"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": true
+  }
+ },
+ {
+  "name": "mika_cancel_task",
+  "description": "Stop a remote task.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "task_id": {
+     "type": "string",
+     "description": "The task_id returned by mika_run_task."
+    }
+   },
+   "required": [
+    "task_id"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "mika_list_tasks",
+  "description": "Recent remote tasks, newest first.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "limit": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 50,
+     "description": "How many (default 10)."
+    }
+   },
+   "required": [],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "mika_device_state",
+  "description": "Read phone screen/lock state and whether local remote-unlock permission is enabled. No credentials are returned.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "mika_wake_device",
+  "description": "Wake the main phone screen. Requires the phone's remote wake/unlock setting. Does not unlock it.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "mika_unlock_device",
+  "description": "Wake and unlock the phone using only permission and credentials configured locally on the phone. Call before mika_run_task, or when a task is paused because the phone is locked. A failed credential attempt blocks further attempts until reconfigured on the phone. Cannot approve payments or bypass authentication.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_status",
+  "description": "Read session state and whether the local kill switch permits writes.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_get_state",
+  "description": "Alias for phone_status: session, write controls and current task contention.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_reconcile",
+  "description": "Read-only lookup of prior request_id in the owner's durable audit journal, or a phone_run checkpoint. Never executes or retries; use phone_status then fresh phone_observe.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "request_id": {
+     "type": "string",
+     "description": "Unique UUID idempotency key for this action. Never reuse for a different operation.",
+     "maxLength": 64
+    },
+    "kind": {
+     "type": "string",
+     "description": "action or batch"
+    },
+    "commands": {
+     "type": "array",
+     "description": "For batch only: exact original ordered commands, compared by fingerprint; never executed.",
+     "maxItems": 30,
+     "items": {
+      "type": "object"
+     }
+    }
+   },
+   "required": [
+    "request_id",
+    "kind"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_observe",
+  "description": "Read sanitized Android accessibility elements and current application. Password screens require the user.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_screenshot",
+  "description": "Read a protected-screen-aware screenshot, compressed to under 1 MiB; password screens are denied.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_list_apps",
+  "description": "List installed application package names and labels.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_approval_issue",
+  "description": "Mint a signed, single-use chat approval token (GER PR-6) bound to one exact phone action (tool + arguments). Redeemed by the action gate at execution; expires in minutes; never authorizes payment. Minting executes nothing.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "tool": {
+     "type": "string",
+     "description": "External phone action tool name, e.g. phone_tap"
+    },
+    "arguments": {
+     "type": "object",
+     "description": "The exact arguments the action will be called with (without request_id)."
+    }
+   },
+   "required": [
+    "tool",
+    "arguments"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_launch_app",
+  "description": "Open an installed application in the agent's virtual display.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "package": {
+     "type": "string",
+     "description": "Exact Android application package name"
+    },
+    "cold": {
+     "type": "boolean"
+    },
+    "request_id": {
+     "type": "string",
+     "description": "Unique UUID idempotency key for this action. Never reuse for a different operation.",
+     "maxLength": 64
+    },
+    "approval_token": {
+     "type": "string",
+     "description": "Single-use chat approval token (GER PR-6) minted by phone_approval_issue for exactly this tool + arguments. Authorizes that one gated action once; never authorizes payment.",
+     "maxLength": 512
+    }
+   },
+   "required": [
+    "package",
+    "request_id"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_tap",
+  "description": "Tap an element ref/snapshot pair or normalized 0?999 coordinates. Consequential taps are denied by the action gate.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "ref": {
+     "type": "string",
+     "description": "Element identifier from phone_observe"
+    },
+    "snapshotId": {
+     "type": "string",
+     "description": "Snapshot identifier corresponding to ref"
+    },
+    "x": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 999,
+     "description": "Normalized X"
+    },
+    "y": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 999,
+     "description": "Normalized Y"
+    },
+    "target": {
+     "type": "string",
+     "description": "Description of coordinate target",
+     "maxLength": 80
+    },
+    "clicks": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 2,
+     "description": "Tap count"
+    },
+    "request_id": {
+     "type": "string",
+     "description": "Unique UUID idempotency key for this action. Never reuse for a different operation.",
+     "maxLength": 64
+    },
+    "approval_token": {
+     "type": "string",
+     "description": "Single-use chat approval token (GER PR-6) minted by phone_approval_issue for exactly this tool + arguments. Authorizes that one gated action once; never authorizes payment.",
+     "maxLength": 512
+    }
+   },
+   "required": [
+    "request_id"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_type",
+  "description": "Type text in a non-secret field. Enter may submit content; the same local gate still applies.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "ref": {
+     "type": "string",
+     "description": "Element identifier from phone_observe"
+    },
+    "snapshotId": {
+     "type": "string",
+     "description": "Snapshot identifier corresponding to ref"
+    },
+    "x": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 999,
+     "description": "Normalized X"
+    },
+    "y": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 999,
+     "description": "Normalized Y"
+    },
+    "text": {
+     "type": "string",
+     "description": "Text to type",
+     "maxLength": 10000
+    },
+    "pressEnter": {
+     "type": "boolean"
+    },
+    "request_id": {
+     "type": "string",
+     "description": "Unique UUID idempotency key for this action. Never reuse for a different operation.",
+     "maxLength": 64
+    },
+    "approval_token": {
+     "type": "string",
+     "description": "Single-use chat approval token (GER PR-6) minted by phone_approval_issue for exactly this tool + arguments. Authorizes that one gated action once; never authorizes payment.",
+     "maxLength": 512
+    }
+   },
+   "required": [
+    "text",
+    "request_id"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_scroll",
+  "description": "Scroll the virtual screen in a chosen direction.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "direction": {
+     "type": "string",
+     "description": "up, down, left or right"
+    },
+    "amount": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 20,
+     "description": "Amount 1?20 (default 3)"
+    },
+    "x": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 999,
+     "description": "Normalized X"
+    },
+    "y": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 999,
+     "description": "Normalized Y"
+    },
+    "request_id": {
+     "type": "string",
+     "description": "Unique UUID idempotency key for this action. Never reuse for a different operation.",
+     "maxLength": 64
+    },
+    "approval_token": {
+     "type": "string",
+     "description": "Single-use chat approval token (GER PR-6) minted by phone_approval_issue for exactly this tool + arguments. Authorizes that one gated action once; never authorizes payment.",
+     "maxLength": 512
+    }
+   },
+   "required": [
+    "direction",
+    "request_id"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_swipe",
+  "description": "Swipe using 0?999 normalized endpoints.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "startX": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 999,
+     "description": "Start X"
+    },
+    "startY": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 999,
+     "description": "Start Y"
+    },
+    "endX": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 999,
+     "description": "End X"
+    },
+    "endY": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 999,
+     "description": "End Y"
+    },
+    "durationMs": {
+     "type": "integer",
+     "minimum": 50,
+     "maximum": 5000,
+     "description": "Gesture duration ms"
+    },
+    "request_id": {
+     "type": "string",
+     "description": "Unique UUID idempotency key for this action. Never reuse for a different operation.",
+     "maxLength": 64
+    },
+    "approval_token": {
+     "type": "string",
+     "description": "Single-use chat approval token (GER PR-6) minted by phone_approval_issue for exactly this tool + arguments. Authorizes that one gated action once; never authorizes payment.",
+     "maxLength": 512
+    }
+   },
+   "required": [
+    "request_id"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_gesture",
+  "description": "Perform a preplanned multipoint gesture with existing phone_gesture safety gates.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "paths": {
+     "type": "array",
+     "minItems": 1,
+     "maxItems": 2,
+     "items": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 32,
+      "items": {
+       "type": "array",
+       "minItems": 2,
+       "maxItems": 2,
+       "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 999
+       }
+      }
+     }
+    },
+    "durationMs": {
+     "type": "integer",
+     "minimum": 50,
+     "maximum": 5000,
+     "description": "Gesture duration ms"
+    },
+    "request_id": {
+     "type": "string",
+     "description": "Unique UUID idempotency key for this action. Never reuse for a different operation.",
+     "maxLength": 64
+    },
+    "approval_token": {
+     "type": "string",
+     "description": "Single-use chat approval token (GER PR-6) minted by phone_approval_issue for exactly this tool + arguments. Authorizes that one gated action once; never authorizes payment.",
+     "maxLength": 512
+    }
+   },
+   "required": [
+    "paths",
+    "request_id"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_key",
+  "description": "Press a key allowed by the agent virtual-display key policy. HOME, Recents, volume and media keys are scoped to this virtual display; Power remains blocked.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "key": {
+     "type": "string",
+     "description": "Allowed KEYCODE_* name for the virtual session"
+    },
+    "request_id": {
+     "type": "string",
+     "description": "Unique UUID idempotency key for this action. Never reuse for a different operation.",
+     "maxLength": 64
+    },
+    "approval_token": {
+     "type": "string",
+     "description": "Single-use chat approval token (GER PR-6) minted by phone_approval_issue for exactly this tool + arguments. Authorizes that one gated action once; never authorizes payment.",
+     "maxLength": 512
+    }
+   },
+   "required": [
+    "key",
+    "request_id"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_volume",
+  "description": "Adjust virtual-session volume by one scoped volume step.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "direction": {
+     "type": "string",
+     "description": "up, down or mute"
+    },
+    "request_id": {
+     "type": "string",
+     "description": "Unique UUID idempotency key for this action. Never reuse for a different operation.",
+     "maxLength": 64
+    },
+    "approval_token": {
+     "type": "string",
+     "description": "Single-use chat approval token (GER PR-6) minted by phone_approval_issue for exactly this tool + arguments. Authorizes that one gated action once; never authorizes payment.",
+     "maxLength": 512
+    }
+   },
+   "required": [
+    "direction",
+    "request_id"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_media",
+  "description": "Send a scoped media control key to the virtual session.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "action": {
+     "type": "string",
+     "description": "play_pause, stop, next or previous"
+    },
+    "request_id": {
+     "type": "string",
+     "description": "Unique UUID idempotency key for this action. Never reuse for a different operation.",
+     "maxLength": 64
+    },
+    "approval_token": {
+     "type": "string",
+     "description": "Single-use chat approval token (GER PR-6) minted by phone_approval_issue for exactly this tool + arguments. Authorizes that one gated action once; never authorizes payment.",
+     "maxLength": 512
+    }
+   },
+   "required": [
+    "action",
+    "request_id"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_back",
+  "description": "Go back in the virtual display.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "request_id": {
+     "type": "string",
+     "description": "Unique UUID idempotency key for this action. Never reuse for a different operation.",
+     "maxLength": 64
+    },
+    "approval_token": {
+     "type": "string",
+     "description": "Single-use chat approval token (GER PR-6) minted by phone_approval_issue for exactly this tool + arguments. Authorizes that one gated action once; never authorizes payment.",
+     "maxLength": 512
+    }
+   },
+   "required": [
+    "request_id"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_run",
+  "description": "Run an ordered batch of at most 30 predefined atomic actions, verified individually. No autonomous decisions. A step's arguments may carry its own approval_token.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "commands": {
+     "type": "array",
+     "description": "Array of {name, arguments} (without individual request_id).",
+     "maxItems": 30,
+     "items": {
+      "type": "object"
+     }
+    },
+    "request_id": {
+     "type": "string",
+     "description": "Unique UUID idempotency key for this action. Never reuse for a different operation.",
+     "maxLength": 64
+    }
+   },
+   "required": [
+    "commands",
+    "request_id"
+   ],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": false
+  }
+ },
+ {
+  "name": "phone_cancel",
+  "description": "End the owner's control session and release its virtual display.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  },
+  "annotations": {
+   "readOnlyHint": false,
+   "destructiveHint": true,
+   "openWorldHint": false
+  }
+ }
+]
