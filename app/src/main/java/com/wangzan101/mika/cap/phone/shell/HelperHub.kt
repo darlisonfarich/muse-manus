@@ -42,6 +42,10 @@ class HelperHub(context: Context) {
     @Volatile var lastHandoffRejection: String? = null
         private set
 
+    /** [SystemClock.elapsedRealtime] of the last StaleApk refusal; 0 when none. Such a helper may be upgrading itself. */
+    @Volatile var staleRejectedAt: Long = 0L
+        private set
+
     /** 经助手代连本进程的 WebView 调试套接字;助手不在时抛 IOException,助手拒绝或连不上为 null。 */
     fun openDevtoolsSocket(endpoint: String): ParcelFileDescriptor? {
         val sh = shell.value ?: throw IOException("phone helper is not running")
@@ -115,6 +119,7 @@ class HelperHub(context: Context) {
 
     private fun reject(why: HelperHandoff.Reject): Bundle {
         lastHandoffRejection = why.name
+        if (why == HelperHandoff.Reject.StaleApk) staleRejectedAt = SystemClock.elapsedRealtime()
         Log.w(TAG, "helper handoff rejected: $why")
         return Bundle().apply {
             putBoolean(HelperHandoff.KEY_ACCEPTED, false)

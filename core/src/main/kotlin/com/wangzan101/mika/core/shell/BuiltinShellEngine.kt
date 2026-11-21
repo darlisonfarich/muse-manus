@@ -49,6 +49,12 @@ interface BuiltinShellPlatform {
     fun setRootAnswer(answer: SuAnswer?) {}
     /** 用户明确点了 Root 失败后的重试。返回 true 表示平台已发起异步授权,完成后会通知引擎。 */
     fun requestRootStart(): Boolean = false
+    /**
+     * A helper that Mika just refused as running the previous APK may be starting its successor from the
+     * updated APK on its own (see HelperProcess). Returns how long to wait for that handoff before Mika
+     * starts one itself; 0 when no such upgrade is expected.
+     */
+    fun selfUpgradeWaitMs(): Long = 0
 }
 
 /** 看门狗重起助手的间隔:第 n 次失败后等 base·2^(n-1),封顶 [maxMs];连续失败 [maxAttempts] 次后停下等人或等开关变化。 */
@@ -153,9 +159,13 @@ class BuiltinShellEngine(
         var first = true
         scope.launch {
             helper.collect { h ->
+                if (h == null && !first) autoOn?.helperStopped()
                 if (h != null) {
                     synchronized(this@BuiltinShellEngine) { failures = 0; retryJob?.cancel() }
                     autoOn?.reset()
+                    // Leave the user's debugging setting as it was when only this launch needed it. Runs
+                    // here, on its own job: the handoff cancels the launch job that opened the switch.
+                    autoOn?.let { auto -> scope.launch(io) { auto.closeAfterLaunch { helper.value != null } } }
                     // 没配对、也没用 root 就来了:是电脑经 USB 起的。记下来,它停了才知道该怎么提示
                     if (!platform.paired() && platform.rootStart() == RootStart.Off) platform.setUsbStarted(true)
                     _status.value = BuiltinShellStatus.Running
@@ -265,6 +275,11 @@ class BuiltinShellEngine(
 
     private suspend fun launchOnce(): Unit = launchLock.withLock {
         if (helper.value != null) return@withLock
+        // A stale helper upgrading itself needs neither su nor adbd: give its successor time to hand off.
+        platform.selfUpgradeWaitMs().takeIf { it > 0 }?.let { wait ->
+            _status.value = BuiltinShellStatus.Connecting
+            if (withTimeoutOrNull(wait) { helper.first { it != null } } != null) return@withLock
+        }
         // 先走 root:不用配对、不用 Wi-Fi;不行时配过对就接着走无线调试
         if (rootStart) {
             _status.value = BuiltinShellStatus.Connecting

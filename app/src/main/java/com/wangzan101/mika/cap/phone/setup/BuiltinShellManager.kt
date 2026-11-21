@@ -87,15 +87,22 @@ class BuiltinShellManager(context: Context, private val hub: HelperHub, private 
     @Volatile var lastHelperLaunchStage: String? = null
         private set
 
-    /** 要起助手时替用户打开无线调试:只由 App 自己写系统设置(要起助手时没有别的连接可用)。 */
+    /**
+     * 要起助手时替用户打开无线调试:只由 App 自己写系统设置(要起助手时没有别的连接可用)。
+     * With a paired gadget owning phone recovery the switch is opened only for the launch and written back
+     * to off right after the handoff, so the user's debugging setting stays off (see [WirelessDebuggingAutoOn.closeAfterLaunch]).
+     */
     val wirelessAutoOn: WirelessDebuggingAutoOn by lazy {
+        val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         WirelessDebuggingAutoOn(
-            wants = { !com.wangzan101.mika.gadget.GadgetLink.ownsPhoneRecovery(app) &&
-                consent().wants(RecoveryCapability.AutoWirelessDebugging) },
+            wants = { consent().wants(RecoveryCapability.AutoWirelessDebugging) },
             canWrite = { app.checkSelfPermission(PermissionCommands.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED },
             read = platform::wirelessDebugging,
-            write = { !com.wangzan101.mika.gadget.GadgetLink.ownsPhoneRecovery(app) &&
-                DeveloperSettings.turnOnWirelessDebugging(app.contentResolver) },
+            write = { DeveloperSettings.turnOnWirelessDebugging(app.contentResolver) },
+            restoreAfterLaunch = { com.wangzan101.mika.gadget.GadgetLink.ownsPhoneRecovery(app) },
+            writeOff = { DeveloperSettings.turnOffWirelessDebugging(app.contentResolver) },
+            offStopsHelper = { prefs.getBoolean(KEY_OFF_STOPS_HELPER, false) },
+            learnOffStopsHelper = { prefs.edit().putBoolean(KEY_OFF_STOPS_HELPER, true).apply() },
         )
     }
 
@@ -126,12 +133,15 @@ class BuiltinShellManager(context: Context, private val hub: HelperHub, private 
         usbScript.refresh()
     }
 
-    /** Package replacement may invalidate an already running helper. Use the existing, locally
-     * authorized root launcher and the PackageManager's current APK. Never request a new grant here. */
+    /**
+     * Package replacement invalidates the running helper (StaleApk). The watchdog first waits for that
+     * helper to start its successor from the updated APK (HelperProcess self-upgrade, no adbd or root),
+     * then falls back to the locally authorized root launcher or the paired in-app ADB connection.
+     * Never requests a new grant here.
+     */
     fun recoverGadgetAfterUpdate() {
         if (!com.wangzan101.mika.gadget.GadgetLink.ownsPhoneRecovery(app) ||
-            com.wangzan101.mika.settings.FeatureFlags.get(app).quitRequested() ||
-            !engine.rootStart || hub.shell.value != null) return
+            com.wangzan101.mika.settings.FeatureFlags.get(app).quitRequested() || hub.shell.value != null) return
         start()
         engine.need()
     }
@@ -200,6 +210,15 @@ class BuiltinShellManager(context: Context, private val hub: HelperHub, private 
         override fun requestRootStart(): Boolean {
             root.requestStart()
             return true
+        }
+
+        override fun selfUpgradeWaitMs(): Long {
+            val sinceStale = hub.staleRejectedAt.takeIf { it > 0 }?.let { android.os.SystemClock.elapsedRealtime() - it }
+            val sinceUpdate = runCatching {
+                System.currentTimeMillis() - app.packageManager.getPackageInfo(app.packageName, 0).lastUpdateTime
+            }.getOrNull()
+            return listOfNotNull(sinceStale, sinceUpdate).filter { it >= 0 }
+                .maxOfOrNull { SELF_UPGRADE_WINDOW_MS - it }?.coerceAtLeast(0) ?: 0
         }
 
         /**
@@ -328,6 +347,9 @@ class BuiltinShellManager(context: Context, private val hub: HelperHub, private 
         private const val LOCALHOST = AdbConnectPort.LOCALHOST
         private const val PORT_RANGE_FILE = "/proc/sys/net/ipv4/ip_local_port_range"
         private const val HANDOFF_WAIT_MS = 15_000L
+        /** After an update or a StaleApk refusal, how long the old helper gets to start its successor. */
+        private const val SELF_UPGRADE_WINDOW_MS = 20_000L
+        private const val KEY_OFF_STOPS_HELPER = "wirelessOffStopsHelper"
         /** 看门狗经 su 起助手时等 su 回话(授权过的马上回;要弹授权框时给用户一点时间)。 */
         private const val ROOT_ASK_MS = 45_000L
     }
