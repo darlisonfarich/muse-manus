@@ -99,7 +99,11 @@ class McpRuntime(
 
     suspend fun unpairRelay() {
         setRelayEnabled(false)
-        relaySettings.pairing()?.let { RelayGateway(RelayGateway.parse(it.gateway), RelayGateway.http()).unpair(it.deviceToken) }
+        // O gateway antigo pode estar morto (URL expirada): a revogação remota é
+        // melhor-esforço e NUNCA pode impedir a limpeza local do pareamento.
+        runCatching {
+            relaySettings.pairing()?.let { RelayGateway(RelayGateway.parse(it.gateway), RelayGateway.http()).unpair(it.deviceToken) }
+        }
         relaySettings.clear()
     }
 
