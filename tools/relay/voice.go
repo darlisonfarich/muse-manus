@@ -42,7 +42,9 @@ func (g *gateway) voiceDeviceEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer c.CloseNow()
-	c.SetReadLimit(4096)
+	// O limite tem de caber um frame de audio do hub (segmentos MP3 em
+	// pedacos de 64 KiB): 4 KiB derrubava a conexao no primeiro segmento.
+	c.SetReadLimit(2 * maxBody)
 	g.mu.Lock()
 	if !matches(bearer(r), g.store.view().DeviceHash) {
 		g.mu.Unlock()
