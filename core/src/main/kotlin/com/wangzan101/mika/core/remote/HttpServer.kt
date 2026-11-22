@@ -54,6 +54,7 @@ class MiniHttpServer(
     private val maxConnections: Int = 16,
     private val readTimeoutMs: Int = 30_000,
     private val onError: (Throwable) -> Unit = {},
+    private val onUpgrade: ((HttpRequest, InputStream, OutputStream) -> Unit)? = null,
 ) {
     private val running = AtomicBoolean(false)
     private val slots = Semaphore(maxConnections)
@@ -116,6 +117,10 @@ class MiniHttpServer(
                 val close = request.header("connection")?.split(',')
                     ?.any { it.trim().equals("close", ignoreCase = true) } == true
                 write(output, response, close)
+                if (response.status == 101 && onUpgrade != null) {
+                    onUpgrade.invoke(request, input, output)
+                    return
+                }
                 if (close) return
             }
         } catch (_: SocketException) {
@@ -227,7 +232,7 @@ class MiniHttpServer(
 
         private val REASONS = mapOf(
             200 to "OK", 201 to "Created", 202 to "Accepted", 400 to "Bad Request", 401 to "Unauthorized", 403 to "Forbidden",
-            404 to "Not Found", 405 to "Method Not Allowed", 406 to "Not Acceptable", 409 to "Conflict", 413 to "Payload Too Large",
+            101 to "Switching Protocols", 404 to "Not Found", 405 to "Method Not Allowed", 406 to "Not Acceptable", 409 to "Conflict", 413 to "Payload Too Large",
             415 to "Unsupported Media Type", 429 to "Too Many Requests", 431 to "Request Header Fields Too Large",
             500 to "Internal Server Error", 503 to "Service Unavailable",
         )
@@ -235,7 +240,7 @@ class MiniHttpServer(
         fun write(output: OutputStream, r: HttpResponse, close: Boolean) {
             val head = StringBuilder("HTTP/1.1 ${r.status} ${REASONS[r.status] ?: "Status"}\r\n")
             r.headers.forEach { (k, v) -> head.append(k).append(": ").append(v).append("\r\n") }
-            head.append("Content-Length: ").append(r.body.size).append("\r\n")
+            if (r.status != 101) head.append("Content-Length: ").append(r.body.size).append("\r\n")
             head.append("Cache-Control: no-store\r\n")
             if (close) head.append("Connection: close\r\n")
             head.append("\r\n")

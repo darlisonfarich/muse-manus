@@ -18,8 +18,8 @@ android {
         applicationId = "com.darlisonfarich.musemanus"
         minSdk = 30
         targetSdk = 35
-        versionCode = providers.gradleProperty("museManusVersionCode").orNull?.toInt() ?: 44
-        versionName = "0.1.43"
+        versionCode = providers.gradleProperty("museManusVersionCode").orNull?.toInt() ?: 46
+        versionName = "0.1.45"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GIT_HASH", "\"$gitHash\"")
         // 关于页版本号后的 Beta 标记;出正式版时改成 false
@@ -117,6 +117,8 @@ dependencies {
     implementation(libs.mlkit.text.recognition.chinese)
     // 微信绑定二维码只在本机编码，不调用在线图片服务。
     implementation(libs.zxing.core)
+    implementation("com.alphacephei:vosk-android:0.3.75")
+    implementation("androidx.datastore:datastore-preferences:1.1.4")
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

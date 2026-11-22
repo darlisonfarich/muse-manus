@@ -17,6 +17,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!-- gadget-link:配对窗口打开时前台服务保持 BLE 广播和 GATT 连接(用户在另一台手机上操作 Muse App) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -234,6 +235,12 @@
             android:name=".gadget.GadgetConnectService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+
+        <!-- voz A2 (motor próprio): escuta o wake word "oi muse" com o microfone em primeiro plano -->
+        <service
+            android:name=".voice.wake.VoiceWakeService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <service
             android:name=".sandbox.SandboxService"
