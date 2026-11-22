@@ -20,6 +20,9 @@ object VoiceA2Protocol {
     const val CHUNK_BYTES = 64 * 1024
     const val MAX_WAV_BYTES = 1_200_000
     const val MAX_MP3_BYTES = 12 * 1024 * 1024
+    /** Cap for the sum of all MP3 segments of one turn, and for the segment count. */
+    const val MAX_TURN_MP3_BYTES = 32 * 1024 * 1024
+    const val MAX_SEGMENTS = 256
     const val MAX_CONTROL_BYTES = 4_096
 
     data class Frame(val kind: Int, val turnId: String, val seq: Int, val payload: ByteArray)

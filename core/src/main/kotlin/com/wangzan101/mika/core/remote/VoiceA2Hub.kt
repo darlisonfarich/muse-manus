@@ -13,10 +13,14 @@ data class VoiceA2State(
     val ready: Boolean = false,
     val turnId: String? = null,
     val generationId: String? = null,
+    /** Turn that owns [segments]; survives TURN_END so the player can finish the queue. Null after cancel/error. */
+    val audioTurnId: String? = null,
     val status: String = "Muse desconectado",
     val transcript: String = "",
     val reply: String = "",
     val audio: ByteArray? = null,
+    /** MP3 segments of the current turn, in arrival order; each one is complete and decodable on its own. */
+    val segments: List<ByteArray> = emptyList(),
     val resultId: String? = null,
     val error: String? = null,
 )
@@ -33,15 +37,25 @@ class VoiceA2Hub {
     private var current: String? = null
     private var generation: String? = null
     private var mp3: VoiceA2Assembler? = null
-    private var resultAudio: ByteArray? = null
+    private val segmentList = ArrayList<ByteArray>()
+    private var segmentBytes = 0
+    /** CANCEL must never be written from the caller (UI) thread: sockets reject that on Android. */
+    private val cancelWriter = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "voice-a2-cancel").apply { isDaemon = true }
+    }
+
+    private fun clearAudio() {
+        mp3 = null
+        segmentList.clear()
+        segmentBytes = 0
+    }
 
     fun attach(next: VoiceA2Sender): Boolean = synchronized(lock) {
         if (sender != null) return@synchronized false
         sender = next
         current = null
         generation = null
-        mp3 = null
-        resultAudio = null
+        clearAudio()
         outgoing.clear()
         mutable.value = VoiceA2State(connected = true, status = "Aguardando HELLO da VM")
         Thread({ pump(next) }, "voice-a2-outgoing").apply { isDaemon = true }.start()
@@ -54,8 +68,7 @@ class VoiceA2Hub {
         outgoing.clear()
         current = null
         generation = null
-        mp3 = null
-        resultAudio = null
+        clearAudio()
         mutable.value = VoiceA2State()
     }
 
@@ -69,11 +82,10 @@ class VoiceA2Hub {
             UUID.fromString(generationId)
             current = turnId
             generation = generationId
-            mp3 = null
-            resultAudio = null
+            clearAudio()
             mutable.value = mutable.value.copy(turnId = turnId, generationId = generationId,
                 status = "Áudio na fila de saída", transcript = "", reply = "", audio = null,
-                resultId = null, error = null)
+                segments = emptyList(), audioTurnId = turnId, resultId = null, error = null)
             if (!outgoing.offer(Pending(conversationId, turnId, generationId, wav))) {
                 current = null
                 generation = null
@@ -122,18 +134,26 @@ class VoiceA2Hub {
         }
     }
 
+    /**
+     * Barge-in: drops local state at once and sends CANCEL from a worker thread (never the caller's, which is
+     * the UI thread). Frames of this turn that are still in flight are ignored because [current] is cleared.
+     * With no turn in flight (reply already finished, player still draining) it only empties the segment queue.
+     */
     fun cancel(): Unit = synchronized(lock) {
-        val turn = current ?: return@synchronized
-        val gen = generation ?: return@synchronized
-        outgoing.clear()
-        runCatching { sender?.let { sendText(it, VoiceA2Protocol.control("CANCEL",
-            "turn_id" to turn, "generation_id" to gen)) } }
+        val turn = current
+        val gen = generation
+        val out = sender
+        if (turn != null && gen != null && out != null) {
+            outgoing.clear()
+            val message = VoiceA2Protocol.control("CANCEL", "turn_id" to turn, "generation_id" to gen)
+            cancelWriter.execute { runCatching { sendText(out, message) } }
+        }
         current = null
         generation = null
-        mp3 = null
-        resultAudio = null
-        mutable.value = mutable.value.copy(turnId = null, generationId = null,
-            status = "Turno cancelado", audio = null, resultId = null)
+        clearAudio()
+        mutable.value = mutable.value.copy(turnId = null, generationId = null, audioTurnId = null,
+            status = if (turn != null) "Turno cancelado" else mutable.value.status,
+            audio = null, segments = emptyList(), resultId = null)
     }
 
     /** Unsolicited or stale generations are ignored rather than executed or played. */
@@ -148,7 +168,8 @@ class VoiceA2Hub {
                     return@synchronized
                 }
                 mutable.value = mutable.value.copy(ready = true, status = "Muse conectado")
-                sendText(out, VoiceA2Protocol.control("READY", "protocol_version" to "1"))
+                // segments=1: this hub queues MP3 segments as they arrive, so the gateway may stream one per sentence.
+                sendText(out, VoiceA2Protocol.control("READY", "protocol_version" to "1", "segments" to "1"))
             }
             "PING" -> sendText(out, VoiceA2Protocol.control("PONG"))
             "PONG" -> Unit
@@ -164,49 +185,59 @@ class VoiceA2Hub {
                             reply = VoiceA2Protocol.field(msg, "text"), status = "Resposta recebida")
                         "AUDIO_START" -> {
                             require(VoiceA2Protocol.field(msg, "format") == "mp3")
+                            require(mp3 == null) { "segment started before the previous one ended" }
+                            require(segmentList.size < VoiceA2Protocol.MAX_SEGMENTS) { "too many segments" }
                             mp3 = VoiceA2Assembler(VoiceA2Protocol.MP3, turn, VoiceA2Protocol.bytes(msg))
-                            resultAudio = null
                         }
                         "AUDIO_END" -> {
                             require(VoiceA2Protocol.field(msg, "kind") == "mp3")
-                            resultAudio = (mp3 ?: error("no audio start")).finish()
+                            val segment = (mp3 ?: error("no audio start")).finish()
                             mp3 = null
+                            require(segmentBytes + segment.size <= VoiceA2Protocol.MAX_TURN_MP3_BYTES) { "turn audio too large" }
+                            segmentBytes += segment.size
+                            segmentList.add(segment)
+                            // Publish each completed segment now: the player starts on the first one, not on TURN_END.
+                            mutable.value = mutable.value.copy(segments = segmentList.toList(),
+                                audioTurnId = turn, status = "Reproduzindo resposta")
                         }
                         "TURN_END" -> {
-                            val audio = resultAudio ?: error("audio missing")
+                            require(mp3 == null) { "turn ended inside a segment" }
+                            require(segmentList.isNotEmpty()) { "audio missing" }
                             require(mutable.value.reply.isNotEmpty()) { "reply missing" }
-                            mutable.value = mutable.value.copy(audio = audio, resultId = turn,
+                            // `audio` keeps the single-blob contract (wake service); MP3 frames concatenate cleanly.
+                            val whole = ByteArray(segmentBytes)
+                            var at = 0
+                            for (part in segmentList) { part.copyInto(whole, at); at += part.size }
+                            mutable.value = mutable.value.copy(audio = whole, resultId = turn,
                                 turnId = null, generationId = null,
                                 status = "Resposta pronta para reprodução")
                             current = null
                             generation = null
-                            resultAudio = null
-                            mp3 = null
+                            clearAudio()
                         }
                         "ERROR" -> {
                             mutable.value = mutable.value.copy(
                                 status = "Muse indisponível", turnId = null, generationId = null,
+                                audioTurnId = null, segments = emptyList(),
                                 error = msg["code"]?.jsonPrimitive?.content ?: "Erro no gateway")
                             current = null
                             generation = null
-                            mp3 = null
-                            resultAudio = null
+                            clearAudio()
                         }
                         "CANCEL" -> {
                             current = null
                             generation = null
-                            mp3 = null
-                            resultAudio = null
-                            mutable.value = mutable.value.copy(status = "Turno cancelado", turnId = null, generationId = null)
+                            clearAudio()
+                            mutable.value = mutable.value.copy(status = "Turno cancelado", turnId = null,
+                                generationId = null, audioTurnId = null, segments = emptyList())
                         }
                     }
                 } catch (_: Exception) {
                     current = null
                     generation = null
-                    mp3 = null
-                    resultAudio = null
+                    clearAudio()
                     mutable.value = mutable.value.copy(status = "Resposta inválida do gateway",
-                        turnId = null, generationId = null,
+                        turnId = null, generationId = null, audioTurnId = null, segments = emptyList(),
                         error = "Violação do protocolo A2")
                 }
             }
@@ -217,12 +248,12 @@ class VoiceA2Hub {
         val frame = try { VoiceA2Protocol.decode(data) } catch (_: Exception) { return@synchronized }
         if (frame.kind != VoiceA2Protocol.MP3 || frame.turnId != current || mp3 == null) return@synchronized
         try { mp3!!.append(frame) } catch (_: Exception) {
-            mp3 = null
-            resultAudio = null
+            clearAudio()
             current = null
             generation = null
             mutable.value = mutable.value.copy(status = "Áudio inválido",
-                turnId = null, generationId = null, error = "Sequência de chunks inválida")
+                turnId = null, generationId = null, audioTurnId = null, segments = emptyList(),
+                error = "Sequência de chunks inválida")
         }
     }
 
