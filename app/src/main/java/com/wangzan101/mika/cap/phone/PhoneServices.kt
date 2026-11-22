@@ -32,7 +32,9 @@ class PhoneServices(context: Context) {
     val recoverySettings: RecoverySettings by lazy { RecoverySettings(RecoverySettings.prefs(app)) }
 
     /** 自动恢复与那几项授权开关。 */
-    val recovery: BuiltinShellRecovery by lazy { BuiltinShellRecovery(app, shellManager.commandRunner, recoverySettings, shellControl) }
+    val recovery: BuiltinShellRecovery by lazy { BuiltinShellRecovery(app, shellManager.commandRunner, recoverySettings, shellControl) {
+        shellManager.wirelessAutoOn.adoptOpened()
+    } }
 
     /** 任务与启动恢复共用的那条 shell 连接。 */
     val sharedShell = SharedShell { BuiltinShellConnection(hub) { shellManager.need() } }

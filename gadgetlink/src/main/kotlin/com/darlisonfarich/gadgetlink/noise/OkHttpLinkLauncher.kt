@@ -29,6 +29,8 @@ class OkHttpLinkLauncher(
      * gadget sempre foi; a voz usa "hatch-web" (a única identidade nomeada no SDK).
      */
     private val appId: String? = null,
+    /** O despachante dos link.invoke da instância registrada; null = sem comandos (como antes). */
+    private val invokes: InvokeHandler? = null,
 ) : SessionLauncher {
     companion object {
         const val PING_INTERVAL_S = 20L
@@ -90,7 +92,10 @@ class OkHttpLinkLauncher(
                 ws.close(1000, "done")
             }
         }
-        val session = LinkSession(device = device(pairing), socket = socket, listener = listener, registerDevice = registerDevice)
+        val session = LinkSession(
+            device = device(pairing), socket = socket, listener = listener, registerDevice = registerDevice,
+            invokes = if (registerDevice) invokes else null,
+        )
 
         // O bearer da VM vai no cabeçalho do upgrade, nunca na URL nem no log.
         val request = Request.Builder()

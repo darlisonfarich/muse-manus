@@ -1305,6 +1305,62 @@ class ShellService(
         return ok
     }
 
+    /** Window protection verdict (secure/password flags) for Mika's own virtual display only; never window content. */
+    override fun virtualWindowProtection(displayId: Int): Int {
+        val unknown = VirtualWindowProtection.Unknown.code
+        if (displayId == Display.DEFAULT_DISPLAY || !ownDisplay(displayId)) return unknown
+        val process = try {
+            ProcessBuilder("/system/bin/dumpsys", "-t", "2", "window", "--proto").redirectErrorStream(true).start()
+        } catch (_: Exception) {
+            return unknown
+        }
+        val read = java.util.concurrent.FutureTask {
+            process.inputStream.use { VirtualWindowProtection.inspect(it, displayId) }
+        }
+        Thread(read, "mika-window-protection").apply { isDaemon = true; start() }
+        return try {
+            if (!process.waitFor(3, TimeUnit.SECONDS) || process.exitValue() != 0 || !ownDisplay(displayId)) unknown
+            else read.get(1, TimeUnit.SECONDS).code
+        } catch (_: Exception) {
+            unknown
+        } finally {
+            process.destroyForcibly()
+        }
+    }
+
+    /**
+     * Opens [packageName] on the phone's main screen, in front of the user, because the owner asked for it (the
+     * only launch here that does not go to a Mika display; the caller has already applied the local authorization).
+     * An app that has a task on one of Mika's displays is refused ([START_IN_USE_BY_OTHER]): launching it again would
+     * only bring that task forward on its own display, and the owner would be told it opened when it did not.
+     * Same launcher entry and same shell-side start as [startApp], with the default display as target.
+     */
+    override fun startAppOnMain(packageName: String): Int = synchronized(launchLock) {
+        try {
+            if (onOtherOwnDisplay(listOf(packageName), Display.DEFAULT_DISPLAY, myUser)) return START_IN_USE_BY_OTHER
+        } catch (t: Throwable) {
+            Log.e(TAG, "cannot inspect Mika displays", t)
+            return START_ERROR
+        }
+        val intent = launchIntent(packageName, myUser) ?: return START_NOT_FOUND
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val options = ActivityOptions.makeBasic().setLaunchDisplayId(Display.DEFAULT_DISPLAY).toBundle()
+        val ok = try {
+            val start = taskManager.javaClass.methods.first { it.name == "startActivityAsUser" && it.parameterTypes.size == 12 }
+            val result = start.invoke(
+                taskManager, null, ShellContext.SHELL_PACKAGE, null, intent, null, null, null,
+                0, 0, null, options, USER_CURRENT,
+            ) as Int
+            if (result < 0) Log.w(TAG, "startActivityAsUser($packageName, main screen) -> $result")
+            result >= 0
+        } catch (t: Throwable) {
+            Log.w(TAG, "startActivityAsUser unavailable, falling back to am start", t)
+            val component = intent.component?.flattenToShortString() ?: return START_NOT_FOUND
+            exec("am", "start", "--display", "${Display.DEFAULT_DISPLAY}", "-n", component) == 0
+        }
+        if (ok) START_OK else START_ERROR
+    }
+
     /**
      * 该包([userId] 那份用户里的)在主屏上有看得见的任务:用户正在主屏用它。静音按包作用,这时静了它用户手上的也没声了,
      * Mika 据此不去静它。看不清主屏时按「在用」答,宁可不静也不把用户正在用的静了。

@@ -108,6 +108,18 @@ object GadgetLink {
         message?.let { log("LINK ERROR: $it") }
     }
 
+    /** O commands_v2 que o link.register da conexão atual levou ao Muse (o que foi anunciado, não a preferência). */
+    data class Announced(val commands: Int, val stubs: Int, val registerBytes: Int)
+
+    private val _announced = MutableStateFlow<Announced?>(null)
+
+    /** null = nada anunciado (serviço parado ou ainda sem conexão). */
+    val announced: StateFlow<Announced?> = _announced
+
+    internal fun onAnnounced(announced: Announced?) {
+        _announced.value = announced
+    }
+
     // A intenção do usuário sobre o link fica gravada: é ela que manda no retorno depois do boot.
     // Sem gravação nenhuma (build antiga), pareamento salvo conta como ligado — parear foi a adesão;
     // um "Desconectar" explícito grava false e é respeitado até o próximo "Conectar".
@@ -116,6 +128,10 @@ object GadgetLink {
 
     private fun linkEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_LINK_ENABLED, true)
+
+    /** An active paired gadget never asks recovery to enable wireless debugging. */
+    internal fun ownsPhoneRecovery(context: Context): Boolean =
+        linkEnabled(context) && File(stateDir(context), GadgetState.PAIRING_FILE).isFile
 
     private fun setLinkEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -145,16 +161,17 @@ object GadgetLink {
      * permissões do setup; se o sistema recusar o serviço em primeiro plano, o erro aparece na
      * Diagnostics como em qualquer outra subida.
      */
-    fun resumeLinkAfterBoot(context: Context) {
+    fun resumeLinkAfterBoot(context: Context, reason: String = "boot") {
         val app = context.applicationContext
         val hasPairing = runCatching { state(app).pairing() != null }.getOrDefault(false)
         if (!shouldResumeLink(linkEnabled(app), hasPairing)) return
-        log("LINK resume after boot")
+        log("LINK resume after $reason")
         connect(app)
     }
 
     internal fun onLinkState(state: SupervisorState, detail: String) {
         _link.value = if (state == SupervisorState.STOPPED) null else state
+        if (state == SupervisorState.STOPPED) _announced.value = null
         linkDetail = if (state == SupervisorState.STOPPED) "" else detail
         log("LINK ${state.name}${if (detail.isEmpty()) "" else " $detail"}")
     }
@@ -240,6 +257,42 @@ object GadgetLink {
         synchronized(this) { events.toList() }.forEach { lines += "link event" to it }
         return lines
     }
+
+    /**
+     * The link log as plain text for the "copy" button: app version and commit, the phone helper's state
+     * (fixed vocabulary: status, launch stage, refusal, exception class only) and every diagnostics line.
+     * Same privacy rules as [diagnosticsLines]: no account token, no addresses, no error text.
+     */
+    fun copyableLog(context: Context): String {
+        val phone = com.wangzan101.mika.cap.phone.PhoneServices.of(context)
+        val manager = phone.shellManager
+        val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+        val bootedAt = System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime()
+        val helper = listOf(
+            "phone booted" to stamp.format(Date(bootedAt)),
+            "usb debugging now" to runCatching {
+                if (com.wangzan101.mika.cap.phone.setup.DeveloperSettings.usbDebugging(context.contentResolver)) "on" else "off"
+            }.getOrDefault("unknown"),
+            "wireless debugging now" to runCatching {
+                if (com.wangzan101.mika.cap.phone.setup.DeveloperSettings.wirelessDebugging(context.contentResolver)) "on" else "off"
+            }.getOrDefault("unknown"),
+            "helper" to if (phone.hub.shell.value != null) "running" else "not running",
+            "helper status" to manager.engine.status.value.toString(),
+            "helper launch stage" to (manager.lastHelperLaunchStage ?: "none"),
+            "helper handoff rejection" to (phone.hub.lastHandoffRejection ?: "none"),
+            "helper last error" to (manager.engine.lastError?.substringBefore(':')?.substringBefore('(') ?: "none"),
+            "wireless debugging after launch" to (manager.wirelessAutoOn.lastOff.value?.name ?: "none"),
+        ) + phone.hub.lifecycleLines { stamp.format(Date(it)) }
+        return logText(
+            "Muse Manus ${com.wangzan101.mika.BuildConfig.VERSION_NAME} (${com.wangzan101.mika.BuildConfig.VERSION_CODE}, " +
+                "${com.wangzan101.mika.BuildConfig.GIT_HASH})",
+            helper + diagnosticsLines(context),
+        )
+    }
+
+    /** Pure formatting of [copyableLog]: a header line, then one "key: value" line each. */
+    internal fun logText(header: String, lines: List<Pair<String, String>>): String =
+        (listOf(header) + lines.map { (k, v) -> "$k: $v" }).joinToString("\n")
 }
 
 /** Rede do aparelho para o setup: o celular já está online, então só informa a "rede atual". */

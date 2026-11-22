@@ -9,6 +9,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -118,11 +119,11 @@ class LinkSessionTest {
     private val registerId = "11111111-2222-3333-4444-555555555555"
     private val device = DeviceDescription("homelink-abc123", "Celular", "0.1.7")
 
-    private class Rig(device: DeviceDescription, private val registerId: String) {
+    private class Rig(device: DeviceDescription, private val registerId: String, invokes: InvokeHandler? = null) {
         val muse = FakeMuse()
         val rec = Recorder()
         var nextChunk = 100L
-        val session = LinkSession(device, muse.socket, rec, newRequestId = { registerId }, chunkIds = { nextChunk++ })
+        val session = LinkSession(device, muse.socket, rec, newRequestId = { registerId }, chunkIds = { nextChunk++ }, invokes = invokes)
 
         /** Entrega à sessão tudo o que o Muse tem na caixa de saída (e o que isso gerar). */
         fun pump() {
@@ -143,6 +144,46 @@ class LinkSessionTest {
     }
 
     private fun rig() = Rig(device, registerId)
+
+    /** Espera a sessão mandar [n] mensagens de controle (as respostas do despachante saem de outra thread). */
+    private fun Rig.awaitControl(n: Int): List<JsonObject> {
+        val until = System.currentTimeMillis() + 5_000
+        while (System.currentTimeMillis() < until) {
+            synchronized(session) { if (muse.controlMessages.size >= n) return muse.controlMessages.toList() }
+            Thread.sleep(5)
+        }
+        throw AssertionError("a sessão não mandou $n mensagens de controle")
+    }
+
+    @Test
+    fun eachNoiseSessionHasItsOwnInvokeResponseIdNamespace() {
+        val seen = ArrayList<String>()
+        val observer = object : InvokeHandler {
+            override fun onInvoke(message: JsonObject, reply: (JsonObject) -> Boolean) {
+                throw AssertionError("registered LinkSession must supply the connection identity")
+            }
+
+            override fun onInvokeFromSession(sessionId: String, message: JsonObject, reply: (JsonObject) -> Boolean) {
+                seen += sessionId
+            }
+        }
+        val first = Rig(device, registerId, observer)
+        first.connect()
+        first.ack()
+        first.muse.control(obj("method" to "link.invoke", "id" to "1", "command" to "linktest.ping"))
+        first.muse.control(obj("method" to "link.invoke", "id" to "2", "command" to "linktest.ping"))
+        first.pump()
+
+        val second = Rig(device, registerId, observer)
+        second.connect()
+        second.ack()
+        second.muse.control(obj("method" to "link.invoke", "id" to "1", "command" to "linktest.ping"))
+        second.pump()
+
+        assertEquals(3, seen.size)
+        assertEquals("calls on one connection share a namespace", seen[0], seen[1])
+        assertNotEquals("new connection gets a new response-id namespace", seen[0], seen[2])
+    }
 
     // ---- caminho feliz -------------------------------------------------------------------------
     @Test
@@ -245,6 +286,101 @@ class LinkSessionTest {
         val reply = r.muse.controlMessages.last()
         assertEquals(obj("method" to "link.result", "id" to "inv-1", "ok" to false, "error" to "unsupported command: system.run"), reply)
         assertTrue(r.rec.outcomes.isEmpty())
+    }
+
+    // ---- com o despachante de comandos (Gadget Link Etapa 0) ---------------------------------------
+    @Test
+    fun withTheDispatcherTheRegisterAnnouncesCommandsAndAnInvokeGetsItsResultById() {
+        val catalog = com.darlisonfarich.gadgetlink.commands.CommandCatalog.museManus(clock = { 1_700_000_000_000 })
+        val dispatcher = com.darlisonfarich.gadgetlink.commands.CommandDispatcher(catalog)
+        try {
+            val r = Rig(DeviceDescription("homelink-abc123", "Celular", "0.1.7", catalog.commandsV2()), registerId, dispatcher)
+            r.connect()
+            val commands = r.muse.controlMessages.single()["params"]!!.jsonObject["commands_v2"]!!.jsonObject
+            assertEquals(listOf("linktest.ping", "linktest.echo_verify", "linktest.response_size_probe"), commands.keys.toList())
+            r.ack()
+            r.muse.control(obj("method" to "link.invoke", "id" to "inv-ping", "command" to "linktest.ping", "params" to obj()))
+            r.muse.control(obj("method" to "link.invoke", "id" to "inv-echo", "command" to "linktest.echo_verify", "params" to obj("data" to "abc")))
+            r.pump()
+            val results = r.awaitControl(3).drop(1).associateBy { it["id"]!!.jsonPrimitive.content }
+            assertEquals(
+                obj("method" to "link.result", "id" to "inv-ping", "ok" to true,
+                    "payload" to obj("reply" to "pong", "device_time_ms" to 1_700_000_000_000, "device_time" to "2023-11-14T22:13:20Z")),
+                results["inv-ping"],
+            )
+            assertEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                results["inv-echo"]!!["payload"]!!.jsonObject["sha256"]!!.jsonPrimitive.content)
+
+            // O mesmo id de novo (reconexão do lado do Muse): o resultado guardado, nada reexecutado.
+            r.muse.control(obj("method" to "link.invoke", "id" to "inv-ping", "command" to "linktest.ping"))
+            r.pump()
+            assertEquals(results["inv-ping"], r.awaitControl(4)[3])
+            assertTrue(r.rec.outcomes.isEmpty())
+        } finally {
+            dispatcher.close()
+        }
+    }
+
+    /**
+     * Reconexão de ponta a ponta, pelo protocolo real (item 10 das correções do PR nº 37): a sessão A cai com
+     * uma escrita em curso; na sessão B o reenvio idêntico recebe o resultado guardado sem reexecutar, e o
+     * mesmo id com OUTRA operação (o Muse renumerando depois de reiniciar) executa a operação nova.
+     */
+    @Test
+    fun theDedupSurvivesAReconnectButAnIdReusedForAnotherCommandRunsFresh() {
+        val release = java.util.concurrent.CountDownLatch(1)
+        val writes = java.util.concurrent.atomic.AtomicInteger()
+        val write = com.darlisonfarich.gadgetlink.commands.CommandSpec(
+            "test.write", "write for the reconnect test", timeoutMs = 5_000, writes = true, implemented = true,
+        ) {
+            writes.incrementAndGet()
+            release.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            com.darlisonfarich.gadgetlink.commands.CommandResult.Ok(JsonPrimitive("written"))
+        }
+        val catalog = com.darlisonfarich.gadgetlink.commands.CommandCatalog(
+            com.darlisonfarich.gadgetlink.commands.LinkTestCommands.all { 1_700_000_000_000 } + write,
+        )
+        val dispatcher = com.darlisonfarich.gadgetlink.commands.CommandDispatcher(catalog)
+        try {
+            val a = Rig(DeviceDescription("homelink-abc123", "Celular", "0.1.7", catalog.commandsV2()), registerId, dispatcher)
+            a.connect()
+            a.ack()
+            a.muse.control(obj("method" to "link.invoke", "id" to "inv-9", "command" to "test.write", "params" to obj("request_id" to "r-1")))
+            a.pump()
+            val until = System.currentTimeMillis() + 2_000
+            while (writes.get() == 0 && System.currentTimeMillis() < until) Thread.sleep(2)
+            a.session.onClosed("network lost") // a sessão A cai com a escrita em curso
+            release.countDown()
+            Thread.sleep(100)
+            assertEquals("só o link.register saiu por A", 1, a.muse.controlMessages.size)
+
+            val b = Rig(DeviceDescription("homelink-abc123", "Celular", "0.1.7", catalog.commandsV2()), registerId, dispatcher)
+            b.connect()
+            b.ack()
+            b.muse.control(obj("method" to "link.invoke", "id" to "inv-9", "command" to "test.write", "params" to obj("request_id" to "r-1")))
+            b.pump()
+            assertEquals(obj("method" to "link.result", "id" to "inv-9", "ok" to true, "payload" to "written"), b.awaitControl(2)[1])
+            assertEquals("a escrita não repetiu na reconexão", 1, writes.get())
+
+            b.muse.control(obj("method" to "link.invoke", "id" to "inv-9", "command" to "linktest.ping"))
+            b.pump()
+            val fresh = b.awaitControl(3)[2]
+            assertEquals("pong", fresh["payload"]!!.jsonObject["reply"]!!.jsonPrimitive.content)
+        } finally {
+            release.countDown()
+            dispatcher.close()
+        }
+    }
+
+    @Test
+    fun withoutTheDispatcherNothingChanges() {
+        val r = rig()
+        r.connect()
+        assertEquals(JsonObject(emptyMap()), r.muse.controlMessages.single()["params"]!!.jsonObject["commands_v2"])
+        r.ack()
+        r.muse.control(obj("method" to "link.invoke", "id" to "i", "command" to "linktest.ping"))
+        r.pump()
+        assertEquals("unsupported command: linktest.ping", r.muse.controlMessages.last()["error"]!!.jsonPrimitive.content)
     }
 
     @Test

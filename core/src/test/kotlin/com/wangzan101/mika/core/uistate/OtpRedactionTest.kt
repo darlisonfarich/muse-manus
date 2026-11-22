@@ -38,6 +38,28 @@ class OtpRedactionTest {
         assertEquals("@e1", safe.elements[0].ref)
     }
 
+    @Test fun passiveModesSanitizeOtpAndFullTreeIdentifiersAndHints() {
+        val source = sample(true)
+        val window = source.windows.single()
+        val tree = window.nodes.single().copy(resourceId = "com.example:id/header_label")
+        val snapshot = source.copy(windows = listOf(window.copy(title = "Conversa 837291", nodes = listOf(
+            tree.copy(children = listOf(
+                tree.children[0].copy(hintText = "OTP 987123", resourceId = "com.example:id/a9"),
+                tree.children[1].copy(text = "private text", description = "private description", hintText = "private hint"),
+            )),
+        ))))
+
+        val elements = ScreenJson.passivePhoneTree(snapshot, full = false)
+        val full = ScreenJson.passivePhoneTree(snapshot, full = true)
+        assertFalse("tree" in elements)
+        assertEquals(elements["elements"], full["elements"])
+        assertTrue(elements.toString().contains("[OTP REDACTED]"))
+        assertTrue(full.toString().contains("header_label"))
+        for (raw in listOf("123456", "654321", "4321", "837291", "987123", "com.example:id/", "a9", "private ")) {
+            assertFalse(raw, full.toString().contains(raw))
+        }
+    }
+
     @Test fun doesNotModifyOrdinaryNumbersWithoutPasswordField() {
         val s = sample(false)
         assertEquals(s, OtpRedaction.snapshot(s))

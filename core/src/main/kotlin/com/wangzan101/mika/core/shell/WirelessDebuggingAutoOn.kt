@@ -15,6 +15,24 @@ enum class AutoOnBlock {
     GaveUp,
 }
 
+/** What happened to a wireless-debugging switch this class opened, once the helper launch is over. */
+enum class AutoOffOutcome {
+    /** Not opened by Mika (already on, or launched another way): left untouched. */
+    NotOurs,
+    /** Policy keeps the switch on (the original "only open, never close" behaviour). */
+    KeptOn,
+    /** Earlier on this phone, closing the switch stopped the helper: left on. */
+    KeptOnStopsHelper,
+    /** USB debugging is off too: closing the switch would stop adbd and, with it, the helper adbd started. Left on. */
+    KeptOnAdbWouldStop,
+    /** Written back to off and the helper survived the watch window. */
+    Restored,
+    /** The system refused the write. */
+    Refused,
+    /** The helper stopped right after closing: learned, the next launch keeps the switch on. */
+    HelperStopped,
+}
+
 /** 此刻要不要替用户打开无线调试。 */
 sealed interface AutoOnGate {
     data object Act : AutoOnGate
@@ -63,6 +81,23 @@ class WirelessDebuggingAutoOn(
     private val now: () -> Long = System::currentTimeMillis,
     private val settleMs: Long = SETTLE_MS,
     private val pollMs: Long = POLL_MS,
+    /**
+     * Put the switch back to off after a launch that this class opened it for (the user's debugging
+     * setting is preserved; the helper keeps running without adbd). Off by default: plain installs keep
+     * the original behaviour. Mika turns it on while a paired gadget owns phone recovery.
+     */
+    private val restoreAfterLaunch: () -> Boolean = { false },
+    /** Writes the switch to off; false or an exception when the system refuses. */
+    private val writeOff: () -> Boolean = { false },
+    /** Persisted: closing the switch stopped the helper on this phone before. */
+    private val offStopsHelper: () -> Boolean = { false },
+    private val learnOffStopsHelper: () -> Unit = {},
+    private val offWatchMs: Long = OFF_WATCH_MS,
+    /**
+     * Closing the switch now would leave no debugging transport at all (USB debugging off), so adbd stops
+     * and init kills every process it started, the helper included, setsid or not.
+     */
+    private val closingStopsAdb: () -> Boolean = { false },
 ) {
     private val _blocked = MutableStateFlow<AutoOnBlock?>(null)
     /** 停下来的原因;没停下为 null。给设置页和状态说一句。 */
@@ -74,6 +109,14 @@ class WirelessDebuggingAutoOn(
 
     private var writes = 0
     private var lastWriteAt = 0L
+    /** The switch is on because [turnOn] opened it and nothing closed it since. */
+    @Volatile private var openedByUs = false
+    /** When [restoreAfterLaunch] last wrote off; a helper loss soon after is attributed to it. */
+    @Volatile private var closedAt = 0L
+
+    private val _lastOff = MutableStateFlow<AutoOffOutcome?>(null)
+    /** Last outcome of [closeAfterLaunch], for diagnostics. */
+    val lastOff: StateFlow<AutoOffOutcome?> = _lastOff.asStateFlow()
 
     @Synchronized
     fun gate(wifi: Boolean): AutoOnGate {
@@ -97,10 +140,80 @@ class WirelessDebuggingAutoOn(
                 waited += pollMs
                 if (read() == false) return false.also { block(AutoOnBlock.NotAllowedHere) }
             }
+            openedByUs = true
             return true
         } finally {
             writing = false
         }
+    }
+
+    /**
+     * Called after a successful launch. If [turnOn] opened the switch and [restoreAfterLaunch] asks for it,
+     * writes it back to off and watches [helperAlive] for [offWatchMs]: a helper that stops in that window
+     * is remembered ([learnOffStopsHelper]) so later launches leave the switch on instead of looping.
+     */
+    suspend fun closeAfterLaunch(helperAlive: () -> Boolean): AutoOffOutcome {
+        if (!openedByUs) return AutoOffOutcome.NotOurs
+        openedByUs = false
+        val outcome = when {
+            !restoreAfterLaunch() -> AutoOffOutcome.KeptOn
+            closingStopsAdb() -> AutoOffOutcome.KeptOnAdbWouldStop
+            offStopsHelper() -> AutoOffOutcome.KeptOnStopsHelper
+            else -> {
+                writing = true
+                try {
+                    if (!runCatching(writeOff).getOrDefault(false)) AutoOffOutcome.Refused
+                    else {
+                        closedAt = now()
+                        var waited = 0L
+                        var alive = true
+                        while (waited < offWatchMs && alive) {
+                            delay(pollMs)
+                            waited += pollMs
+                            alive = helperAlive()
+                        }
+                        if (alive) AutoOffOutcome.Restored else AutoOffOutcome.HelperStopped.also { learnOffStopsHelper() }
+                    }
+                } finally {
+                    writing = false
+                }
+            }
+        }
+        _lastOff.value = outcome
+        return outcome
+    }
+
+    /**
+     * The launch this class opened the switch for will not happen (the watchdog stopped, or developer
+     * options are off): write it back to off right away when [restoreAfterLaunch] asks for it.
+     */
+    fun abandonOpened(): AutoOffOutcome {
+        if (!openedByUs) return AutoOffOutcome.NotOurs
+        openedByUs = false
+        val outcome = if (!restoreAfterLaunch()) AutoOffOutcome.KeptOn else {
+            writing = true
+            try {
+                if (runCatching(writeOff).getOrDefault(false)) AutoOffOutcome.Restored else AutoOffOutcome.Refused
+            } finally {
+                writing = false
+            }
+        }
+        _lastOff.value = outcome
+        return outcome
+    }
+
+    /** Another path (the boot restore) opened the switch for a launch: close it like one of ours afterwards. */
+    fun adoptOpened() {
+        openedByUs = true
+    }
+
+    /** The helper went away. Right after closing the switch, blame the close (see [closeAfterLaunch]). */
+    fun helperStopped() {
+        val at = closedAt
+        if (at == 0L || now() - at > OFF_BLAME_MS) return
+        closedAt = 0L
+        if (!offStopsHelper()) learnOffStopsHelper()
+        _lastOff.value = AutoOffOutcome.HelperStopped
     }
 
     /** 换了 Wi-Fi、用户亲手打开了无线调试或点了重试、助手起来了:从头算。 */
@@ -122,6 +235,10 @@ class WirelessDebuggingAutoOn(
         const val MAX_WRITES = 3
         const val BASE_GAP_MS = 10_000L
         const val MAX_GAP_MS = 5 * 60_000L
+        /** How long the helper is watched after the switch is closed again. */
+        const val OFF_WATCH_MS = 5_000L
+        /** A helper loss this soon after closing the switch is attributed to the close (kept short: later losses have other causes). */
+        const val OFF_BLAME_MS = 15_000L
 
         /** 写过 [writes] 次之后,下一次至少隔多久:第一次不等,之后 10 秒、20 秒……封顶 5 分钟。 */
         fun gapAfter(writes: Int): Long =

@@ -121,6 +121,15 @@ interface IMikaShell {
     // 当前音乐流音量、最大值和静音状态;读不到为 null。
     Bundle musicVolumeState() = 51;
 
+    // Read-only WindowManager protection verdict for a virtual display owned by this helper.
+    // 0=unknown, 1=no visible windows, 2=clear, 3=secure.
+    int virtualWindowProtection(int displayId) = 52;
+
+    // Opens packageName on the phone's MAIN screen, in front of the user (the owner asked for it; every other launch
+    // here goes to a Mika display). Refuses (returns 7) when the app has a task on one of Mika's displays, because the
+    // system would only bring that task forward there. 0=started, 2=no launchable entry, 3=error, 7=open on a Mika display.
+    int startAppOnMain(String packageName) = 53;
+
     // 沿用早先定下的销毁事务号;AIDL 要求要么全部方法编号要么都不编号
     void destroy() = 16777114;
 }
