@@ -87,11 +87,18 @@ class VoiceA2Hub {
                 status = "Áudio na fila de saída", transcript = "", reply = "", audio = null,
                 segments = emptyList(), audioTurnId = turnId, resultId = null, error = null)
             if (!outgoing.offer(Pending(conversationId, turnId, generationId, wav))) {
-                current = null
-                generation = null
-                mutable.value = mutable.value.copy(turnId = null, generationId = null,
-                    status = "Fila de voz ocupada", error = "Fila de voz ocupada")
-                return@synchronized false
+                // A fila (capacidade 1) pode ainda guardar o WAV do turno anterior, já encerrado:
+                // o pump o descartaria via active(), mas a recusa aqui reprovaria um turno novo
+                // legítimo — corrida real entre submit e o pump (o teste newSubmitClearsPreviousSegments
+                // a expôs). Descarta o item morto e tenta uma vez mais.
+                outgoing.poll()
+                if (!outgoing.offer(Pending(conversationId, turnId, generationId, wav))) {
+                    current = null
+                    generation = null
+                    mutable.value = mutable.value.copy(turnId = null, generationId = null,
+                        status = "Fila de voz ocupada", error = "Fila de voz ocupada")
+                    return@synchronized false
+                }
             }
             true
         }
