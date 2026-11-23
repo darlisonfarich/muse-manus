@@ -253,6 +253,11 @@
             android:foregroundServiceType="microphone" />
 
         <service
+            android:name=".voice.wake.SamWakeService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <service
             android:name=".sandbox.SandboxService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />

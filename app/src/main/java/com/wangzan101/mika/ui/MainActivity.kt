@@ -482,6 +482,7 @@ private fun MikaRoot(
         Route.Usage -> UsageScreen(app.usage, store.providers, onBack = back)
         Route.SpeechModel -> SpeechModelScreen(store, onBack = back)
         Route.VoiceMode -> VoiceModeScreen(onBack = back)
+        Route.SamWake -> SamWakeScreen(onBack = back)
         Route.About -> AboutScreen(
             versionName = BuildConfig.VERSION_NAME, build = BuildConfig.GIT_HASH, beta = BuildConfig.BETA,
             update = updateState,
