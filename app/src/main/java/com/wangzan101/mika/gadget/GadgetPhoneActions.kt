@@ -6,6 +6,7 @@ import com.darlisonfarich.gadgetlink.commands.ErrorCode
 import com.darlisonfarich.gadgetlink.commands.ParamSpec
 import com.darlisonfarich.gadgetlink.commands.ParamType
 import com.darlisonfarich.gadgetlink.commands.PhoneCatalog
+import com.wangzan101.mika.core.shell.BackgroundSurvival
 import com.wangzan101.mika.core.shell.PhoneState
 import com.wangzan101.mika.mcp.DirectPhoneBatchSteps
 import com.wangzan101.mika.mcp.DirectPhoneStaleRetry
@@ -45,7 +46,12 @@ internal object GadgetPhoneActions {
      * helper restart retired the session meanwhile, and reconcile/status/cancel must keep answering
      * exactly then. The host's journal deduplicates writes by request_id across sessions.
      */
-    fun specs(scope: () -> String?, call: suspend (String, JsonObject) -> JsonObject): List<CommandSpec> =
+    fun specs(
+        scope: () -> String?,
+        /** Where [failureLine] goes: the link's own log. The wire audit never carries a detail, so this line is the only place a failure keeps both the wire code and the host's raw reason. */
+        note: (String) -> Unit = {},
+        call: suspend (String, JsonObject) -> JsonObject,
+    ): List<CommandSpec> =
         PhoneCatalog.stubs().filter { it.name in actions || it.name in metadata }.map { stub ->
             val openApp = stub.name == "phone.open_app"
             CommandSpec(stub.name, if (openApp) openAppDescription else stub.description.removePrefix(CommandSpec.STUB_PREFIX),
@@ -55,9 +61,33 @@ internal object GadgetPhoneActions {
                 replayScope = if (stub.name == "phone.cancel") null else scope,
             ) { args ->
                 val raw = runBlocking { call(PhoneCatalog.MIKA.getValue(stub.name), translate(stub.name, args)) }
-                result(stub.name, raw)
+                result(stub.name, raw).also { r -> if (r is CommandResult.Err) runCatching { note(failureLine(stub.name, r, raw)) } }
             }
         }
+
+    /**
+     * One log line for a failed phone command: the code and detail that go on the wire, then the host's raw reason and
+     * cause, which the wire detail may have folded away (`launch_timeout_unknown` + `start_app_timeout` leave as the
+     * bare `reconcile_request_id`), and, for an open that did not reach the front, what was in front and whether the
+     * background-launch token was present. Fixed vocabulary only: every value is a plain code or a package name, never
+     * screen content.
+     */
+    internal fun failureLine(name: String, err: CommandResult.Err, raw: JsonObject): String {
+        val failedStep = ((raw["results"] as? JsonArray)?.lastOrNull() as? JsonObject)?.takeIf { it["ok"] != JsonPrimitive(true) }
+        val source = failedStep ?: raw
+        fun word(key: String) = (source[key] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { SAFE_CODE.matches(it) }
+        val message = (source["message"] as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
+        val front = FRONT_PACKAGE.find(message)?.groupValues?.get(1)
+        return buildString {
+            append("phone: ").append(name).append(' ').append(err.code.wire)
+            err.detail?.takeIf { SAFE_CODE.matches(it) }?.let { append(" detail=").append(it) }
+            word("error")?.let { append(" raw=").append(it) }
+            word("cause")?.let { append(" cause=").append(it) }
+            if ("Nothing came to the foreground" in message) append(" front=none")
+            else if (front != null) append(" front=").append(front)
+            if (BackgroundSurvival.BACKGROUND_LAUNCH_TOKEN in message) append(" bal=1")
+        }
+    }
 
     /** A batch (and the reconcile of one) reaches the host with internal step names; other commands are untouched. */
     internal fun translate(name: String, args: JsonObject): JsonObject {
@@ -105,6 +135,10 @@ internal object GadgetPhoneActions {
             reason == "wait_timeout" -> CommandResult.Err(ErrorCode.TIMEOUT, cause?.takeIf { SAFE_CODE.matches(it) })
             // No app-only route for this key and no helper running.
             reason == "helper_required" -> CommandResult.Err(ErrorCode.UNAVAILABLE, "helper_required")
+            // An opening that did not reach the virtual screen (cold start: no display, no owner, cold service). The
+            // phone did not run anything, so this is a missing precondition, never a bare executor error. When Mika had
+            // no visible window Android blocks the start without throwing, and the host's hint carries that token.
+            reason in OPEN_NOT_REACHED -> CommandResult.Err(ErrorCode.UNAVAILABLE, openNotReachedDetail(reason!!, cause))
             // The host names why it is unavailable (accessibility_off, gadget_link_down, ...) when it knows.
             reason in setOf("phone_unavailable", "launch_in_flight", "cancelled", "intent_queue_full", "session_not_found") ->
                 CommandResult.Err(ErrorCode.UNAVAILABLE, cause?.takeIf { SAFE_CODE.matches(it) })
@@ -116,8 +150,18 @@ internal object GadgetPhoneActions {
 
     private const val SESSION_PENDING = "phone_session_pending"
 
+    /** Host codes for an opening that was started but never arrived on Mika's virtual screen. */
+    private val OPEN_NOT_REACHED = setOf("app_not_in_front", "launch_failed")
+
+    /** `background_launch_blocked` when the host's own hint says Android blocked a start with no visible window; else the host code. */
+    internal fun openNotReachedDetail(reason: String, cause: String?): String =
+        if (cause?.contains(BackgroundSurvival.BACKGROUND_LAUNCH_TOKEN) == true) BackgroundSurvival.BACKGROUND_LAUNCH_TOKEN else reason
+
     private val PHONE_STATES = setOf(PhoneState.DEVICE_LOCKED, PhoneState.SCREEN_OFF, PhoneState.ACCESSIBILITY_OFF)
 
     /** Fixed local refusal codes only; anything else is withheld from the detail. */
     private val SAFE_CODE = Regex("[a-z_]{1,40}")
+
+    /** The package of the window the open found in front (see `AndroidScreen.awaitOpened`); a package name, not screen content. */
+    private val FRONT_PACKAGE = Regex("In the foreground now: ([A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)+)")
 }

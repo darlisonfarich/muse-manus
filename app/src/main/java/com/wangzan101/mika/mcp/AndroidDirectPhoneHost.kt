@@ -185,6 +185,21 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                 !closeAfterLaunch && app.resources.ger.canUseSlot(directOwner(link.owner))
         }
 
+    /**
+     * Why [gadgetSession] has nothing to give right now, as a fixed code the caller can read. A cold start has no session
+     * until the maintenance loop builds one ([SESSION_PENDING]); a session built against an older accessibility service or
+     * helper is stale ("session_replaced"); the rest are the same refusals the actions already name.
+     */
+    private fun gadgetSessionBlocker(link: GadgetPhoneLease): String {
+        val s = sessions[link.owner]?.takeIf { it.link === link } ?: return SESSION_PENDING
+        return when {
+            !allowed(link) -> "link_not_authorized"
+            !s.sourcesCurrent() -> "session_replaced"
+            launchBoundary.isInFlight() || closeAfterLaunch -> "launch_in_flight"
+            else -> "task_running"
+        }
+    }
+
     internal suspend fun maintainGadget(link: GadgetPhoneLease): Boolean = lock.withLock {
         val old = sessions[link.owner]
         if (link.connected) gadgetOwners.add(directOwner(link.owner))
@@ -252,6 +267,11 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         throw e
     }
 
+    /** Which exception ended an opening, by class name only (no message: it can carry screen text), so a cold-start failure is named afterwards. */
+    private fun auditLaunchException(where: String, e: Exception) {
+        runCatching { audit("launch_exception", where, "class=${e.javaClass.simpleName}") }
+    }
+
     private fun auditStaleRetry(command: String, retries: Int, succeeded: Boolean) {
         runCatching { audit("stale_retry", command, "retries=$retries;result=${if (succeeded) "ok" else "stale"}") }
     }
@@ -274,13 +294,13 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
 
     private suspend fun readForGadgetOnce(link: GadgetPhoneLease, screenshot: Boolean, full: Boolean): JsonObject = lock.withLock {
         if (!settings.enabled.value) throw CommandException(ErrorCode.LOCAL_GATE_DENIED, "remote_access_disabled")
-        val session = gadgetSession(link) ?: throw CommandException(ErrorCode.UNAVAILABLE)
+        val session = gadgetSession(link) ?: throw CommandException(ErrorCode.UNAVAILABLE, gadgetSessionBlocker(link))
         val access = app.appAccess.current()
         val guarded = app.appAccess.sensitiveUi
         val reader = reader(session)
         val generation = ScreenAccessibility.windowGeneration()
         val result = if (screenshot) reader.screenshot() else reader.tree(full)
-        if (gadgetSession(link) !== session) throw CommandException(ErrorCode.UNAVAILABLE)
+        if (gadgetSession(link) !== session) throw CommandException(ErrorCode.UNAVAILABLE, "session_replaced")
         if (app.appAccess.current() != access || app.appAccess.sensitiveUi != guarded)
             throw CommandException(ErrorCode.LOCAL_GATE_DENIED, "app_access_changed")
         if (!screenshot) {
@@ -1008,14 +1028,15 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                         try {
                             openOnMain(s, (args["package"] as? JsonPrimitive)?.contentOrNull.orEmpty())
                         } catch (e: CancellationException) { throw e }
-                        catch (_: Exception) { uncertain("main_launch_exception") }
+                        catch (e: Exception) { auditLaunchException("main_launch_exception", e); uncertain("main_launch_exception") }
                     } else try {
                         chatApprovalSlot.token = presentedToken
                         try {
                             s.executor.run(Part.ToolCall(request, actualTool, executorTool.toString()), Origin.McpTool(sequence))
                                 .execution().content
                         } finally { chatApprovalSlot.token = null }
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                        auditLaunchException("launch_executor_exception", e)
                         uncertain("launch_executor_exception")
                     }
                     audit(key, "completed", when {

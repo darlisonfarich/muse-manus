@@ -123,7 +123,25 @@ class InAppShell(private val context: Context) : IMikaShell.Stub() {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         BackgroundLaunchTrace.note(context)
         return try {
-            context.startActivity(intent, ActivityOptions.makeBasic().setLaunchDisplayId(displayId).toBundle())
+            // This path is called by the foreground link service, including immediately after boot when no Activity
+            // has ever run in this process. A direct Context.startActivity is denied by BAL for a target-35 app in
+            // that state. Delegate the launch through a PendingIntent and explicitly grant the creator's BAL
+            // privilege (Android 15+) while preserving the requested virtual display.
+            val launch = ActivityOptions.makeBasic().setLaunchDisplayId(displayId)
+            if (Build.VERSION.SDK_INT >= 34) {
+                launch.pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+            }
+            if (Build.VERSION.SDK_INT >= 35) {
+                launch.pendingIntentCreatorBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+            }
+            val pending = PendingIntent.getActivity(
+                context,
+                0,
+                intent,
+                PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                launch.toBundle(),
+            )
+            pending.send(launch.toBundle())
             ShellService.START_OK
         } catch (t: Throwable) {
             Log.w(TAG, "startActivity on display $displayId failed: ${t.javaClass.simpleName} cold=$cold")

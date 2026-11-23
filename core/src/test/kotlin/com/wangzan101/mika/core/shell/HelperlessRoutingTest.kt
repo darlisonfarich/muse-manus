@@ -180,4 +180,32 @@ class HelperlessRoutingTest {
         assertTrue(HelperlessRouting.inUseOnMain("a.b", emptySet(), 1))
         assertFalse(HelperlessRouting.inUseOnMain("a.b", emptySet(), 0))
     }
+
+    /**
+     * Cold start (build 51): no display, no owner, a cold service. The first opening must find a session that is not
+     * orphaned and a route for the display it is about to create; nothing may need an earlier opening of the app.
+     */
+    @Test fun aColdStartHasNoDisplayNoOwnerAndStillRoutesTheFirstOpeningToTheApp() {
+        val ledger = DisplayLedger()
+        assertTrue("nothing recorded yet", ledger.ids().isEmpty())
+        assertNull(ledger.ownerOf(1))
+        assertFalse("a cold session is current before any display exists", ledger.orphaned(null))
+        // This is the first open after boot: display creation has to choose a creator without a prior Activity/session UI.
+        val owner = HelperlessRouting.newDisplayOwner(helperUp = false)
+        assertEquals(ShellOwner.InApp, owner)
+        // Before the ledger record is visible, routing the newly allocated ID still has a safe app-owned default.
+        assertEquals(ShellOwner.InApp, HelperlessRouting.displayOwner(ledger, 12, helperUp = false))
+        ledger.record(12, owner)
+        assertEquals(ShellOwner.InApp, HelperlessRouting.displayOwner(ledger, 12, helperUp = false))
+        // The first app launch can now run on that display; it does not need another open to warm the executor.
+        assertFalse("an app display never makes the session stale", ledger.orphaned(null))
+        assertFalse(ledger.orphaned(helperA))
+    }
+
+    @Test fun aNamedColdOpeningFailureIsTheFixedBackgroundTokenOnlyWhenTheStartWasInTheBackground() {
+        val recent = BackgroundSurvival.backgroundLaunchSuffix(launchedFromBackgroundAtMs = 1_000L, nowMs = 5_000L)
+        assertTrue(recent.contains(BackgroundSurvival.BACKGROUND_LAUNCH_TOKEN))
+        assertEquals("", BackgroundSurvival.backgroundLaunchSuffix(null, 5_000L))
+        assertEquals("", BackgroundSurvival.backgroundLaunchSuffix(1_000L, 1_000L + BackgroundSurvival.BACKGROUND_LAUNCH_WINDOW_MS + 1))
+    }
 }
