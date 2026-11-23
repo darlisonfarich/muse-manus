@@ -60,12 +60,17 @@ class WakeStateMachine {
  * utterance within a bounded interval. Repeated partial callbacks count only once.
  * This is correlated two-stage confirmation, not two independent acoustic recognizers.
  */
-class WakePhraseGate(private val windowMs: Long = 2_500L) {
+class WakePhraseGate(
+    phrases: Collection<String> = listOf("oi muse"),
+    private val windowMs: Long = 2_500L,
+) {
     init { require(windowMs > 0) }
+    private val accepted = phrases.map(::normalize).filter(String::isNotBlank).toSet()
+    init { require(accepted.isNotEmpty()) }
     private var partialAt: Long? = null
 
     fun accept(text: String, final: Boolean, nowMs: Long): Boolean {
-        val match = normalize(text) == "oi muse"
+        val match = normalize(text) in accepted
         if (!final) {
             if (match && (partialAt == null || nowMs - partialAt!! !in 0..windowMs)) {
                 partialAt = nowMs
@@ -85,6 +90,49 @@ class WakePhraseGate(private val windowMs: Long = 2_500L) {
             .replace(Regex("[^a-z0-9]+"), " ")
             .trim()
             .replace(Regex("\\s+"), " ")
+    }
+}
+
+/** Deterministic orchestration contract for the Sam summon chain. */
+enum class SamSummonResult { Opened, AlreadyLive, ScreenWakeFailed, AssistFailed, CallButtonNotFound, CallTapFailed }
+enum class SamSummonPhase { Idle, WakingScreen, OpeningAssistant, FindingCallButton, Complete, NoOp, Failed }
+enum class SamCallTap { Tapped, NotFound, Failed }
+
+interface SamSummonDriver {
+    suspend fun liveCallOpen(): Boolean
+    suspend fun wakeScreen(): Boolean
+    suspend fun launchAssistant(): Boolean
+    /** Search the primary display for at most [timeoutMs], then click the semantic call button. */
+    suspend fun tapCallButton(timeoutMs: Long): SamCallTap
+}
+
+class SamSummonStateMachine {
+    var phase: SamSummonPhase = SamSummonPhase.Idle
+        private set
+
+    fun begin(liveAlreadyOpen: Boolean): Boolean {
+        if (phase !in setOf(SamSummonPhase.Idle, SamSummonPhase.Complete, SamSummonPhase.NoOp, SamSummonPhase.Failed)) return false
+        phase = if (liveAlreadyOpen) SamSummonPhase.NoOp else SamSummonPhase.WakingScreen
+        return !liveAlreadyOpen
+    }
+    fun screenWoke(success: Boolean) { phase = if (success) SamSummonPhase.OpeningAssistant else SamSummonPhase.Failed }
+    fun assistantOpened(success: Boolean) { phase = if (success) SamSummonPhase.FindingCallButton else SamSummonPhase.Failed }
+    fun callButtonTapped(found: Boolean, tapped: Boolean = true) {
+        phase = if (!found || !tapped) SamSummonPhase.Failed else SamSummonPhase.Complete
+    }
+
+    suspend fun execute(driver: SamSummonDriver): SamSummonResult {
+        if (driver.liveCallOpen()) { begin(true); return SamSummonResult.AlreadyLive }
+        begin(false)
+        if (!driver.wakeScreen()) { screenWoke(false); return SamSummonResult.ScreenWakeFailed }
+        screenWoke(true)
+        if (!driver.launchAssistant()) { assistantOpened(false); return SamSummonResult.AssistFailed }
+        assistantOpened(true)
+        return when (driver.tapCallButton(3_000L)) {
+            SamCallTap.Tapped -> { callButtonTapped(true, true); SamSummonResult.Opened }
+            SamCallTap.NotFound -> { callButtonTapped(false); SamSummonResult.CallButtonNotFound }
+            SamCallTap.Failed -> { callButtonTapped(true, false); SamSummonResult.CallTapFailed }
+        }
     }
 }
 
