@@ -1,4 +1,4 @@
 chat: system 18889 bytes, 22 tools 21543 bytes, total 40432 bytes, ~10104 tokens
-phone: system 32512 bytes, 54 tools 65218 bytes, total 97730 bytes, ~24427 tokens
+phone: system 32512 bytes, 54 tools 65294 bytes, total 97806 bytes, ~24446 tokens
 web: system 33779 bytes, 49 tools 56420 bytes, total 90199 bytes, ~22540 tokens
-all: system 47198 bytes, 82 tools 97354 bytes, total 144552 bytes, ~36127 tokens
+all: system 47198 bytes, 82 tools 97430 bytes, total 144628 bytes, ~36146 tokens
