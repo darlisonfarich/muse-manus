@@ -1235,7 +1235,8 @@ class AndroidScreen(
             val now = foregroundTaskPackage() ?: ScreenReader.topPackage(windows())
             // 要的是另一份,最上面却是这个 App 的别的那份
             val copy = if (user != null && now == packageName) " (a different copy of the app)" else ""
-            return ActionResult.Failed("app_not_in_front", hint = now?.let { "In the foreground now: $it$copy." } ?: "Nothing came to the foreground.")
+            return ActionResult.Failed("app_not_in_front", hint = (now?.let { "In the foreground now: $it$copy." } ?: "Nothing came to the foreground.") +
+                com.wangzan101.mika.cap.phone.shell.BackgroundLaunchTrace.suffix())
         }
         // 树稳定只是窗口到了顶,画面可能还没合成:等这次启动之后的第一帧;等不到就持续拦住旧帧,
         // 不把上一屏留在缓冲里的残影当这次打开的画面交给模型(issue #253)

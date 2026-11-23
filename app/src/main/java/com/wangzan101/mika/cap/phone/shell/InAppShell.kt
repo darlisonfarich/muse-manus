@@ -107,6 +107,7 @@ class InAppShell(private val context: Context) : IMikaShell.Stub() {
         if (elsewhere >= 0 && elsewhere != displayId) return ShellService.START_IN_USE_BY_OTHER
         val intent = context.packageManager.getLaunchIntentForPackage(packageName) ?: return ShellService.START_NOT_FOUND
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        BackgroundLaunchTrace.note(context)
         return try {
             context.startActivity(intent, ActivityOptions.makeBasic().setLaunchDisplayId(displayId).toBundle())
             ShellService.START_OK
@@ -120,6 +121,7 @@ class InAppShell(private val context: Context) : IMikaShell.Stub() {
         if (displayOfPackage(packageName) >= 0) return START_OPEN_ON_AGENT_DISPLAY
         val intent = context.packageManager.getLaunchIntentForPackage(packageName) ?: return ShellService.START_NOT_FOUND
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        BackgroundLaunchTrace.note(context)
         return try {
             context.startActivity(intent)
             ShellService.START_OK

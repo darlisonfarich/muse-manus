@@ -1,6 +1,9 @@
 package com.wangzan101.mika.gadget
 
+import android.app.AlarmManager
 import android.app.Notification
+import android.app.PendingIntent
+import com.wangzan101.mika.core.shell.BackgroundSurvival
 import com.darlisonfarich.gadgetlink.Vm
 import com.darlisonfarich.gadgetlink.noise.LinkOutcome
 import com.darlisonfarich.gadgetlink.noise.PairingRecord
@@ -62,8 +65,11 @@ class GadgetConnectService : Service() {
     companion object {
         const val ACTION_START = "com.wangzan101.mika.gadget.CONNECT_START"
         const val ACTION_STOP = "com.wangzan101.mika.gadget.CONNECT_STOP"
+        /** The one-shot restart left by [onTaskRemoved]: unlike ACTION_START it still checks that the user wants the link. */
+        const val ACTION_RESTART = "com.wangzan101.mika.gadget.CONNECT_RESTART"
         private const val CHANNEL = "gadget_link"
         private const val NOTIFICATION_ID = 0x6d76
+        private const val RESTART_INSURANCE_MS = 5_000L
     }
 
     private var executor: ScheduledExecutorService? = null
@@ -79,21 +85,33 @@ class GadgetConnectService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
+        // Null intent = the system restarted this sticky service after killing the process (low memory, OEM cleanup).
+        // The user's choice still rules: a link turned off, or never paired, is not resurrected by a restart.
+        val systemRestart = intent == null
+        val decision = BackgroundSurvival.onStart(
+            stopRequested = intent?.action == ACTION_STOP,
+            explicitStart = intent?.action == ACTION_START,
+            linkEnabled = GadgetLink.linkEnabled(this),
+            hasPairing = GadgetLink.hasPairing(this),
+        )
+        if (decision == BackgroundSurvival.StartDecision.Stop) {
+            if (intent?.action == ACTION_STOP) GadgetBackgroundLog.record(this, "user_disconnect")
+            else GadgetBackgroundLog.record(this, "restart_dropped", "link_off_or_unpaired")
             destroyed = true
             stopControl(lease)
+            // A start made with startForegroundService (the restart insurance) must still promise its notification
+            // before leaving, or the system raises an error for a service that never entered the foreground.
+            if (intent?.action == ACTION_RESTART) runCatching { startForegroundCompat("Muse: parando…") }
+            runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
             stopSelf()
             return START_NOT_STICKY
         }
-        val foreground = runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(NOTIFICATION_ID, notification("Conectando ao Muse…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
-            } else {
-                startForeground(NOTIFICATION_ID, notification("Conectando ao Muse…"))
-            }
-        }
+        if (systemRestart) GadgetBackgroundLog.record(this, "sticky_restart")
+        val foreground = runCatching { startForegroundCompat("Conectando ao Muse…") }
         if (foreground.isFailure) {
-            GadgetLink.setLinkError("foreground refused: ${foreground.exceptionOrNull()?.javaClass?.simpleName}")
+            val reason = foreground.exceptionOrNull()?.javaClass?.simpleName
+            GadgetLink.setLinkError("foreground refused: $reason")
+            GadgetBackgroundLog.record(this, "foreground_refused", reason)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -101,7 +119,50 @@ class GadgetConnectService : Service() {
             started = true
             begin()
         }
-        return START_NOT_STICKY
+        // The link has to outlive Mika's screen and the recents list: if the system kills the process, it is brought
+        // back (and the decision above re-checks that the user still wants it).
+        return START_STICKY
+    }
+
+    /**
+     * Type specialUse, not connectedDevice: the link is plain internet, and from Android 14 a connectedDevice
+     * foreground service refuses to start unless a Bluetooth/Wi-Fi/NFC permission is held at that moment, which a boot
+     * resume cannot ask for. specialUse is allowed from BOOT_COMPLETED (Android 15 lists dataSync, camera,
+     * mediaPlayback, phoneCall, mediaProjection and microphone as blocked there) and McpService already runs as such.
+     */
+    private fun startForegroundCompat(text: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, notification(text), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(NOTIFICATION_ID, notification(text))
+        }
+    }
+
+    /**
+     * The user swiped Mika away from the recents list. Stock Android keeps a foreground service running; some
+     * skins (HyperOS) kill the process anyway. This only leaves the trace and, when exact alarms are allowed, a
+     * one-shot restart in a few seconds: best effort, a force-stop cancels alarms and nothing here can undo that.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        GadgetBackgroundLog.record(this, "task_removed")
+        if (!destroyed && GadgetLink.linkEnabled(this) && GadgetLink.hasPairing(this)) scheduleRestartInsurance()
+        super.onTaskRemoved(rootIntent)
+    }
+
+    private fun scheduleRestartInsurance() {
+        runCatching {
+            val alarms = getSystemService(AlarmManager::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarms.canScheduleExactAlarms()) {
+                GadgetBackgroundLog.record(this, "restart_insurance_skipped", "exact_alarm_not_allowed")
+                return
+            }
+            val restart = PendingIntent.getForegroundService(
+                this, 0, Intent(this, GadgetConnectService::class.java).setAction(ACTION_RESTART),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            alarms.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + RESTART_INSURANCE_MS, restart)
+            GadgetBackgroundLog.record(this, "restart_insurance_set")
+        }.onFailure { GadgetBackgroundLog.record(this, "restart_insurance_failed", it.javaClass.simpleName) }
     }
 
     private fun begin() {
@@ -249,6 +310,7 @@ class GadgetConnectService : Service() {
     }
 
     override fun onDestroy() {
+        GadgetBackgroundLog.record(this, "service_destroyed")
         destroyed = true
         stopControl(lease)
         controlScope.cancel()

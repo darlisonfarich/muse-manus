@@ -1105,7 +1105,9 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         val user = android.os.Process.myUid() / 100_000
         val deadline = SystemClock.uptimeMillis() + MAIN_VISIBLE_WAIT_MS
         while (!runCatching { shell.visibleOnMainScreen(pkg, user) }.getOrDefault(false)) {
-            if (SystemClock.uptimeMillis() >= deadline) return@withContext fail("main_launch_not_visible")
+            if (SystemClock.uptimeMillis() >= deadline) return@withContext fail("main_launch_not_visible",
+                if (com.wangzan101.mika.cap.phone.shell.BackgroundLaunchTrace.suffix().isNotEmpty())
+                    com.wangzan101.mika.core.shell.BackgroundSurvival.BACKGROUND_LAUNCH_TOKEN else null)
             delay(MAIN_VISIBLE_POLL_MS)
         }
         buildJsonObject { put("ok", true) }

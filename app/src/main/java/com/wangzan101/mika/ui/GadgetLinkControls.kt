@@ -27,6 +27,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import com.darlisonfarich.gadgetlink.GadgetState
+import com.wangzan101.mika.core.shell.BackgroundSurvival
+import com.wangzan101.mika.gadget.GadgetBackgroundState
 import com.wangzan101.mika.gadget.GadgetLink
 import com.wangzan101.mika.gadget.GadgetLinkCommands
 import com.wangzan101.mika.ui.components.ButtonKind
@@ -50,14 +52,7 @@ fun GadgetLinkControls(reload: () -> Unit) {
     val linkState by GadgetLink.link.collectAsState()
     val linking = linkState != null
 
-    // O serviço de conexão com o Muse (tipo connectedDevice) só sobe com "Dispositivos próximos" concedido.
-    val connectPermissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
-        if (result.isNotEmpty() && result.values.all { it }) {
-            connectNow(context, reload)
-        } else {
-            Toast.makeText(context, "Sem \"Dispositivos próximos\" a conexão com o Muse não liga.", Toast.LENGTH_LONG).show()
-        }
-    }
+    // A conexão com o Muse é internet pura (serviço specialUse): não pede "Dispositivos próximos"; só o pareamento BLE pede.
 
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         if (result.isNotEmpty() && result.values.all { it }) {
@@ -126,8 +121,7 @@ fun GadgetLinkControls(reload: () -> Unit) {
                         GadgetLink.disconnect(context)
                         reload()
                     } else {
-                        val missing = GadgetLink.missingPermissions(context)
-                        if (missing.isEmpty()) connectNow(context, reload) else connectPermissions.launch(missing.toTypedArray())
+                        connectNow(context, reload)
                     }
                 },
                 Modifier.weight(1f).testTag("gadget-link-connect"),
@@ -168,7 +162,39 @@ fun GadgetLinkControls(reload: () -> Unit) {
                 kind = ButtonKind.Tonal,
             )
         }
+        // Segundo plano: o que o sistema precisa deixar ligado para o link seguir vivo com o Manus fechado. O usuário faz
+        // isto UMA vez; os botões só abrem a tela certa (HyperOS primeiro, Android puro depois).
+        Text(
+            "Segundo plano — bateria sem otimização: ${GadgetBackgroundState.batteryUnrestricted(context)} · notificações: ${GadgetBackgroundState.notificationsAllowed(context)}",
+            style = MikaType.Caption, color = c.ink3, modifier = Modifier.padding(top = 10.dp),
+        )
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            MikaButton(
+                "Autostart",
+                { openBackgroundSetting(context, BackgroundSurvival.SurvivalSetting.Autostart) },
+                Modifier.weight(1f).testTag("gadget-bg-autostart"),
+                kind = ButtonKind.Tonal,
+            )
+            MikaButton(
+                "Bateria",
+                { openBackgroundSetting(context, BackgroundSurvival.SurvivalSetting.BatteryUnrestricted) },
+                Modifier.weight(1f).testTag("gadget-bg-battery"),
+                kind = ButtonKind.Tonal,
+            )
+            MikaButton(
+                "Detalhes do app",
+                { openBackgroundSetting(context, BackgroundSurvival.SurvivalSetting.AppDetails) },
+                Modifier.weight(1f).testTag("gadget-bg-details"),
+                kind = ButtonKind.Tonal,
+            )
+        }
         VoiceAdmissionControls()
+    }
+}
+
+private fun openBackgroundSetting(context: Context, setting: BackgroundSurvival.SurvivalSetting) {
+    if (GadgetBackgroundState.open(context, setting) == null) {
+        Toast.makeText(context, "Não consegui abrir essa tela; use Detalhes do app.", Toast.LENGTH_LONG).show()
     }
 }
 

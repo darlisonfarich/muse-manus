@@ -21,6 +21,8 @@
     <!-- gadget-link:配对窗口打开时前台服务保持 BLE 广播和 GATT 连接(用户在另一台手机上操作 Muse App) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Segundo plano do gadget: pedir ao usuário (uma vez, num diálogo do sistema) para tirar o app da otimização de bateria -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <!-- 批量日程经安卓日历提供方一次写入；用户未授权时退回系统日历的新建页。 -->
@@ -231,10 +233,18 @@
             android:foregroundServiceType="connectedDevice" />
 
         <!-- gadget-link(docs/gadget-link.md 第 4 步):配对后保持手机在 Muse 注册(Noise 隧道),用户在 Diagnostics 里开关 -->
+        <!-- Tipo specialUse (não connectedDevice): o link é só internet; no Android 14+ connectedDevice recusa subir sem uma
+             permissão de Bluetooth/Wi-Fi/NFC concedida na hora, e a retomada no boot não consegue pedir. specialUse pode subir
+             do BOOT_COMPLETED. START_STICKY + stopWithTask=false: sobrevive a fechar a tela e a sair dos recentes. -->
         <service
             android:name=".gadget.GadgetConnectService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
+            android:stopWithTask="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps this phone registered with the user's own Muse over a private outbound connection, so the user's assistant can run phone commands while the app screen is closed" />
+        </service>
 
         <!-- voz A2 (motor próprio): escuta o wake word "oi muse" com o microfone em primeiro plano -->
         <service
