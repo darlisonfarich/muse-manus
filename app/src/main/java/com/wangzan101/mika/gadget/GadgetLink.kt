@@ -126,7 +126,7 @@ object GadgetLink {
     private const val PREFS = "gadget_link"
     private const val KEY_LINK_ENABLED = "link_enabled"
 
-    private fun linkEnabled(context: Context): Boolean =
+    internal fun linkEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_LINK_ENABLED, true)
 
     /** An active paired gadget never asks recovery to enable wireless debugging. */
@@ -163,11 +163,23 @@ object GadgetLink {
      */
     fun resumeLinkAfterBoot(context: Context, reason: String = "boot") {
         val app = context.applicationContext
-        val hasPairing = runCatching { state(app).pairing() != null }.getOrDefault(false)
-        if (!shouldResumeLink(linkEnabled(app), hasPairing)) return
+        val hasPairing = hasPairing(app)
+        if (!shouldResumeLink(linkEnabled(app), hasPairing)) {
+            GadgetBackgroundLog.record(app, "${reason}_resume_skipped", if (hasPairing) "link_off" else "no_pairing")
+            return
+        }
         log("LINK resume after $reason")
-        connect(app)
+        GadgetBackgroundLog.record(app, "${reason}_resume")
+        // A refusal of the foreground start (Android 14+ checks the service type's prerequisites) must leave a trace
+        // that survives the process: nobody is looking at the screen when this runs.
+        runCatching { connect(app) }.onFailure {
+            GadgetBackgroundLog.record(app, "${reason}_resume_failed", it.javaClass.simpleName)
+            log("LINK resume failed: ${it.javaClass.simpleName}")
+        }
     }
+
+    internal fun hasPairing(context: Context): Boolean =
+        runCatching { state(context.applicationContext).pairing() != null }.getOrDefault(false)
 
     internal fun onLinkState(state: SupervisorState, detail: String) {
         _link.value = if (state == SupervisorState.STOPPED) null else state
@@ -282,12 +294,25 @@ object GadgetLink {
             "helper handoff rejection" to (phone.hub.lastHandoffRejection ?: "none"),
             "helper last error" to (manager.engine.lastError?.substringBefore(':')?.substringBefore('(') ?: "none"),
             "wireless debugging after launch" to (manager.wirelessAutoOn.lastOff.value?.name ?: "none"),
-        ) + phone.hub.lifecycleLines { stamp.format(Date(it)) }
+        ) + phone.hub.lifecycleLines { stamp.format(Date(it)) } + backgroundLines(context)
         return logText(
             "Muse Manus ${com.wangzan101.mika.BuildConfig.VERSION_NAME} (${com.wangzan101.mika.BuildConfig.VERSION_CODE}, " +
                 "${com.wangzan101.mika.BuildConfig.GIT_HASH})",
             helper + diagnosticsLines(context),
         )
+    }
+
+    /**
+     * What decides whether the link outlives Mika's screen: the user-side switches (battery, notifications) and the
+     * persisted lifecycle (boot resumes, sticky restarts, swipes from recents, refused foreground starts).
+     */
+    internal fun backgroundLines(context: Context): List<Pair<String, String>> {
+        val lines = mutableListOf<Pair<String, String>>()
+        lines += "background battery unrestricted" to GadgetBackgroundState.batteryUnrestricted(context)
+        lines += "background notifications" to GadgetBackgroundState.notificationsAllowed(context)
+        lines += "background link intent" to (if (linkEnabled(context)) "on" else "off")
+        GadgetBackgroundLog.lines(context).forEach { lines += "background event" to it }
+        return lines
     }
 
     /** Pure formatting of [copyableLog]: a header line, then one "key: value" line each. */

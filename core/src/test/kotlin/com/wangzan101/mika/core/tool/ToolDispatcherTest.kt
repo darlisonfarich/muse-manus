@@ -229,14 +229,19 @@ class ToolDispatcherTest {
         assertEquals((unrestricted + virtualOnly).map { "key ${it.second}" }, s.calls)
         s.calls.clear()
         for (key in listOf(
-            "KEYCODE_POWER", "KEYCODE_SLEEP", "KEYCODE_WAKEUP",
+            "KEYCODE_POWER", "KEYCODE_WAKEUP",
             "KEYCODE_SEARCH", "KEYCODE_ASSIST", "KEYCODE_CAMERA",
-            "26", "223", "224", "-1", "99999",
+            "26", "224", "-1", "99999",
         )) {
             val result = d.execute(call("phone_press_key", """{"key":"$key"}"""))
             assertEquals(key, "invalid_arguments", result.content.s("error"))
         }
         assertTrue(s.calls.isEmpty())
+        // SLEEP is the accessibility lock-screen action; it is intentionally allowed in virtual scope.
+        val lock = d.execute(call("phone_press_key", """{"key":"223"}"""))
+        assertTrue(lock.content["ok"]!!.jsonPrimitive.boolean)
+        assertEquals(listOf("key 223"), s.calls)
+        s.calls.clear()
         assertTrue(PressKeys.isAllowed(66, PressKeys.Scope.AnyDisplay))
         assertTrue(PressKeys.isAllowed(3, PressKeys.Scope.VirtualDisplay))
         assertTrue(PressKeys.isAllowed(24, PressKeys.Scope.VirtualDisplay))

@@ -61,6 +61,8 @@ type gateway struct {
 	store           *store
 	mu              sync.Mutex
 	device          *deviceLink
+	voiceDevice     *voiceDeviceLink
+	voiceBusy       bool
 	pairHash        string
 	pairUntil       time.Time
 	limits          map[string]limitEntry
@@ -171,6 +173,10 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.pair(w, r)
 	case "/device":
 		g.deviceEndpoint(w, r)
+	case "/voice/device":
+		g.voiceDeviceEndpoint(w, r)
+	case "/voice/client":
+		g.voiceClientEndpoint(w, r)
 	default:
 		if relayPath(r.URL.Path) {
 			g.proxy(w, r)

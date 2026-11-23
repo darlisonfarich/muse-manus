@@ -66,7 +66,7 @@ class DeviceAccess(private val port: DeviceAccessPort, private val store: Device
     }
 
     suspend fun wake(): DeviceAccessResult = mutex.withLock {
-        prepare()?.let { return@withLock it }
+        prepare(allowNoHelper = true)?.let { return@withLock it }
         val before = read() ?: return@withLock result("device_unavailable")
         if (before.interactive) return@withLock result("awake", before)
         if (!port.wake()) return@withLock result("wake_failed", read())
@@ -135,11 +135,11 @@ class DeviceAccess(private val port: DeviceAccessPort, private val store: Device
         }
     }
 
-    private suspend fun prepare(): DeviceAccessResult? {
+    private suspend fun prepare(allowNoHelper: Boolean = false): DeviceAccessResult? {
         if (!store.enabled) return result("disabled", read())
         val s = read() ?: return result("device_unavailable")
         if (!s.userUnlocked) return result("first_unlock_required", s)
-        if (!s.helperAvailable) return result("helper_unavailable", s)
+        if (!allowNoHelper && !s.helperAvailable) return result("helper_unavailable", s)
         return null
     }
 

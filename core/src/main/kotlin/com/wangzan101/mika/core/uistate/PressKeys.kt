@@ -12,6 +12,10 @@ object PressKeys {
         "KEYCODE_PAGE_UP" to Definition(92), "KEYCODE_PAGE_DOWN" to Definition(93), "KEYCODE_MOVE_HOME" to Definition(122), "KEYCODE_MOVE_END" to Definition(123),
         "KEYCODE_BACK" to Definition(4), "KEYCODE_MENU" to Definition(82),
         "KEYCODE_HOME" to Definition(3, Scope.VirtualDisplay), "KEYCODE_APP_SWITCH" to Definition(187, Scope.VirtualDisplay),
+        "KEYCODE_NOTIFICATION" to Definition(83, Scope.VirtualDisplay), "KEYCODE_SYSRQ" to Definition(120, Scope.VirtualDisplay),
+        "KEYCODE_SLEEP" to Definition(223, Scope.VirtualDisplay),
+        // App-routed sentinel; intercepted before a platform KeyEvent is constructed.
+        "KEYCODE_QUICK_SETTINGS" to Definition(10_001, Scope.VirtualDisplay),
         "KEYCODE_VOLUME_UP" to Definition(24, Scope.VirtualDisplay), "KEYCODE_VOLUME_DOWN" to Definition(25, Scope.VirtualDisplay),
         "KEYCODE_VOLUME_MUTE" to Definition(164, Scope.VirtualDisplay),
         "KEYCODE_MEDIA_PLAY_PAUSE" to Definition(85, Scope.VirtualDisplay), "KEYCODE_MEDIA_STOP" to Definition(86, Scope.VirtualDisplay),

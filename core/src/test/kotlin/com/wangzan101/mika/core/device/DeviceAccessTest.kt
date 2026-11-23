@@ -77,6 +77,15 @@ class DeviceAccessTest {
         assertEquals(0, p.dismisses + p.entries)
     }
 
+    @Test fun appWakeIsAvailableWithoutHelperButCredentialUnlockNamesTheMissingHelper() = runTest {
+        val p = Port().apply { current = current.copy(helperAvailable = false) }
+        val d = DeviceAccess(p, Store())
+        assertEquals("awake", d.wake().status)
+        assertEquals("helper_unavailable", d.unlock().status)
+        assertEquals(1, p.wakes)
+        assertEquals(0, p.dismisses + p.entries)
+    }
+
     @Test fun commandSuccessDoesNotMeanTheScreenWoke() = runTest {
         val p = Port().apply { falselyReportsWake = true }
         assertEquals("wake_failed", DeviceAccess(p, Store(), 10, 30).wake().status)

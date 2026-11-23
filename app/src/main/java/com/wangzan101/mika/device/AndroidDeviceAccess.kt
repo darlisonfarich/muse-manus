@@ -31,6 +31,7 @@ class AndroidDeviceAccess(context: Context, helper: () -> IMikaShell?) {
 }
 
 internal class AndroidDeviceAccessPort(context: Context, private val helper: () -> IMikaShell?) : DeviceAccessPort {
+    private val appContext = context.applicationContext
     private val power = context.getSystemService(PowerManager::class.java)
     private val keyguard = context.getSystemService(KeyguardManager::class.java)
     private val user = context.getSystemService(UserManager::class.java)
@@ -40,7 +41,9 @@ internal class AndroidDeviceAccessPort(context: Context, private val helper: () 
             keyguard.isDeviceSecure, helper() != null, user.isUserUnlocked)
     }
 
-    override suspend fun wake(): Boolean = withContext(Dispatchers.IO) { runCatching { helper()?.wakeDevice() == true }.getOrDefault(false) }
+    override suspend fun wake(): Boolean = withContext(Dispatchers.IO) {
+        runCatching { helper()?.wakeDevice() ?: ScreenWakeup.wake(appContext) }.getOrDefault(false)
+    }
     override suspend fun dismiss(): Boolean = withContext(Dispatchers.IO) { runCatching { helper()?.dismissDeviceKeyguard() == true }.getOrDefault(false) }
     override suspend fun revealCredential(): Boolean = withContext(Dispatchers.IO) {
         runCatching { helper()?.revealDeviceCredential() == true }.getOrDefault(false)

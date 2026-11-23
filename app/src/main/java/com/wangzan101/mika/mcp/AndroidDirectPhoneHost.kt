@@ -15,10 +15,16 @@ import com.wangzan101.mika.cap.phone.a11y.VirtualScreenshot
 import com.wangzan101.mika.cap.phone.a11y.launchableApps
 import com.wangzan101.mika.cap.phone.display.AgentDisplay
 import com.wangzan101.mika.cap.phone.display.LazyAgentDisplay
-import com.wangzan101.mika.cap.phone.shell.ShellBinding
+import com.wangzan101.mika.cap.phone.shell.InAppShell
+import com.wangzan101.mika.cap.phone.shell.RoutedShell
 import com.wangzan101.mika.cap.phone.shell.ShellService
 import com.wangzan101.mika.cap.phone.shell.VirtualWindowProtection
 import com.wangzan101.mika.core.action.ActionExecutor
+import com.wangzan101.mika.core.shell.HelperlessRouting
+import com.wangzan101.mika.core.shell.PhoneState
+import com.wangzan101.mika.core.shell.SessionReadiness
+import com.wangzan101.mika.core.shell.ShellOwner
+import com.wangzan101.mika.core.uistate.PressKeys
 import com.wangzan101.mika.core.action.ActionRecorder
 import com.wangzan101.mika.core.action.ApprovalSettings
 import com.wangzan101.mika.core.action.Origin
@@ -98,7 +104,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
 
     private class Session(
         val owner: String,
-        val binding: ShellBinding,
+        val shell: RoutedShell,
         val link: GadgetPhoneLease?,
         val sourcesCurrent: () -> Boolean,
         val androidScreen: () -> AndroidScreen?,
@@ -113,7 +119,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         val readScope = UUID.randomUUID().toString()
         var passiveTarget: PassiveTarget? = null
 
-        fun close() { try { display.current?.release() } finally { releaseBinding() } }
+        fun close() { try { display.current?.release() } finally { try { shell.releaseOwn() } finally { releaseBinding() } } }
     }
 
     private data class PassiveTarget(val id: String, val fingerprint: String, val generation: Long)
@@ -179,11 +185,26 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                 !closeAfterLaunch && app.resources.ger.canUseSlot(directOwner(link.owner))
         }
 
+    /**
+     * Why [gadgetSession] has nothing to give right now, as a fixed code the caller can read. A cold start has no session
+     * until the maintenance loop builds one ([SESSION_PENDING]); a session built against an older accessibility service or
+     * helper is stale ("session_replaced"); the rest are the same refusals the actions already name.
+     */
+    private fun gadgetSessionBlocker(link: GadgetPhoneLease): String {
+        val s = sessions[link.owner]?.takeIf { it.link === link } ?: return SESSION_PENDING
+        return when {
+            !allowed(link) -> "link_not_authorized"
+            !s.sourcesCurrent() -> "session_replaced"
+            launchBoundary.isInFlight() || closeAfterLaunch -> "launch_in_flight"
+            else -> "task_running"
+        }
+    }
+
     internal suspend fun maintainGadget(link: GadgetPhoneLease): Boolean = lock.withLock {
         val old = sessions[link.owner]
         if (link.connected) gadgetOwners.add(directOwner(link.owner))
-        if (!allowed(link) || ScreenAccessibility.instance.value == null ||
-            PhoneServices.of(context).hub.shell.value == null) {
+        // The helper is optional: the session needs the link, the enabled switch and the accessibility service only.
+        if (!allowed(link) || ScreenAccessibility.instance.value == null) {
             if (old?.link === link) retire(link.owner)
             return@withLock false
         }
@@ -246,6 +267,11 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         throw e
     }
 
+    /** Which exception ended an opening, by class name only (no message: it can carry screen text), so a cold-start failure is named afterwards. */
+    private fun auditLaunchException(where: String, e: Exception) {
+        runCatching { audit("launch_exception", where, "class=${e.javaClass.simpleName}") }
+    }
+
     private fun auditStaleRetry(command: String, retries: Int, succeeded: Boolean) {
         runCatching { audit("stale_retry", command, "retries=$retries;result=${if (succeeded) "ok" else "stale"}") }
     }
@@ -254,10 +280,10 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
     private suspend fun recordUnreadableWindow(link: GadgetPhoneLease, command: String) {
         val line = lock.withLock {
             val session = sessions[link.owner]?.takeIf { it.link === link } ?: return@withLock null
-            val shell = session.binding.shell.value
+            val shell = session.shell
             val wm = withContext(Dispatchers.IO) {
                 val id = session.display.current?.displayId
-                if (shell == null || id == null) null
+                if (id == null) null
                 else runCatching { VirtualWindowProtection.fromCode(shell.virtualWindowProtection(id)).name }.getOrNull()
             }
             "wm=${wm ?: "n/a"} " + (session.androidScreen()?.windowDiagnostics() ?: "screen=none")
@@ -268,13 +294,13 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
 
     private suspend fun readForGadgetOnce(link: GadgetPhoneLease, screenshot: Boolean, full: Boolean): JsonObject = lock.withLock {
         if (!settings.enabled.value) throw CommandException(ErrorCode.LOCAL_GATE_DENIED, "remote_access_disabled")
-        val session = gadgetSession(link) ?: throw CommandException(ErrorCode.UNAVAILABLE)
+        val session = gadgetSession(link) ?: throw CommandException(ErrorCode.UNAVAILABLE, gadgetSessionBlocker(link))
         val access = app.appAccess.current()
         val guarded = app.appAccess.sensitiveUi
         val reader = reader(session)
         val generation = ScreenAccessibility.windowGeneration()
         val result = if (screenshot) reader.screenshot() else reader.tree(full)
-        if (gadgetSession(link) !== session) throw CommandException(ErrorCode.UNAVAILABLE)
+        if (gadgetSession(link) !== session) throw CommandException(ErrorCode.UNAVAILABLE, "session_replaced")
         if (app.appAccess.current() != access || app.appAccess.sensitiveUi != guarded)
             throw CommandException(ErrorCode.LOCAL_GATE_DENIED, "app_access_changed")
         if (!screenshot) {
@@ -290,8 +316,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         windowProtection = {
             val displayId = session.display.current?.displayId
             if (displayId == null) VirtualWindowProtection.Empty else withContext(Dispatchers.IO) {
-                val shell = session.binding.shell.value ?: throw CommandException(ErrorCode.UNAVAILABLE)
-                VirtualWindowProtection.fromCode(shell.virtualWindowProtection(displayId))
+                VirtualWindowProtection.fromCode(session.shell.virtualWindowProtection(displayId))
             }
         },
         inUseByUser = { snapshot -> withContext(Dispatchers.IO) { inUseOnPhysicalScreen(session, snapshot) } },
@@ -323,7 +348,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         val packages = (snapshot.windows.filter { it.type == "application" }.mapNotNull { it.packageName } +
             listOfNotNull(snapshot.packageName, snapshot.unreadableApp)).distinct()
         if (packages.isEmpty()) return false
-        val shell = session.binding.shell.value ?: throw CommandException(ErrorCode.UNAVAILABLE)
+        val shell = session.shell
         val topTask = session.display.current?.let { shell.topTaskId(it.displayId) } ?: -1
         val topPackage = if (topTask >= 0) shell.packageOfTask(topTask) else null
         val topUser = if (topTask >= 0) shell.userOfTask(topTask) else -1
@@ -352,7 +377,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         // A stopped app (or any local refusal) answers an opening on the main screen with the local gate's
         // verdict, not with the generic "unavailable" every other command gets.
         if (link != null) mainLaunchDenial(name, args)?.let { return gateDenied(it) }
-        if (!authorized()) return fail("phone_unavailable")
+        if (!authorized()) return fail("phone_unavailable", "link_not_authorized")
         if (owner.isBlank()) return fail("unauthenticated")
         val scheduler = app.resources
         val sessionOwner = directOwner(owner)
@@ -360,7 +385,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             if (!settings.enabled.value) return fail("remote_access_disabled")
             // Read-only and out of the intention queue: no display/session is
             // created, no action is submitted, no pending marker is written.
-            return lock.withLock { if (authorized()) reconcile(owner, args) else fail("phone_unavailable") }
+            return lock.withLock { if (authorized()) reconcile(owner, args) else fail("phone_unavailable", "link_not_authorized") }
         }
         if (name == "phone_approval_issue") {
             if (!settings.enabled.value) return fail("remote_access_disabled")
@@ -373,7 +398,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         if (name == "phone_cancel") {
             val cancelled = scheduler.ger.intentions.cancelOwner(sessionOwner)
             return lock.withLock {
-                if (!authorized()) return@withLock fail("phone_unavailable")
+                if (!authorized()) return@withLock fail("phone_unavailable", "link_not_authorized")
                 val hadSession = sessions[owner]?.let { link == null || it.link === link } == true
                 val deferredClose = hadSession && launchBoundary.isInFlight()
                 if (hadSession) retire(owner)
@@ -404,8 +429,15 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         val request = if (name in READS) UUID.randomUUID().toString() else requestId(args)
             ?: return fail("request_id_required")
         val progress = BatchProgress()
+        // A gadget caller gives up after seconds: waiting for a resource past that only turns a clear refusal into a
+        // silent timeout, so the wait is cut short and the last blocker is reported as the reason.
+        val waitMs = if (link != null) minOf(settings.directWaitTimeoutMs, GADGET_WAIT_MS) else settings.directWaitTimeoutMs
+        // The maintenance loop builds the session in about a second when nothing blocks it; if it still is not there
+        // after SESSION_BUILD_WAIT_MS it will not be soon, and the caller hears the named reason instead of waiting out
+        // the rest of the wait (worst case: this bound plus one 500 ms queue poll, under the 2 s the battery expects).
+        val startedAt = System.currentTimeMillis()
         val outcome = scheduler.ger.intentions.dispatch(
-            sessionOwner, request, settings.directWaitTimeoutMs,
+            sessionOwner, request, waitMs,
         ) attempt@{ isCancelled ->
             // Never park waiting for an already-running host action. This also
             // lets phone_cancel revoke queued calls without waiting on its mutex.
@@ -413,7 +445,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             try {
                 if (launchBoundary.isInFlight() || closeAfterLaunch)
                     return@attempt GerIntentAttempt.Done(fail("launch_in_flight"))
-                if (!authorized()) return@attempt GerIntentAttempt.Done(fail("phone_unavailable"))
+                if (!authorized()) return@attempt GerIntentAttempt.Done(fail("phone_unavailable", "link_not_authorized"))
                 if (isCancelled()) return@attempt GerIntentAttempt.Done(fail("cancelled"))
                 if (!settings.enabled.value) return@attempt GerIntentAttempt.Done(fail("remote_access_disabled"))
                 if (name !in READS && !settings.directWritesEnabled.value)
@@ -426,7 +458,16 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                 // Only maintainGadget creates a gadget session (with its lease and identity).
                 if (link != null && sessions[owner]?.link !== link) {
                     if (!sessions.containsKey(owner)) scheduler.ger.releaseSlot(sessionOwner)
-                    return@attempt GerIntentAttempt.Blocked("phone_session_pending")
+                    // Missing for a reason only the person can fix (switch off, no link, accessibility off): say so now.
+                    // Otherwise the maintenance loop is about to build it, which is worth the short wait.
+                    val cause = SessionReadiness.blocker(
+                        remoteAccessEnabled = settings.enabled.value, linkConnected = link.connected,
+                        accessibilityUp = ScreenAccessibility.instance.value != null,
+                    )
+                    if (cause != null) return@attempt GerIntentAttempt.Done(fail("phone_unavailable", cause))
+                    if (System.currentTimeMillis() - startedAt >= SESSION_BUILD_WAIT_MS)
+                        return@attempt GerIntentAttempt.Done(fail("phone_unavailable", SESSION_PENDING))
+                    return@attempt GerIntentAttempt.Blocked(SESSION_PENDING)
                 }
                 val s = try {
                     sessions[owner] ?: create(owner, now).also { sessions[owner] = it }
@@ -435,7 +476,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                     throw e
                 } catch (_: Exception) {
                     if (!sessions.containsKey(owner)) scheduler.ger.releaseSlot(sessionOwner)
-                    return@attempt GerIntentAttempt.Done(fail("phone_unavailable"))
+                    return@attempt GerIntentAttempt.Done(fail("phone_unavailable", "session_create_failed"))
                 }
                 if (!scheduler.ger.canUseSlot(sessionOwner))
                     return@attempt GerIntentAttempt.Blocked("task_running")
@@ -445,7 +486,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                     // Virtual-display reads must work with the physical screen off.
                     // Only actions require an unlocked, interactive physical phone.
                     if (DirectPhoneScreenPolicy.requiresInteractivePhysicalScreen(name) && !ready(s))
-                        return@attempt GerIntentAttempt.Done(fail("needs_user"))
+                        return@attempt GerIntentAttempt.Done(fail("needs_user", phoneStateCause()))
                     if (sensitive(s)) return@attempt GerIntentAttempt.Done(fail("needs_user"))
                     when (name) {
                         "phone_observe", "phone_list_apps" -> {
@@ -474,7 +515,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                     }
                 } catch (e: CancellationException) { throw e }
                 catch (e: CommandException) { throw e }
-                catch (_: Exception) { GerIntentAttempt.Done(fail("phone_unavailable")) }
+                catch (_: Exception) { GerIntentAttempt.Done(fail("phone_unavailable", "action_exception")) }
             } finally { lock.unlock() }
         }
         return when (outcome) {
@@ -608,7 +649,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         // The user using the app on the main screen is no obstacle to opening it there.
         if (DirectPhoneMainLaunch.target(args) == DirectPhoneMainLaunch.Target.Main) return null
         val pkg = (args["package"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: return null
-        val shell = s.binding.shell.value ?: return "app_presence_unknown"
+        val shell = s.shell
         val userId = android.os.Process.myUid() / 100_000
         val userVisible = runCatching { shell.visibleOnMainScreen(pkg, userId) }.getOrNull()
         if (userVisible != false) {
@@ -641,25 +682,37 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         val lock = context.getSystemService(KeyguardManager::class.java)
         val power = context.getSystemService(PowerManager::class.java)
         return lock?.isDeviceLocked != true && lock?.isKeyguardLocked != true &&
-            power?.isInteractive != false && s.binding.shell.value != null &&
+            power?.isInteractive != false &&
             ScreenAccessibility.instance.value != null &&
             app.resources.ger.canUseSlot(directOwner(s.owner))
     }
 
-    private fun readyForGate(binding: ShellBinding): Boolean {
+    /** The one word naming why the physical phone is not ready for an action, or null (see [PhoneState]). */
+    private fun phoneStateCause(): String? {
+        val lock = context.getSystemService(KeyguardManager::class.java)
+        val power = context.getSystemService(PowerManager::class.java)
+        return PhoneState.cause(
+            accessibilityUp = ScreenAccessibility.instance.value != null,
+            deviceLocked = lock?.isDeviceLocked == true || lock?.isKeyguardLocked == true,
+            screenInteractive = power?.isInteractive != false,
+        )
+    }
+
+    private fun readyForGate(): Boolean {
         val lock = context.getSystemService(KeyguardManager::class.java)
         val power = context.getSystemService(PowerManager::class.java)
         return lock?.isDeviceLocked != true && lock?.isKeyguardLocked != true &&
-            power?.isInteractive != false && binding.shell.value != null &&
+            power?.isInteractive != false &&
             ScreenAccessibility.instance.value != null
     }
 
     private suspend fun create(owner: String, now: Long, link: GadgetPhoneLease? = null): Session {
         val services = PhoneServices.of(context)
-        val binding = services.sharedShell.acquire()
+        // Holding the shared connection keeps asking the watchdog for the optional helper; nothing waits on it.
+        services.sharedShell.acquire()
         try {
-            val shell = withTimeoutOrNull(12_000L) { binding.shell.filterNotNull().first() }
-                ?: throw IllegalStateException("shell unavailable")
+            // The helper is only an accelerator (trusted display, real key injection): the session never waits for it.
+            val shell = RoutedShell({ services.hub.shell.value }, InAppShell(context))
             val a11y = withTimeoutOrNull(12_000L) { ScreenAccessibility.instance.filterNotNull().first() }
                 ?: throw IllegalStateException("accessibility unavailable")
             val metrics = context.resources.displayMetrics
@@ -707,7 +760,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             val executor = ActionExecutor(
                 tools, OperationGuards(400), confirmations = null,
                 gate = { check((link == null || allowed(link)) && settings.directWritesEnabled.value && settings.enabled.value && !busy() &&
-                    scheduler.ger.canUseSlot(sessionOwner) && readyForGate(binding)) },
+                    scheduler.ger.canUseSlot(sessionOwner) && readyForGate()) },
                 recorder = ActionRecorder(sink), approvals = ApprovalSettings.STRICT,
                 // Bridge origin is STRICT in ApprovalPolicy; generic Mcp runs only use ASK.
                 // Origin.McpTool never consumes a remote approval/grant.
@@ -725,7 +778,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                 safe.checkAppAccess()
                 result
             }
-            return Session(owner, binding, link, { services.hub.shell.value === shell && ScreenAccessibility.instance.value === a11y }, { physical }, display, safe, tools, executor, captureVirtualPng, services.sharedShell::release, now)
+            return Session(owner, shell, link, { shell.isCurrent() && ScreenAccessibility.instance.value === a11y }, { physical }, display, safe, tools, executor, captureVirtualPng, services.sharedShell::release, now)
         } catch (e: Exception) {
             services.sharedShell.release()
             throw e
@@ -858,6 +911,31 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
      * fsync(PENDING), every result is terminal for this request_id, even when
      * Android reports no progress; repeating it could otherwise double-send.
      */
+    /**
+     * Keys on the agent display that only the helper can deliver. Volume and media have an app route (AudioManager);
+     * BACK has one only while the accessibility service proves the agent display holds focus.
+     */
+    private fun keyNeedsMissingHelper(s: Session, external: String, args: JsonObject): Boolean {
+        // No display yet: the normal path answers "no app open", which is the truthful reason.
+        val displayId = s.display.current?.displayId ?: return false
+        val code = when (external) {
+            "phone_back" -> KEYCODE_BACK
+            "phone_key" -> PressKeys.resolve((args["key"] as? JsonPrimitive)?.contentOrNull ?: return false, PressKeys.Scope.VirtualDisplay)
+                ?: return false
+            else -> return false
+        }
+        // The owner of THIS display answers the key, not "is a helper up now": a display the app made stays the app's
+        // even after a helper appears, and the app has no route for most keys.
+        val owner = s.shell.ownerOf(displayId)
+        val sdk = android.os.Build.VERSION.SDK_INT
+        if (HelperlessRouting.keyNeedsMissingHelper(owner, code, sdk)) return true
+        return when (HelperlessRouting.keyPath(code, helperUp = owner == ShellOwner.Helper, sdk = sdk)) {
+            HelperlessRouting.KeyPath.AppGlobalBack, HelperlessRouting.KeyPath.AppGlobalDpad ->
+                !s.shell.canGoBackWithoutHelper(displayId)
+            else -> false
+        }
+    }
+
     private suspend fun action(s: Session, external: String, args: JsonObject): GerIntentAttempt<JsonObject> {
         val tool = ACTIONS[external] ?: return GerIntentAttempt.Done(fail("unknown_tool"))
         val launchTarget = if (external == "phone_launch_app") DirectPhoneMainLaunch.target(args) ?: return GerIntentAttempt.Done(fail("invalid_target"))
@@ -871,11 +949,14 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         }
         if (!settings.enabled.value || !settings.directWritesEnabled.value)
             return GerIntentAttempt.Done(fail("write_disabled"))
+        // No app-only route for this key and no helper: refuse now, before anything is journaled, and say what is missing.
+        if (keyNeedsMissingHelper(s, external, args)) return GerIntentAttempt.Done(fail("helper_required"))
         if (busy() || !app.resources.ger.canUseSlot(directOwner(s.owner)))
             return GerIntentAttempt.Blocked("task_running")
-        if (!ready(s) || sensitive(s)) return GerIntentAttempt.Done(fail("needs_user"))
+        if (!ready(s)) return GerIntentAttempt.Done(fail("needs_user", phoneStateCause()))
+        if (sensitive(s)) return GerIntentAttempt.Done(fail("needs_user"))
         val actionArgs = if (s.link != null) {
-            if (gadgetSession(s.link) !== s) return GerIntentAttempt.Done(fail("phone_unavailable"))
+            if (gadgetSession(s.link) !== s) return GerIntentAttempt.Done(fail("phone_unavailable", "session_replaced"))
             // Nothing has executed for this step yet: report the refusal as this step's result
             // (a batch then still says how many earlier steps ran) instead of throwing past it.
             // A busy screen gets a few settles before the caller hears about it. Nothing has executed yet at this
@@ -890,6 +971,13 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
             }
         } else args
         val request = requestId(args) ?: return GerIntentAttempt.Done(fail("request_id_required"))
+        // The display is made BEFORE the journal marker for an opening on it: if the system refuses to create it, the
+        // caller gets `unavailable` naming that, and the request_id stays usable (nothing has been committed).
+        if (external == "phone_launch_app" && launchTarget == DirectPhoneMainLaunch.Target.Virtual) {
+            try { s.display.get() }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { return GerIntentAttempt.Done(fail("phone_unavailable", s.shell.createRefusal())) }
+        }
         // GER PR-6: a presented chat approval token is gate input, not an
         // action argument — strip it (and request_id) from what executes and
         // from the exact-args digest the token was bound to at issuance.
@@ -921,7 +1009,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         // A still-running launch must not commit another request's PENDING.
         if (launchBoundary.isInFlight() || closeAfterLaunch)
             return GerIntentAttempt.Done(fail("launch_in_flight"))
-        if (s.link != null && gadgetSession(s.link) !== s) return GerIntentAttempt.Done(fail("phone_unavailable"))
+        if (s.link != null && gadgetSession(s.link) !== s) return GerIntentAttempt.Done(fail("phone_unavailable", "session_replaced"))
         val key = digest(s.owner + "|" + request)
         // The PENDING marker records where an opening went, next to the argument names it always kept. (The
         // completion record keeps its fixed vocabulary: the journal inspection reads it strictly.)
@@ -940,14 +1028,15 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
                         try {
                             openOnMain(s, (args["package"] as? JsonPrimitive)?.contentOrNull.orEmpty())
                         } catch (e: CancellationException) { throw e }
-                        catch (_: Exception) { uncertain("main_launch_exception") }
+                        catch (e: Exception) { auditLaunchException("main_launch_exception", e); uncertain("main_launch_exception") }
                     } else try {
                         chatApprovalSlot.token = presentedToken
                         try {
                             s.executor.run(Part.ToolCall(request, actualTool, executorTool.toString()), Origin.McpTool(sequence))
                                 .execution().content
                         } finally { chatApprovalSlot.token = null }
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                        auditLaunchException("launch_executor_exception", e)
                         uncertain("launch_executor_exception")
                     }
                     audit(key, "completed", when {
@@ -1034,8 +1123,9 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         else -> fail("surface_check_failed")
     }
 
-    private fun fail(code: String) = buildJsonObject {
+    private fun fail(code: String, cause: String? = null) = buildJsonObject {
         put("ok", false); put("error", code); put("executed", false)
+        if (cause != null) put("cause", cause)
     }
 
     /** A refusal of the local authorization, shaped like the ones the action executor reports for its own gates. */
@@ -1061,7 +1151,7 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
      * visible there. A helper that predates this call answers with an error instead of the opening.
      */
     private suspend fun openOnMain(s: Session, pkg: String): JsonObject = withContext(Dispatchers.IO) {
-        val shell = s.binding.shell.value ?: return@withContext fail("phone_unavailable")
+        val shell = s.shell
         val started = try {
             shell.startAppOnMain(pkg)
         } catch (e: CancellationException) { throw e }
@@ -1070,7 +1160,9 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
         val user = android.os.Process.myUid() / 100_000
         val deadline = SystemClock.uptimeMillis() + MAIN_VISIBLE_WAIT_MS
         while (!runCatching { shell.visibleOnMainScreen(pkg, user) }.getOrDefault(false)) {
-            if (SystemClock.uptimeMillis() >= deadline) return@withContext fail("main_launch_not_visible")
+            if (SystemClock.uptimeMillis() >= deadline) return@withContext fail("main_launch_not_visible",
+                if (com.wangzan101.mika.cap.phone.shell.BackgroundLaunchTrace.suffix().isNotEmpty())
+                    com.wangzan101.mika.core.shell.BackgroundSurvival.BACKGROUND_LAUNCH_TOKEN else null)
             delay(MAIN_VISIBLE_POLL_MS)
         }
         buildJsonObject { put("ok", true) }
@@ -1078,6 +1170,14 @@ class AndroidDirectPhoneHost(private val context: Context, private val settings:
 
     companion object {
         private const val TAG = "MikaDirectPhone"
+        /** Longest a gadget command waits for the session or a free slot; shorter than every gadget command timeout. */
+        private const val GADGET_WAIT_MS = 8_000L
+
+        /** How long a gadget call waits for the maintenance loop to build a session nothing is blocking. */
+        private const val SESSION_BUILD_WAIT_MS = 1_200L
+        /** The last blocker reported when a gadget command timed out waiting for its session. */
+        const val SESSION_PENDING = "phone_session_pending"
+        private const val KEYCODE_BACK = 4
         private const val MAIN_VISIBLE_WAIT_MS = 4_000L
         private const val MAIN_VISIBLE_POLL_MS = 250L
         private val READS = DirectPhoneScreenPolicy.reads

@@ -9,8 +9,10 @@ import java.io.File
 /**
  * Plays MP3 segments in arrival order. The first one starts as soon as it is prepared, later ones are
  * prepared while the current one plays, so the hand-over is as short as MediaPlayer allows. Every
- * segment is a complete MP3 of its own. Playback uses USAGE_VOICE_COMMUNICATION so the platform AEC
- * sees the output it must cancel. All calls and callbacks run on the main thread.
+ * segment is a complete MP3 of its own. Playback uses USAGE_MEDIA so the reply plays at media
+ * volume on the loudspeaker (USAGE_VOICE_COMMUNICATION routed it to the low call volume — field
+ * report 2026-11-22). AEC lives on the capture side (the recorder), not here. All calls and
+ * callbacks run on the main thread.
  *
  * [onPlaying] fires with true when audio starts and false when the queue has run dry or was stopped.
  * A false between two segments is possible if the next one has not arrived yet.
@@ -36,7 +38,7 @@ class VoiceSegmentPlayer(private val context: Context, private val onPlaying: (B
             val p = MediaPlayer()
             item.player = p
             p.setAudioAttributes(AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
             p.setDataSource(item.file.absolutePath)
             p.setOnPreparedListener { item.prepared = true; pump() }

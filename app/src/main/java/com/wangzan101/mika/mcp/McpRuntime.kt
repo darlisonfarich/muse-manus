@@ -60,8 +60,14 @@ class McpRuntime(
     val voiceHub = com.wangzan101.mika.core.remote.VoiceA2Hub()
     private val endpoints = RemoteEndpoints(tasks, BuildConfig.VERSION_NAME, device = device.access, history = history, records = records, directPhone = directHost)
     private val relayAccess = RemoteAccess(token = { if (relaySettings.config.value.enabled) settings.token() else null })
+    private val relayScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val voiceRelay = com.wangzan101.mika.core.remote.VoiceRelayClient(relayScope, voiceHub, acceptsToken = { token ->
+        val request = com.wangzan101.mika.core.remote.HttpRequest("GET", com.wangzan101.mika.core.remote.VoiceChannelProbe.PATH,
+            mapOf("authorization" to "Bearer $token"), ByteArray(0), java.net.InetAddress.getByName("8.8.8.8"), source = "relay-voice")
+        relayAccess.check(request) is RemoteAccess.Verdict.Pass
+    })
     // 经网关来的请求要另开「允许经网关唤醒和解锁」才看得到屏幕能力;手机上的远程亮屏与解锁许可照样要开。
-    private val relay = RelayClient(CoroutineScope(SupervisorJob() + Dispatchers.IO), { req ->
+    private val relay = RelayClient(relayScope, { req ->
         relayAccess.handle(req) { endpoints.handle(it, deviceAccess = relaySettings.config.value.deviceAccess, historyAccess = false) }
     })
     private val relayNetwork = RelayNetwork(context, relay::networkChanged)
@@ -86,14 +92,18 @@ class McpRuntime(
     fun setRelayDeviceAccess(on: Boolean) = relaySettings.setDeviceAccess(on)
 
     fun setRelayEnabled(on: Boolean) {
-        if (!on) { relayNetwork.stop(); relay.stop() }
+        if (!on) { relayNetwork.stop(); relay.stop(); voiceRelay.stop() }
         try { relaySettings.setEnabled(on) } finally { if (!on) apply() }
         if (on) apply()
     }
 
     suspend fun unpairRelay() {
         setRelayEnabled(false)
-        relaySettings.pairing()?.let { RelayGateway(RelayGateway.parse(it.gateway), RelayGateway.http()).unpair(it.deviceToken) }
+        // O gateway antigo pode estar morto (URL expirada): a revogação remota é
+        // melhor-esforço e NUNCA pode impedir a limpeza local do pareamento.
+        runCatching {
+            relaySettings.pairing()?.let { RelayGateway(RelayGateway.parse(it.gateway), RelayGateway.http()).unpair(it.deviceToken) }
+        }
         relaySettings.clear()
     }
 
@@ -147,9 +157,9 @@ class McpRuntime(
         val remoteOn = relaySettings.config.value.enabled
         if (remoteOn) {
             val pairing = relaySettings.pairing()
-            if (pairing != null) { relayNetwork.start(); relay.start(pairing) }
-            else { relayNetwork.stop(); relay.stop(); relaySettings.setEnabled(false) }
-        } else { relayNetwork.stop(); relay.stop() }
+            if (pairing != null) { relayNetwork.start(); relay.start(pairing); voiceRelay.start(pairing) }
+            else { relayNetwork.stop(); relay.stop(); voiceRelay.stop(); relaySettings.setEnabled(false) }
+        } else { relayNetwork.stop(); relay.stop(); voiceRelay.stop() }
         return ok || remoteOn && relaySettings.config.value.enabled
     }
 

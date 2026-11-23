@@ -1,6 +1,9 @@
 package com.wangzan101.mika.gadget
 
+import android.app.AlarmManager
 import android.app.Notification
+import android.app.PendingIntent
+import com.wangzan101.mika.core.shell.BackgroundSurvival
 import com.darlisonfarich.gadgetlink.Vm
 import com.darlisonfarich.gadgetlink.noise.LinkOutcome
 import com.darlisonfarich.gadgetlink.noise.PairingRecord
@@ -62,8 +65,11 @@ class GadgetConnectService : Service() {
     companion object {
         const val ACTION_START = "com.wangzan101.mika.gadget.CONNECT_START"
         const val ACTION_STOP = "com.wangzan101.mika.gadget.CONNECT_STOP"
+        /** The one-shot restart left by [onTaskRemoved]: unlike ACTION_START it still checks that the user wants the link. */
+        const val ACTION_RESTART = "com.wangzan101.mika.gadget.CONNECT_RESTART"
         private const val CHANNEL = "gadget_link"
         private const val NOTIFICATION_ID = 0x6d76
+        private const val RESTART_INSURANCE_MS = 5_000L
     }
 
     private var executor: ScheduledExecutorService? = null
@@ -79,21 +85,33 @@ class GadgetConnectService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
+        // Null intent = the system restarted this sticky service after killing the process (low memory, OEM cleanup).
+        // The user's choice still rules: a link turned off, or never paired, is not resurrected by a restart.
+        val systemRestart = intent == null
+        val decision = BackgroundSurvival.onStart(
+            stopRequested = intent?.action == ACTION_STOP,
+            explicitStart = intent?.action == ACTION_START,
+            linkEnabled = GadgetLink.linkEnabled(this),
+            hasPairing = GadgetLink.hasPairing(this),
+        )
+        if (decision == BackgroundSurvival.StartDecision.Stop) {
+            if (intent?.action == ACTION_STOP) GadgetBackgroundLog.record(this, "user_disconnect")
+            else GadgetBackgroundLog.record(this, "restart_dropped", "link_off_or_unpaired")
             destroyed = true
             stopControl(lease)
+            // A start made with startForegroundService (the restart insurance) must still promise its notification
+            // before leaving, or the system raises an error for a service that never entered the foreground.
+            if (intent?.action == ACTION_RESTART) runCatching { startForegroundCompat("Muse: parando…") }
+            runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
             stopSelf()
             return START_NOT_STICKY
         }
-        val foreground = runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(NOTIFICATION_ID, notification("Conectando ao Muse…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
-            } else {
-                startForeground(NOTIFICATION_ID, notification("Conectando ao Muse…"))
-            }
-        }
+        if (systemRestart) GadgetBackgroundLog.record(this, "sticky_restart")
+        val foreground = runCatching { startForegroundCompat("Conectando ao Muse…") }
         if (foreground.isFailure) {
-            GadgetLink.setLinkError("foreground refused: ${foreground.exceptionOrNull()?.javaClass?.simpleName}")
+            val reason = foreground.exceptionOrNull()?.javaClass?.simpleName
+            GadgetLink.setLinkError("foreground refused: $reason")
+            GadgetBackgroundLog.record(this, "foreground_refused", reason)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -101,7 +119,50 @@ class GadgetConnectService : Service() {
             started = true
             begin()
         }
-        return START_NOT_STICKY
+        // The link has to outlive Mika's screen and the recents list: if the system kills the process, it is brought
+        // back (and the decision above re-checks that the user still wants it).
+        return START_STICKY
+    }
+
+    /**
+     * Type specialUse, not connectedDevice: the link is plain internet, and from Android 14 a connectedDevice
+     * foreground service refuses to start unless a Bluetooth/Wi-Fi/NFC permission is held at that moment, which a boot
+     * resume cannot ask for. specialUse is allowed from BOOT_COMPLETED (Android 15 lists dataSync, camera,
+     * mediaPlayback, phoneCall, mediaProjection and microphone as blocked there) and McpService already runs as such.
+     */
+    private fun startForegroundCompat(text: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, notification(text), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(NOTIFICATION_ID, notification(text))
+        }
+    }
+
+    /**
+     * The user swiped Mika away from the recents list. Stock Android keeps a foreground service running; some
+     * skins (HyperOS) kill the process anyway. This only leaves the trace and, when exact alarms are allowed, a
+     * one-shot restart in a few seconds: best effort, a force-stop cancels alarms and nothing here can undo that.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        GadgetBackgroundLog.record(this, "task_removed")
+        if (!destroyed && GadgetLink.linkEnabled(this) && GadgetLink.hasPairing(this)) scheduleRestartInsurance()
+        super.onTaskRemoved(rootIntent)
+    }
+
+    private fun scheduleRestartInsurance() {
+        runCatching {
+            val alarms = getSystemService(AlarmManager::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarms.canScheduleExactAlarms()) {
+                GadgetBackgroundLog.record(this, "restart_insurance_skipped", "exact_alarm_not_allowed")
+                return
+            }
+            val restart = PendingIntent.getForegroundService(
+                this, 0, Intent(this, GadgetConnectService::class.java).setAction(ACTION_RESTART),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            alarms.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + RESTART_INSURANCE_MS, restart)
+            GadgetBackgroundLog.record(this, "restart_insurance_set")
+        }.onFailure { GadgetBackgroundLog.record(this, "restart_insurance_failed", it.javaClass.simpleName) }
     }
 
     private fun begin() {
@@ -198,6 +259,9 @@ class GadgetConnectService : Service() {
         controlJob = controlScope.launch {
             val phone = PhoneServices.of(this@GadgetConnectService)
             var lastStatus: String? = null
+            var lastHelper: String? = null
+            var lastAskAt: Long? = null
+            var lastWarmWord: String? = null
             var lastOff: com.wangzan101.mika.core.shell.AutoOffOutcome? = phone.shellManager.wirelessAutoOn.lastOff.value
             try {
                 while (isActive) {
@@ -205,21 +269,35 @@ class GadgetConnectService : Service() {
                         phoneHost.maintainGadget(registration)
                     } catch (e: CancellationException) { throw e }
                     catch (_: Exception) { false }
+                    // The helper is an optional accelerator: the session is built without it, so a missing helper
+                    // is never the reason the session is not ready. It is only noted on its own log line.
+                    if (phone.hub.shell.value == null) {
+                        // Proactive wake-up: only when the phone already lets the helper in (debugging reachable on a Wi-Fi
+                        // that is already connected). Otherwise dormant, without insisting and without touching Wi-Fi or any
+                        // radio; the accessibility channel carries everything meanwhile. The watchdog keeps its own backoff.
+                        val sinceAsk = lastAskAt?.let { android.os.SystemClock.elapsedRealtime() - it }
+                        val warm = phone.shellManager.engine.warm(sinceAsk)
+                        if (warm is com.wangzan101.mika.core.shell.HelperWarmup.Decision.Ask) {
+                            lastAskAt = android.os.SystemClock.elapsedRealtime()
+                            GadgetLink.log("link: helper warm-up asked")
+                        }
+                        val warmWord = (warm as? com.wangzan101.mika.core.shell.HelperWarmup.Decision.Dormant)?.reason
+                        if (warmWord != lastWarmWord && warmWord != null) GadgetLink.log("link: helper dormant $warmWord")
+                        lastWarmWord = warmWord
+                        val helper = GadgetHelperDiagnosis.helperStatus(
+                            phone.shellManager.engine.status.value, phone.hub.lastHandoffRejection,
+                            developerOptions = runCatching {
+                                com.wangzan101.mika.cap.phone.setup.DeveloperSettings.developerOptions(contentResolver)
+                            }.getOrDefault(true),
+                        )
+                        if (helper != lastHelper) GadgetLink.log("link: helper (optional) $helper")
+                        lastHelper = helper
+                    } else lastHelper = null
                     val status = when {
                         ready -> "ready"
                         !(applicationContext as MikaApp).mcp.settings.enabled.value -> "remote_access_disabled"
-                        phone.hub.shell.value == null -> {
-                            // The watchdog relaunches the helper by itself; ask it once per registration
-                            // (it keeps its own backoff) and otherwise only name what it waits on.
-                            if (lastStatus == null) phone.shellManager.need()
-                            GadgetHelperDiagnosis.helperStatus(
-                                phone.shellManager.engine.status.value, phone.hub.lastHandoffRejection,
-                                developerOptions = runCatching {
-                                    com.wangzan101.mika.cap.phone.setup.DeveloperSettings.developerOptions(contentResolver)
-                                }.getOrDefault(true),
-                            )
-                        }
-                        else -> "awaiting_accessibility_or_slot"
+                        com.wangzan101.mika.cap.phone.a11y.ScreenAccessibility.instance.value == null -> "accessibility_off"
+                        else -> "awaiting_slot"
                     }
                     val off = phone.shellManager.wirelessAutoOn.lastOff.value
                     if (off != lastOff && off != null) GadgetLink.log("link: wireless debugging after helper launch: ${off.name}")
@@ -243,6 +321,7 @@ class GadgetConnectService : Service() {
     }
 
     override fun onDestroy() {
+        GadgetBackgroundLog.record(this, "service_destroyed")
         destroyed = true
         stopControl(lease)
         controlScope.cancel()

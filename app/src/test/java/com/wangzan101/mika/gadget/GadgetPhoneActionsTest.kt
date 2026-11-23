@@ -24,7 +24,8 @@ class GadgetPhoneActionsTest {
         val catalog = CommandCatalog.museManus(emptyList(), controlCommands = actions)
         val tap = catalog.find("phone.tap")!!
         assertTrue(tap.writes)
-        assertNull(catalog.find("phone.unlock"))
+        assertNotNull(catalog.find("phone.wake"))
+        assertNotNull(catalog.find("phone.unlock"))
         assertNull(catalog.find("phone.approval_issue"))
         assertNull(catalog.find("phone.run_task"))
         val args = json("""{"request_id":"abcdefgh","x":1,"y":2}""")
@@ -34,12 +35,51 @@ class GadgetPhoneActionsTest {
         assertTrue(CommandCatalog.registerBytes(catalog, "device", "POCO", "test") < 256 * 1024)
     }
 
+    @Test fun wakeAndUnlockReturnHonestSuccessOrNamedUnavailableReasons() {
+        val specs = GadgetPhoneActions.specs(
+            { "active" },
+            deviceCall = { name ->
+                when (name) {
+                    "phone.wake" -> json("""{"status":"awake"}""")
+                    else -> json("""{"status":"helper_unavailable"}""")
+                }
+            },
+        ) { _, _ -> error("device action must not route through shell helper") }
+        val catalog = CommandCatalog.museManus(emptyList(), controlCommands = specs)
+        assertTrue((catalog.find("phone.wake")!!.handler.run(JsonObject(emptyMap())) as CommandResult.Ok)
+            .payload.jsonObject["status"]!!.jsonPrimitive.content == "awake")
+        val unavailable = catalog.find("phone.unlock")!!.handler.run(JsonObject(emptyMap())) as CommandResult.Err
+        assertEquals(ErrorCode.UNAVAILABLE, unavailable.code)
+        assertEquals("helper_required_for_credential_unlock", unavailable.detail)
+    }
+
     @Test fun mapsNestedFailuresWithoutEchoingPrivateData() {
         fun code(raw: String) = (GadgetPhoneActions.result("phone.run_batch", json(raw)) as CommandResult.Err)
         assertEquals(ErrorCode.LOCAL_GATE_DENIED, code("""{"ok":false,"results":[{"ok":false,"error":"needs_user"}]}""").code)
         assertEquals(ErrorCode.APP_IN_USE_BY_USER, code("""{"ok":false,"error":"wait_timeout","cause":"app_in_use_by_user"}""").code)
         assertEquals("reconcile_request_id", code("""{"ok":false,"error":"delivery_unknown"}""").detail)
         assertNull(code("""{"ok":false,"error":"private user content"}""").detail)
+    }
+
+    @Test fun aMissingPreconditionIsAnImmediateUnavailableThatNamesTheReason() {
+        fun err(raw: String) = GadgetPhoneActions.result("phone.tap", json(raw)) as CommandResult.Err
+        // No session in time: not a slow command. The caller learns it is unavailable, and why.
+        val pending = err("""{"ok":false,"error":"wait_timeout","cause":"phone_session_pending"}""")
+        assertEquals(ErrorCode.UNAVAILABLE, pending.code)
+        assertEquals("phone_session_pending", pending.detail)
+        // The host knows what the person can fix.
+        val off = err("""{"ok":false,"error":"phone_unavailable","cause":"accessibility_off"}""")
+        assertEquals(ErrorCode.UNAVAILABLE, off.code)
+        assertEquals("accessibility_off", off.detail)
+        // Only fixed lowercase codes reach the caller, never screen content.
+        assertNull(err("""{"ok":false,"error":"phone_unavailable","cause":"Private Text 123"}""").detail)
+        assertNull(err("""{"ok":false,"error":"phone_unavailable"}""").detail)
+        // A key with no app-only route and no helper.
+        val key = err("""{"ok":false,"error":"helper_required"}""")
+        assertEquals(ErrorCode.UNAVAILABLE, key.code)
+        assertEquals("helper_required", key.detail)
+        // A genuine slow command is still a timeout.
+        assertEquals(ErrorCode.TIMEOUT, err("""{"ok":false,"error":"wait_timeout"}""").code)
     }
 
     @Test fun aBatchStoppedAfterSuccessfulStepsKeepsItsTopLevelCause() {
@@ -133,6 +173,58 @@ class GadgetPhoneActionsTest {
         assertEquals(ErrorCode.LOCAL_GATE_DENIED, denied.code)
         assertEquals("app_access_denied", denied.detail)
         assertNull(err("""{"ok":false,"error":"Some Private Text","gateDenied":true}""").detail)
+    }
+
+    /**
+     * Build 51, cold start: no display, no owner, a cold service, then the first opening of a third-party app. Whatever
+     * stops that opening before the app reaches the virtual screen is a missing precondition named for the caller:
+     * `unavailable` with a fixed reason, never a bare `executor_error`.
+     */
+    @Test fun aColdOpeningThatNeverReachesTheVirtualScreenIsUnavailableAndNamed() {
+        fun err(raw: String) = GadgetPhoneActions.result("phone.open_app", json(raw)) as CommandResult.Err
+        val blocked = err("""{"ok":false,"error":"app_not_in_front","executed":false,"cause":"The app did not come to the front. Nothing came to the foreground. Started while Mika's screen was closed; Android may have blocked it (background_launch_blocked)."}""")
+        assertEquals(ErrorCode.UNAVAILABLE, blocked.code)
+        assertEquals("background_launch_blocked", blocked.detail)
+        val slow = err("""{"ok":false,"error":"app_not_in_front","executed":false,"cause":"In the foreground now: some.other.app."}""")
+        assertEquals(ErrorCode.UNAVAILABLE, slow.code)
+        assertEquals("app_not_in_front", slow.detail)
+        val refused = err("""{"ok":false,"error":"launch_failed","executed":false}""")
+        assertEquals(ErrorCode.UNAVAILABLE, refused.code)
+        assertEquals("launch_failed", refused.detail)
+    }
+
+    @Test fun theFirstOpeningOfAColdSessionNamesWhyTheSessionOrTheScreenWasNotThere() {
+        fun err(raw: String) = GadgetPhoneActions.result("phone.open_app", json(raw)) as CommandResult.Err
+        // No session yet: the maintenance loop had not built it within the wait.
+        val pending = err("""{"ok":false,"error":"wait_timeout","cause":"phone_session_pending","executed":false}""")
+        assertEquals(ErrorCode.UNAVAILABLE, pending.code); assertEquals("phone_session_pending", pending.detail)
+        // The session could not be created, or the system refused the first virtual display.
+        val noSession = err("""{"ok":false,"error":"phone_unavailable","cause":"session_create_failed","executed":false}""")
+        assertEquals(ErrorCode.UNAVAILABLE, noSession.code); assertEquals("session_create_failed", noSession.detail)
+        val noDisplay = err("""{"ok":false,"error":"phone_unavailable","cause":"display_create_refused","executed":false}""")
+        assertEquals(ErrorCode.UNAVAILABLE, noDisplay.code); assertEquals("display_create_refused", noDisplay.detail)
+        // The session was replaced under the opening (accessibility service rebound after the task was removed).
+        val replaced = err("""{"ok":false,"error":"phone_unavailable","cause":"session_replaced","executed":false}""")
+        assertEquals(ErrorCode.UNAVAILABLE, replaced.code); assertEquals("session_replaced", replaced.detail)
+    }
+
+    @Test fun anOpeningThatStopsInsideABatchAtItsFirstStepIsUnavailableToo() {
+        val raw = """{"ok":false,"completed":0,"results":[{"ok":false,"error":"app_not_in_front","executed":false,"cause":"x (background_launch_blocked)."}]}"""
+        val e = GadgetPhoneActions.result("phone.run_batch", json(raw)) as CommandResult.Err
+        assertEquals(ErrorCode.UNAVAILABLE, e.code)
+        assertEquals("background_launch_blocked", e.detail)
+    }
+
+    @Test fun theOpeningFailureNeverEchoesScreenTextAndAnUnknownOutcomeStillAsksToReconcile() {
+        // The detail is one of two fixed words: free text in the host's hint (the foreground package, screen text) stays out.
+        val e = GadgetPhoneActions.result("phone.open_app",
+            json("""{"ok":false,"error":"app_not_in_front","cause":"In the foreground now: com.secret.bank (Some Private Text)."}""")) as CommandResult.Err
+        assertEquals("app_not_in_front", e.detail)
+        // An opening whose delivery is unknown may already have run: that stays a reconcile, not a retryable unavailable.
+        val unknown = GadgetPhoneActions.result("phone.open_app",
+            json("""{"ok":false,"error":"launch_timeout_unknown","cause":"launch_executor_exception","executed":false,"executionUnknown":true}""")) as CommandResult.Err
+        assertEquals(ErrorCode.EXECUTOR_ERROR, unknown.code)
+        assertEquals("reconcile_request_id", unknown.detail)
     }
 
     @Test fun controlScopeFollowsTheRegistrationNotTheSession() {
