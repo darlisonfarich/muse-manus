@@ -157,7 +157,7 @@ class SamWakeService : Service() {
         val fromWindows = runCatching { service.windows.mapNotNull { it.root } }.getOrDefault(emptyList())
         val active = runCatching { service.rootInActiveWindow }.getOrNull()
         val all = (fromWindows + listOfNotNull(active)).distinct()
-        return all.sortedByDescending { it.packageName?.toString() == CLAUDE_PACKAGE }
+        return all.sortedByDescending { it.packageName?.toString() == MUSE_PACKAGE }
     }
 
     private fun dumpTree(roots: List<AccessibilityNodeInfo>): String {
@@ -185,7 +185,7 @@ class SamWakeService : Service() {
         var unlabeledInClaude: AccessibilityNodeInfo? = null
         var unlabeledRect: android.graphics.Rect? = null
         for (root in roots) {
-            val inClaude = root.packageName?.toString() == CLAUDE_PACKAGE
+            val inMuse = root.packageName?.toString() == MUSE_PACKAGE
             val queue = ArrayDeque<AccessibilityNodeInfo>(); queue.add(root)
             while (queue.isNotEmpty()) {
                 val n = queue.removeFirst()
@@ -196,7 +196,7 @@ class SamWakeService : Service() {
                 if (semantic) return n
                 // Icon-only fallback inside the Muse window: keep the rightmost clickable
                 // unlabeled node in the bottom third (where the overlay's phone button sits).
-                if (inClaude && n.isClickable && label.isBlank()) {
+                if (inMuse && n.isClickable && label.isBlank()) {
                     val r = android.graphics.Rect(); n.getBoundsInScreen(r)
                     val prev = unlabeledRect
                     if (prev == null || r.centerX() > prev.centerX()) { unlabeledInClaude = n; unlabeledRect = r }
@@ -235,7 +235,7 @@ class SamWakeService : Service() {
 
     companion object {
         private const val TAG = "SamWake"
-        private const val CLAUDE_PACKAGE = "com.anthropic.claude"
+        private const val MUSE_PACKAGE = "com.facebook.aura"
         private const val CHANNEL = "sam_wake"
         private const val ID = 4305
         private const val ACTION_START = "com.darlisonfarich.musemanus.sam.WAKE_START"
