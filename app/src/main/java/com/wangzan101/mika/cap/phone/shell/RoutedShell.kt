@@ -123,7 +123,8 @@ class RoutedShell(
     override fun topTaskId(displayId: Int): Int = on(displayId).topTaskId(displayId)
     override fun topActivity(displayId: Int): String? = on(displayId).topActivity(displayId)
     override fun moveTask(taskId: Int, displayId: Int): Boolean = on(displayId).moveTask(taskId, displayId)
-    override fun injectKey(displayId: Int, keyCode: Int): Boolean = on(displayId).injectKey(displayId, keyCode)
+    override fun injectKey(displayId: Int, keyCode: Int): Boolean =
+        if (keyCode == 10_001) inApp.injectKey(displayId, keyCode) else on(displayId).injectKey(displayId, keyCode)
     override fun injectTap(displayId: Int, x: Int, y: Int): Boolean = on(displayId).injectTap(displayId, x, y)
     override fun injectStroke(displayId: Int, xs: IntArray, ys: IntArray, times: LongArray): Boolean =
         on(displayId).injectStroke(displayId, xs, ys, times)

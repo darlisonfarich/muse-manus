@@ -221,11 +221,12 @@ class InAppShell(private val context: Context) : IMikaShell.Stub() {
     // ---- keys ----
 
     override fun injectKey(displayId: Int, keyCode: Int): Boolean {
-        if (!own(displayId)) return false
+        if (!own(displayId) && keyCode != 10_001) return false
         return when (HelperlessRouting.keyPath(keyCode, helperUp = false, sdk = Build.VERSION.SDK_INT)) {
             KeyPath.AppAudio -> audioKey(keyCode)
             KeyPath.AppGlobalBack -> globalBack(displayId)
             KeyPath.AppGlobalDpad -> globalDpad(displayId, keyCode)
+            KeyPath.AppGlobalAction -> globalKeyAction(displayId, keyCode)
             else -> {
                 Log.w(TAG, "key $keyCode needs the helper")
                 false
@@ -282,6 +283,36 @@ class InAppShell(private val context: Context) : IMikaShell.Stub() {
         return runCatching { service.performGlobalAction(action) }.getOrDefault(false)
     }
 
+    /** Android global navigation actions are allowed only when this agent display alone owns focus. */
+    private fun globalKeyAction(displayId: Int, keyCode: Int): Boolean {
+        val action = when (keyCode) {
+            KeyEvent.KEYCODE_HOME -> HelperlessRouting.GlobalAction.HOME
+            KeyEvent.KEYCODE_APP_SWITCH -> HelperlessRouting.GlobalAction.RECENTS
+            KeyEvent.KEYCODE_NOTIFICATION -> HelperlessRouting.GlobalAction.NOTIFICATIONS
+            KeyEvent.KEYCODE_SLEEP -> HelperlessRouting.GlobalAction.LOCK_SCREEN
+            KeyEvent.KEYCODE_SYSRQ -> HelperlessRouting.GlobalAction.TAKE_SCREENSHOT
+            10_001 -> HelperlessRouting.GlobalAction.QUICK_SETTINGS
+            else -> return false
+        }
+        return performGlobalAction(displayId, action)
+    }
+
+    /** Shared route for the accessibility actions (including QUICK_SETTINGS for future direct callers). */
+    private fun performGlobalAction(displayId: Int, action: HelperlessRouting.GlobalAction): Boolean {
+        val service = a11y() ?: return false
+        fun active(id: Int) = runCatching { service.windowsOn(id).any { it.isActive || it.isFocused } }.getOrDefault(false)
+        if (!HelperlessRouting.globalActionIsSafe(action, active(displayId), active(Display.DEFAULT_DISPLAY))) return false
+        val platformAction = when (action) {
+            HelperlessRouting.GlobalAction.HOME -> AccessibilityService.GLOBAL_ACTION_HOME
+            HelperlessRouting.GlobalAction.RECENTS -> AccessibilityService.GLOBAL_ACTION_RECENTS
+            HelperlessRouting.GlobalAction.NOTIFICATIONS -> AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS
+            HelperlessRouting.GlobalAction.QUICK_SETTINGS -> AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS
+            HelperlessRouting.GlobalAction.LOCK_SCREEN -> if (Build.VERSION.SDK_INT >= 28) AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN else return false
+            HelperlessRouting.GlobalAction.TAKE_SCREENSHOT -> if (Build.VERSION.SDK_INT >= 28) AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT else return false
+        }
+        return runCatching { service.performGlobalAction(platformAction) }.getOrDefault(false)
+    }
+
     override fun musicVolumeState(): Bundle? = runCatching {
         val audio = context.getSystemService(AudioManager::class.java)
         Bundle().apply {
@@ -331,7 +362,7 @@ class InAppShell(private val context: Context) : IMikaShell.Stub() {
 
     override fun identity(): IntArray = intArrayOf(Process.myUid(), Process.myPid())
     override fun setRestoreWish(flags: Int) = Unit
-    override fun wakeDevice(): Boolean = false
+    override fun wakeDevice(): Boolean = com.wangzan101.mika.device.ScreenWakeup.wake(context)
     override fun dismissDeviceKeyguard(): Boolean = false
     override fun enterDeviceCredential(kind: Int, credential: ByteArray): Boolean = false
     override fun revealDeviceCredential(): Boolean = false

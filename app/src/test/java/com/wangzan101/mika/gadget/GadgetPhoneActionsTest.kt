@@ -24,7 +24,8 @@ class GadgetPhoneActionsTest {
         val catalog = CommandCatalog.museManus(emptyList(), controlCommands = actions)
         val tap = catalog.find("phone.tap")!!
         assertTrue(tap.writes)
-        assertNull(catalog.find("phone.unlock"))
+        assertNotNull(catalog.find("phone.wake"))
+        assertNotNull(catalog.find("phone.unlock"))
         assertNull(catalog.find("phone.approval_issue"))
         assertNull(catalog.find("phone.run_task"))
         val args = json("""{"request_id":"abcdefgh","x":1,"y":2}""")
@@ -32,6 +33,24 @@ class GadgetPhoneActionsTest {
         assertEquals(listOf("phone_tap"), calls)
         assertFalse(catalog.find("phone.reconcile")!!.writes)
         assertTrue(CommandCatalog.registerBytes(catalog, "device", "POCO", "test") < 256 * 1024)
+    }
+
+    @Test fun wakeAndUnlockReturnHonestSuccessOrNamedUnavailableReasons() {
+        val specs = GadgetPhoneActions.specs(
+            { "active" },
+            deviceCall = { name ->
+                when (name) {
+                    "phone.wake" -> json("""{"status":"awake"}""")
+                    else -> json("""{"status":"helper_unavailable"}""")
+                }
+            },
+        ) { _, _ -> error("device action must not route through shell helper") }
+        val catalog = CommandCatalog.museManus(emptyList(), controlCommands = specs)
+        assertTrue((catalog.find("phone.wake")!!.handler.run(JsonObject(emptyMap())) as CommandResult.Ok)
+            .payload.jsonObject["status"]!!.jsonPrimitive.content == "awake")
+        val unavailable = catalog.find("phone.unlock")!!.handler.run(JsonObject(emptyMap())) as CommandResult.Err
+        assertEquals(ErrorCode.UNAVAILABLE, unavailable.code)
+        assertEquals("helper_required_for_credential_unlock", unavailable.detail)
     }
 
     @Test fun mapsNestedFailuresWithoutEchoingPrivateData() {

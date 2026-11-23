@@ -14,6 +14,8 @@ enum class ShellOwner { Helper, InApp }
  * neither can do the job the caller gets an immediate, named refusal instead of a timeout.
  */
 object HelperlessRouting {
+    /** AccessibilityService global actions considered by the helperless phone route. */
+    enum class GlobalAction { HOME, RECENTS, NOTIFICATIONS, QUICK_SETTINGS, LOCK_SCREEN, TAKE_SCREENSHOT }
     /** A new virtual display: the helper's (trusted) one when it is alive, the app's own otherwise. */
     fun newDisplayOwner(helperUp: Boolean): ShellOwner = if (helperUp) ShellOwner.Helper else ShellOwner.InApp
 
@@ -45,6 +47,9 @@ object HelperlessRouting {
         /** D-pad keys (Android 13+): the accessibility global D-pad action, under the same focus proof as BACK. */
         AppGlobalDpad,
 
+        /** System navigation/global actions, only when the agent display is the sole focused display. */
+        AppGlobalAction,
+
         /** No app-only route and no helper: refuse at once, saying a helper is needed. */
         NeedsHelper,
     }
@@ -55,13 +60,18 @@ object HelperlessRouting {
 
     /** DPAD_UP, DPAD_DOWN, DPAD_LEFT, DPAD_RIGHT, DPAD_CENTER, in the order of the accessibility D-pad actions. */
     private val DPAD_KEYS = setOf(19, 20, 21, 22, 23)
+    // HOME, NOTIFICATION, APP_SWITCH, SYSRQ (screenshot), SLEEP (lock screen).
+    private val GLOBAL_ACTION_KEYS = setOf(3, 83, 187, 120, 223, KEYCODE_QUICK_SETTINGS)
+    private const val KEYCODE_QUICK_SETTINGS = 10_001
     private const val TIRAMISU = 33
 
     fun keyPath(keyCode: Int, helperUp: Boolean, sdk: Int = 0): KeyPath = when {
+        keyCode == KEYCODE_QUICK_SETTINGS -> KeyPath.AppGlobalAction
         helperUp -> KeyPath.Helper
         keyCode in AUDIO_KEYS -> KeyPath.AppAudio
         keyCode == KEYCODE_BACK -> KeyPath.AppGlobalBack
         keyCode in DPAD_KEYS && sdk >= TIRAMISU -> KeyPath.AppGlobalDpad
+        keyCode in GLOBAL_ACTION_KEYS -> KeyPath.AppGlobalAction
         else -> KeyPath.NeedsHelper
     }
 
@@ -81,6 +91,18 @@ object HelperlessRouting {
      * safe when the agent display's window is the active one and nothing on the user's main screen is.
      */
     fun backIsSafe(agentDisplayActive: Boolean, mainDisplayActive: Boolean): Boolean = agentDisplayActive && !mainDisplayActive
+
+    /** Global actions target Android's current focus; refuse unless the agent alone owns focus. */
+    fun globalActionIsSafe(agentDisplayActive: Boolean, mainDisplayActive: Boolean): Boolean =
+        agentDisplayActive && !mainDisplayActive
+
+    /** Every action in this set affects the current device UI, so require the same focus proof as BACK. */
+    fun globalActionIsSafe(action: GlobalAction, agentDisplayActive: Boolean, mainDisplayActive: Boolean): Boolean =
+        when (action) {
+            GlobalAction.HOME, GlobalAction.RECENTS, GlobalAction.NOTIFICATIONS,
+            GlobalAction.QUICK_SETTINGS, GlobalAction.LOCK_SCREEN, GlobalAction.TAKE_SCREENSHOT ->
+                globalActionIsSafe(agentDisplayActive, mainDisplayActive)
+        }
 
     /** True when the key can be delivered without the helper (used to answer `helper_required` before acting). */
     fun keyWorksWithoutHelper(keyCode: Int, sdk: Int = 0): Boolean = keyPath(keyCode, helperUp = false, sdk = sdk) != KeyPath.NeedsHelper

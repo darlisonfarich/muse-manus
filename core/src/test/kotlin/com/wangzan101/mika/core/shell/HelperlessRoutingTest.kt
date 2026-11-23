@@ -98,7 +98,7 @@ class HelperlessRoutingTest {
         val helperOwner = HelperlessRouting.displayOwner(ledger, 6, helperUp = true)
         assertEquals(ShellOwner.InApp, appOwner)
         assertEquals(ShellOwner.Helper, helperOwner)
-        for (home in listOf(3, 66, 67, 61)) {
+        for (home in listOf(66, 67, 61)) {
             assertTrue("key $home on the app's display, helper up", HelperlessRouting.keyNeedsMissingHelper(appOwner, home))
             assertFalse("key $home on the helper's display", HelperlessRouting.keyNeedsMissingHelper(helperOwner, home))
         }
@@ -113,7 +113,7 @@ class HelperlessRoutingTest {
     }
 
     @Test fun withoutTheHelperEveryOtherKeyIsRefusedAsNeedingIt() {
-        for (code in listOf(3, 187, 66, 67, 61, 19, 82, 111)) {
+        for (code in listOf(187, 66, 67, 61, 19, 82, 111)) {
             assertEquals("key $code", KeyPath.NeedsHelper, HelperlessRouting.keyPath(code, helperUp = false))
             assertFalse(HelperlessRouting.keyWorksWithoutHelper(code))
         }
@@ -126,6 +126,24 @@ class HelperlessRoutingTest {
         assertFalse(HelperlessRouting.backIsSafe(agentDisplayActive = true, mainDisplayActive = true))
         assertFalse(HelperlessRouting.backIsSafe(agentDisplayActive = false, mainDisplayActive = false))
         assertFalse(HelperlessRouting.backIsSafe(agentDisplayActive = false, mainDisplayActive = true))
+    }
+
+    @Test fun everyAccessibilityGlobalActionUsesTheSameFailClosedFocusProofAsBack() {
+        for (action in HelperlessRouting.GlobalAction.entries) {
+            assertTrue("$action with agent-only focus", HelperlessRouting.globalActionIsSafe(action, true, false))
+            assertFalse("$action when main screen is active", HelperlessRouting.globalActionIsSafe(action, true, true))
+            assertFalse("$action without agent focus", HelperlessRouting.globalActionIsSafe(action, false, false))
+        }
+    }
+
+    @Test fun remainingGlobalNavigationKeyCodesAreRoutedThroughAccessibility() {
+        // HOME, notification shade, Recents, screenshot, lock screen.
+        for (code in listOf(3, 83, 187, 120, 223, 10_001)) {
+            assertEquals("key $code", KeyPath.AppGlobalAction, HelperlessRouting.keyPath(code, helperUp = false))
+            assertTrue("key $code is available app-side", HelperlessRouting.keyWorksWithoutHelper(code))
+        }
+        assertEquals(KeyPath.Helper, HelperlessRouting.keyPath(3, helperUp = true))
+        assertEquals(KeyPath.AppGlobalAction, HelperlessRouting.keyPath(10_001, helperUp = true))
     }
 
     @Test fun appDisplayFlagsNeverAskForTrustedOnlyBitsAndEndWithThePlainPublicSet() {

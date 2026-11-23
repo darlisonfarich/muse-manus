@@ -17,6 +17,7 @@ import kotlinx.serialization.json.JsonPrimitive
 
 /** Only direct-screen tools. Task submission, credential entry and issuing approvals are separate local capabilities. */
 internal object GadgetPhoneActions {
+    private val deviceActions = setOf("phone.wake", "phone.unlock")
     private val actions = setOf("phone.open_app", "phone.tap", "phone.type_text", "phone.scroll", "phone.swipe",
         "phone.gesture", "phone.press_key", "phone.volume", "phone.media", "phone.press_back", "phone.run_batch")
     private val metadata = mapOf(
@@ -50,9 +51,10 @@ internal object GadgetPhoneActions {
         scope: () -> String?,
         /** Where [failureLine] goes: the link's own log. The wire audit never carries a detail, so this line is the only place a failure keeps both the wire code and the host's raw reason. */
         note: (String) -> Unit = {},
+        deviceCall: suspend (String) -> JsonObject = { JsonObject(mapOf("status" to JsonPrimitive("device_unavailable"))) },
         call: suspend (String, JsonObject) -> JsonObject,
     ): List<CommandSpec> =
-        PhoneCatalog.stubs().filter { it.name in actions || it.name in metadata }.map { stub ->
+        PhoneCatalog.stubs().filter { it.name in actions || it.name in metadata || it.name in deviceActions }.map { stub ->
             val openApp = stub.name == "phone.open_app"
             CommandSpec(stub.name, if (openApp) openAppDescription else stub.description.removePrefix(CommandSpec.STUB_PREFIX),
                 stub.required, if (openApp) stub.optional + ("target" to openAppTarget) else stub.optional,
@@ -60,10 +62,37 @@ internal object GadgetPhoneActions {
                 // Cancel ends the registration's pending work as its expected effect.
                 replayScope = if (stub.name == "phone.cancel") null else scope,
             ) { args ->
-                val raw = runBlocking { call(PhoneCatalog.MIKA.getValue(stub.name), translate(stub.name, args)) }
-                result(stub.name, raw).also { r -> if (r is CommandResult.Err) runCatching { note(failureLine(stub.name, r, raw)) } }
+                val raw = runBlocking {
+                    if (stub.name in deviceActions) deviceCall(stub.name)
+                    else call(PhoneCatalog.MIKA.getValue(stub.name), translate(stub.name, args))
+                }
+                val outcome = if (stub.name in deviceActions) deviceResult(stub.name, raw) else result(stub.name, raw)
+                outcome.also { r -> if (r is CommandResult.Err) runCatching { note(failureLine(stub.name, r, raw)) } }
             }
         }
+
+    private fun deviceResult(name: String, raw: JsonObject): CommandResult {
+        val status = (raw["status"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: "device_unavailable"
+        val success = if (name == "phone.wake") status == "awake" else status == "unlocked"
+        return if (success) CommandResult.Ok(JsonObject(mapOf("ok" to JsonPrimitive(true), "status" to JsonPrimitive(status))))
+        else CommandResult.Err(ErrorCode.UNAVAILABLE, deviceUnavailableReason(status))
+    }
+
+    internal fun deviceUnavailableReason(status: String): String = when (status) {
+        "helper_unavailable" -> "helper_required_for_credential_unlock"
+        "disabled" -> "device_access_disabled"
+        "first_unlock_required" -> "first_unlock_required"
+        "attempt_blocked" -> "credential_attempt_blocked"
+        "credential_required" -> "credential_not_configured"
+        "credential_unavailable" -> "credential_unavailable"
+        "unsupported_keyguard" -> "unsupported_keyguard"
+        "credential_kind_mismatch" -> "credential_kind_mismatch"
+        "wake_failed" -> "wake_failed"
+        "dismiss_failed" -> "keyguard_dismiss_failed"
+        "input_failed" -> "credential_entry_failed"
+        "unlock_failed" -> "unlock_failed"
+        else -> "device_unavailable"
+    }
 
     /**
      * One log line for a failed phone command: the code and detail that go on the wire, then the host's raw reason and

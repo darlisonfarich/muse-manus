@@ -9,6 +9,7 @@ import com.darlisonfarich.gadgetlink.commands.InvokeAuditLog
 import com.darlisonfarich.gadgetlink.commands.LocalGate
 import com.wangzan101.mika.MikaApp
 import com.wangzan101.mika.settings.FeatureFlags
+import com.wangzan101.mika.core.device.toJson
 import java.io.File
 
 /**
@@ -43,7 +44,17 @@ object GadgetLinkCommands {
         return CommandCatalog.museManus(
             includeStubs = measureStubs(context),
             readCommands = GadgetPhoneReadCommands.specs(scope) { screenshot, full -> host.readForGadget(lease, screenshot, full) },
-            controlCommands = GadgetPhoneActions.specs(lease::scope) { name, args -> host.callGadget(lease, name, args) },
+            controlCommands = GadgetPhoneActions.specs(
+                lease::scope,
+                deviceCall = { name ->
+                    val access = (context.applicationContext as MikaApp).deviceAccess.access
+                    when (name) {
+                        "phone.wake" -> access.wake().toJson()
+                        "phone.unlock" -> access.unlock().toJson()
+                        else -> error("unknown device command")
+                    }
+                },
+            ) { name, args -> host.callGadget(lease, name, args) },
         )
     }
 
