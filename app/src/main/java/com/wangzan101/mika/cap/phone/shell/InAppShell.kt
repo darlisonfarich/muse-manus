@@ -46,16 +46,30 @@ class InAppShell(private val context: Context) : IMikaShell.Stub() {
 
     // ---- virtual display ----
 
+    /** Why the last [createDisplay] returned -1, as one fixed word; the host names it in the `unavailable` answer. */
+    @Volatile var lastCreateRefusal: String? = null
+        private set
+
     override fun createDisplay(surface: Surface, width: Int, height: Int, dpi: Int): Int {
-        val manager = context.getSystemService(DisplayManager::class.java) ?: return -1
+        lastCreateRefusal = null
+        val manager = context.getSystemService(DisplayManager::class.java)
+        if (manager == null) {
+            lastCreateRefusal = "display_manager_missing"
+            return -1
+        }
         for (flags in InAppDisplayFlags.candidates(Build.VERSION.SDK_INT)) {
+            var made: VirtualDisplay? = null
             try {
                 val vd = manager.createVirtualDisplay("mika-agent-app", width, height, dpi, surface, flags)
+                    ?: throw IllegalStateException("null display")
+                made = vd
                 val id = vd.display.displayId
                 synchronized(displays) { displays[id] = vd }
                 Log.i(TAG, "app-owned display $id created, flags=0x${flags.toString(16)}")
                 return id
             } catch (t: Throwable) {
+                runCatching { made?.release() }
+                lastCreateRefusal = "display_create_refused"
                 Log.w(TAG, "createVirtualDisplay flags=0x${flags.toString(16)} refused: ${t.javaClass.simpleName}")
             }
         }
@@ -133,19 +147,26 @@ class InAppShell(private val context: Context) : IMikaShell.Stub() {
 
     // ---- who is where, from the accessibility windows ----
 
-    /** Packages with a readable application window on [displayId]. A window whose root cannot be read has no owner here. */
-    private fun appPackagesOn(displayId: Int): Set<String> {
+    /** The application windows on one display: who owns the readable ones, and how many have an unreadable root. */
+    private class AppWindows(val packages: Set<String>, val unreadable: Int)
+
+    private fun appWindowsOn(displayId: Int): AppWindows {
         val windows = runCatching { a11y()?.windowsOn(displayId) }.getOrNull().orEmpty()
-        return windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
-            .mapNotNull { runCatching { it.root?.packageName?.toString() }.getOrNull() }.toSet()
+            .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+        val owners = windows.map { runCatching { it.root?.packageName?.toString() }.getOrNull() }
+        return AppWindows(owners.filterNotNull().toSet(), owners.count { it == null })
     }
+
+    /** Packages with a readable application window on [displayId]. */
+    private fun appPackagesOn(displayId: Int): Set<String> = appWindowsOn(displayId).packages
 
     /** The user is using [packageName] on the main screen. Other users' copies are not visible to the app: false. */
     override fun visibleOnMainScreen(packageName: String, userId: Int): Boolean {
         if (userId != myUser) return false
         // Without the accessibility service nothing can be seen: say "in use", the cautious answer.
         if (a11y() == null) return true
-        return packageName in appPackagesOn(Display.DEFAULT_DISPLAY)
+        val main = appWindowsOn(Display.DEFAULT_DISPLAY)
+        return HelperlessRouting.inUseOnMain(packageName, main.packages, main.unreadable)
     }
 
     override fun displayOfPackage(packageName: String): Int {
@@ -167,18 +188,26 @@ class InAppShell(private val context: Context) : IMikaShell.Stub() {
     override fun mainArrivals(sinceUptimeMs: Long): Bundle? = null
 
     /**
-     * The window manager's secure-window verdict is not available to an app. Report "unknown" (0): the host treats an
-     * unknown verdict as fail-closed for reads that expose pixels, so nothing sensitive leaks by assuming "clear".
+     * The window manager's secure-window verdict is not available to an app, so it is derived from what the app sees
+     * (see [HelperlessRouting.appWindowVerdict]): windows on the display = clear, none = empty, no accessibility
+     * service = unknown (fail-closed). Reporting "unknown" always made every read and action fail once the display
+     * existed. Not claimed for displays this shell did not create.
      */
-    override fun virtualWindowProtection(displayId: Int): Int = 0
+    override fun virtualWindowProtection(displayId: Int): Int {
+        if (!own(displayId)) return HelperlessRouting.VERDICT_UNKNOWN
+        val service = a11y()
+        val count = runCatching { service?.windowsOn(displayId)?.size }.getOrNull()
+        return HelperlessRouting.appWindowVerdict(accessibilityUp = service != null && count != null, windowCount = count ?: 0)
+    }
 
     // ---- keys ----
 
     override fun injectKey(displayId: Int, keyCode: Int): Boolean {
         if (!own(displayId)) return false
-        return when (HelperlessRouting.keyPath(keyCode, helperUp = false)) {
+        return when (HelperlessRouting.keyPath(keyCode, helperUp = false, sdk = Build.VERSION.SDK_INT)) {
             KeyPath.AppAudio -> audioKey(keyCode)
             KeyPath.AppGlobalBack -> globalBack(displayId)
+            KeyPath.AppGlobalDpad -> globalDpad(displayId, keyCode)
             else -> {
                 Log.w(TAG, "key $keyCode needs the helper")
                 false
@@ -217,6 +246,22 @@ class InAppShell(private val context: Context) : IMikaShell.Stub() {
         val service = a11y() ?: return false
         if (!canGoBack(displayId)) return false
         return runCatching { service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK) }.getOrDefault(false)
+    }
+
+    /** D-pad through the accessibility global action (Android 13+), only under the same focus proof as BACK. */
+    private fun globalDpad(displayId: Int, keyCode: Int): Boolean {
+        if (Build.VERSION.SDK_INT < 33) return false
+        val service = a11y() ?: return false
+        if (!canGoBack(displayId)) return false
+        val action = when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_UP -> AccessibilityService.GLOBAL_ACTION_DPAD_UP
+            KeyEvent.KEYCODE_DPAD_DOWN -> AccessibilityService.GLOBAL_ACTION_DPAD_DOWN
+            KeyEvent.KEYCODE_DPAD_LEFT -> AccessibilityService.GLOBAL_ACTION_DPAD_LEFT
+            KeyEvent.KEYCODE_DPAD_RIGHT -> AccessibilityService.GLOBAL_ACTION_DPAD_RIGHT
+            KeyEvent.KEYCODE_DPAD_CENTER -> AccessibilityService.GLOBAL_ACTION_DPAD_CENTER
+            else -> return false
+        }
+        return runCatching { service.performGlobalAction(action) }.getOrDefault(false)
     }
 
     override fun musicVolumeState(): Bundle? = runCatching {

@@ -4,8 +4,10 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
+import android.os.RemoteException
 import android.util.Log
 import android.view.Surface
+import com.wangzan101.mika.gadget.GadgetLink
 import com.wangzan101.mika.core.shell.DisplayLedger
 import com.wangzan101.mika.core.shell.HelperlessRouting
 import com.wangzan101.mika.core.shell.ShellOwner
@@ -22,6 +24,8 @@ import com.wangzan101.mika.shell.IMikaShell
 class RoutedShell(
     private val helper: () -> IMikaShell?,
     private val inApp: InAppShell,
+    /** Where a fallback is recorded: the link's own log, so the person sees it when they copy the log. */
+    private val note: (String) -> Unit = { GadgetLink.log(it) },
 ) : IMikaShell.Stub() {
     private val ledger = DisplayLedger()
 
@@ -34,10 +38,30 @@ class RoutedShell(
     /** BACK can reach the agent display without the helper right now (see [InAppShell.canGoBack]). */
     fun canGoBackWithoutHelper(displayId: Int): Boolean = inApp.canGoBack(displayId)
 
+    /** Who answers calls on [displayId] right now: its creator, or the app when that creator (the helper) is gone. */
+    fun ownerOf(displayId: Int): ShellOwner = HelperlessRouting.displayOwner(ledger, displayId, helper() != null)
+
+    /** Why the last display creation was refused, as a fixed word, for the `unavailable` answer. */
+    fun createRefusal(): String = inApp.lastCreateRefusal ?: "display_create_failed"
+
     /** Releases only the displays this app created. The helper's are its own, and the helper is shared with tasks. */
     fun releaseOwn() = inApp.releaseAll()
 
-    private fun global(): IMikaShell = helper() ?: inApp
+    /**
+     * A call that names no display. With the helper up it goes through it; if the helper fails AT that call (its process
+     * died or its binder broke) the app's own answer comes back at once, in the same call: no wait for the helper to be
+     * revived in the middle of a command. The revival is the watchdog's own job, in the background.
+     */
+    private fun <T> viaHelper(name: String, call: (IMikaShell) -> T): T {
+        val h = helper() ?: return call(inApp)
+        return try {
+            call(h)
+        } catch (e: RemoteException) {
+            Log.w(TAG, "helper failed at $name; answering with the app's own", e)
+            note("shell: helper_call_failed $name, answered_in_app")
+            call(inApp)
+        }
+    }
 
     private fun on(displayId: Int): IMikaShell {
         val h = helper()
@@ -58,9 +82,11 @@ class RoutedShell(
                 return id
             }
             Log.w(TAG, "helper could not create the display; using the app's own")
+            note("shell: helper_display_failed, using_app_display")
         }
         val id = inApp.createDisplay(surface, width, height, dpi)
         if (id >= 0) ledger.record(id, ShellOwner.InApp)
+        else note("shell: app_display_refused ${inApp.lastCreateRefusal ?: "unknown"}")
         return id
     }
 
@@ -121,38 +147,38 @@ class RoutedShell(
 
     // ---- calls that name no display ----
 
-    override fun startAppOnMain(packageName: String): Int = global().startAppOnMain(packageName)
-    override fun visibleOnMainScreen(packageName: String, userId: Int): Boolean = global().visibleOnMainScreen(packageName, userId)
-    override fun watchMainScreen(windowMs: Int): Int = global().watchMainScreen(windowMs)
-    override fun mainArrivals(sinceUptimeMs: Long): Bundle? = global().mainArrivals(sinceUptimeMs)
-    override fun displayOfTask(taskId: Int): Int = global().displayOfTask(taskId)
-    override fun packageOfTask(taskId: Int): String? = global().packageOfTask(taskId)
-    override fun userOfTask(taskId: Int): Int = global().userOfTask(taskId)
-    override fun setAudioMuted(packageName: String, muted: Boolean): Boolean = global().setAudioMuted(packageName, muted)
-    override fun getAudioMode(packageName: String): String? = global().getAudioMode(packageName)
-    override fun setAudioMode(packageName: String, mode: String): Boolean = global().setAudioMode(packageName, mode)
-    override fun getAudioModeInUser(packageName: String, userId: Int): String? = global().getAudioModeInUser(packageName, userId)
+    override fun startAppOnMain(packageName: String): Int = viaHelper("startAppOnMain") { it.startAppOnMain(packageName) }
+    override fun visibleOnMainScreen(packageName: String, userId: Int): Boolean = viaHelper("visibleOnMainScreen") { it.visibleOnMainScreen(packageName, userId) }
+    override fun watchMainScreen(windowMs: Int): Int = viaHelper("watchMainScreen") { it.watchMainScreen(windowMs) }
+    override fun mainArrivals(sinceUptimeMs: Long): Bundle? = viaHelper("mainArrivals") { it.mainArrivals(sinceUptimeMs) }
+    override fun displayOfTask(taskId: Int): Int = viaHelper("displayOfTask") { it.displayOfTask(taskId) }
+    override fun packageOfTask(taskId: Int): String? = viaHelper("packageOfTask") { it.packageOfTask(taskId) }
+    override fun userOfTask(taskId: Int): Int = viaHelper("userOfTask") { it.userOfTask(taskId) }
+    override fun setAudioMuted(packageName: String, muted: Boolean): Boolean = viaHelper("setAudioMuted") { it.setAudioMuted(packageName, muted) }
+    override fun getAudioMode(packageName: String): String? = viaHelper("getAudioMode") { it.getAudioMode(packageName) }
+    override fun setAudioMode(packageName: String, mode: String): Boolean = viaHelper("setAudioMode") { it.setAudioMode(packageName, mode) }
+    override fun getAudioModeInUser(packageName: String, userId: Int): String? = viaHelper("getAudioModeInUser") { it.getAudioModeInUser(packageName, userId) }
     override fun setAudioMutedInUser(packageName: String, userId: Int, muted: Boolean): Boolean =
-        global().setAudioMutedInUser(packageName, userId, muted)
+        viaHelper("setAudioMutedInUser") { it.setAudioMutedInUser(packageName, userId, muted) }
     override fun setAudioModeInUser(packageName: String, userId: Int, mode: String): Boolean =
-        global().setAudioModeInUser(packageName, userId, mode)
-    override fun musicVolumeState(): Bundle? = global().musicVolumeState()
-    override fun setClipText(text: String): Int = global().setClipText(text)
-    override fun restoreClip(): Boolean = global().restoreClip()
-    override fun savedClipText(): String? = global().savedClipText()
-    override fun restoreClipText(original: String, ours: String): Boolean = global().restoreClipText(original, ours)
-    override fun identity(): IntArray = global().identity()
-    override fun openDevtoolsSocket(name: String): ParcelFileDescriptor? = global().openDevtoolsSocket(name)
-    override fun listUsers(): String? = global().listUsers()
-    override fun listPackages(userId: Int): String? = global().listPackages(userId)
-    override fun isSystemPackage(packageName: String): Boolean = global().isSystemPackage(packageName)
-    override fun runCommand(command: String): Bundle = global().runCommand(command)
-    override fun setRestoreWish(flags: Int) = global().setRestoreWish(flags)
-    override fun appCopyUsers(): Bundle? = global().appCopyUsers()
-    override fun wakeDevice(): Boolean = global().wakeDevice()
-    override fun dismissDeviceKeyguard(): Boolean = global().dismissDeviceKeyguard()
-    override fun enterDeviceCredential(kind: Int, credential: ByteArray): Boolean = global().enterDeviceCredential(kind, credential)
-    override fun revealDeviceCredential(): Boolean = global().revealDeviceCredential()
+        viaHelper("setAudioModeInUser") { it.setAudioModeInUser(packageName, userId, mode) }
+    override fun musicVolumeState(): Bundle? = viaHelper("musicVolumeState") { it.musicVolumeState() }
+    override fun setClipText(text: String): Int = viaHelper("setClipText") { it.setClipText(text) }
+    override fun restoreClip(): Boolean = viaHelper("restoreClip") { it.restoreClip() }
+    override fun savedClipText(): String? = viaHelper("savedClipText") { it.savedClipText() }
+    override fun restoreClipText(original: String, ours: String): Boolean = viaHelper("restoreClipText") { it.restoreClipText(original, ours) }
+    override fun identity(): IntArray = viaHelper("identity") { it.identity() }
+    override fun openDevtoolsSocket(name: String): ParcelFileDescriptor? = viaHelper("openDevtoolsSocket") { it.openDevtoolsSocket(name) }
+    override fun listUsers(): String? = viaHelper("listUsers") { it.listUsers() }
+    override fun listPackages(userId: Int): String? = viaHelper("listPackages") { it.listPackages(userId) }
+    override fun isSystemPackage(packageName: String): Boolean = viaHelper("isSystemPackage") { it.isSystemPackage(packageName) }
+    override fun runCommand(command: String): Bundle = viaHelper("runCommand") { it.runCommand(command) }
+    override fun setRestoreWish(flags: Int) = viaHelper("setRestoreWish") { it.setRestoreWish(flags) }
+    override fun appCopyUsers(): Bundle? = viaHelper("appCopyUsers") { it.appCopyUsers() }
+    override fun wakeDevice(): Boolean = viaHelper("wakeDevice") { it.wakeDevice() }
+    override fun dismissDeviceKeyguard(): Boolean = viaHelper("dismissDeviceKeyguard") { it.dismissDeviceKeyguard() }
+    override fun enterDeviceCredential(kind: Int, credential: ByteArray): Boolean = viaHelper("enterDeviceCredential") { it.enterDeviceCredential(kind, credential) }
+    override fun revealDeviceCredential(): Boolean = viaHelper("revealDeviceCredential") { it.revealDeviceCredential() }
 
     private companion object {
         const val TAG = "RoutedShell"

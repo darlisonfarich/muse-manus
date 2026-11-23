@@ -42,18 +42,38 @@ object HelperlessRouting {
         /** Back: only when the accessibility service can prove the agent display holds input focus. */
         AppGlobalBack,
 
+        /** D-pad keys (Android 13+): the accessibility global D-pad action, under the same focus proof as BACK. */
+        AppGlobalDpad,
+
         /** No app-only route and no helper: refuse at once, saying a helper is needed. */
         NeedsHelper,
     }
 
-    private val AUDIO_KEYS = setOf(24, 25, 164, 85, 86, 87, 88)
+    // volume up/down/mute, headset hook, play/pause, stop, next, previous, rewind, fast-forward, play, pause
+    private val AUDIO_KEYS = setOf(24, 25, 164, 79, 85, 86, 87, 88, 89, 90, 126, 127)
     private const val KEYCODE_BACK = 4
 
-    fun keyPath(keyCode: Int, helperUp: Boolean): KeyPath = when {
+    /** DPAD_UP, DPAD_DOWN, DPAD_LEFT, DPAD_RIGHT, DPAD_CENTER, in the order of the accessibility D-pad actions. */
+    private val DPAD_KEYS = setOf(19, 20, 21, 22, 23)
+    private const val TIRAMISU = 33
+
+    fun keyPath(keyCode: Int, helperUp: Boolean, sdk: Int = 0): KeyPath = when {
         helperUp -> KeyPath.Helper
         keyCode in AUDIO_KEYS -> KeyPath.AppAudio
         keyCode == KEYCODE_BACK -> KeyPath.AppGlobalBack
+        keyCode in DPAD_KEYS && sdk >= TIRAMISU -> KeyPath.AppGlobalDpad
         else -> KeyPath.NeedsHelper
+    }
+
+    /**
+     * The key is refused at once with `helper_required`: the screen's OWNER has no route for it. Decided by the owner
+     * of the display, not by whether a helper is up now: a display the app created stays answered by the app even
+     * after a helper appears, so "a helper is up" does not make the key deliverable there.
+     */
+    fun keyNeedsMissingHelper(owner: ShellOwner?, keyCode: Int, sdk: Int = 0): Boolean = when (owner) {
+        ShellOwner.Helper -> false
+        // No display yet: the session would build it with the app when no helper is up; ask for the app's routes.
+        ShellOwner.InApp, null -> keyPath(keyCode, helperUp = false, sdk = sdk) == KeyPath.NeedsHelper
     }
 
     /**
@@ -63,7 +83,33 @@ object HelperlessRouting {
     fun backIsSafe(agentDisplayActive: Boolean, mainDisplayActive: Boolean): Boolean = agentDisplayActive && !mainDisplayActive
 
     /** True when the key can be delivered without the helper (used to answer `helper_required` before acting). */
-    fun keyWorksWithoutHelper(keyCode: Int): Boolean = keyPath(keyCode, helperUp = false) != KeyPath.NeedsHelper
+    fun keyWorksWithoutHelper(keyCode: Int, sdk: Int = 0): Boolean = keyPath(keyCode, helperUp = false, sdk = sdk) != KeyPath.NeedsHelper
+
+    /**
+     * The window-manager verdict the helper normally gives (see `VirtualWindowProtection` codes 0 unknown, 1 empty,
+     * 2 clear), derived from what the app itself sees when no helper answers. The app cannot tell FLAG_SECURE apart,
+     * but its own ImageReader receives a black frame from such a window, so no pixel leaks, and a password/secret
+     * window is still caught by the snapshot (`protected`, `isProtected()`). No accessibility service = unknown
+     * (fail-closed). Windows on the display = clear; none = empty.
+     */
+    fun appWindowVerdict(accessibilityUp: Boolean, windowCount: Int): Int = when {
+        !accessibilityUp -> VERDICT_UNKNOWN
+        windowCount > 0 -> VERDICT_CLEAR
+        else -> VERDICT_EMPTY
+    }
+
+    /**
+     * The user is using [packageName] on the main screen, as far as the app can tell. An application window whose
+     * root cannot be read has an unknown owner: it may well be this package, and opening the package elsewhere would
+     * make the system pull the user's task onto the virtual display. So any unreadable application window counts as
+     * "in use" (fail-closed).
+     */
+    fun inUseOnMain(packageName: String, readablePackages: Set<String>, unreadableAppWindows: Int): Boolean =
+        packageName in readablePackages || unreadableAppWindows > 0
+
+    const val VERDICT_UNKNOWN = 0
+    const val VERDICT_EMPTY = 1
+    const val VERDICT_CLEAR = 2
 }
 
 /**
@@ -97,23 +143,36 @@ class DisplayLedger {
 /**
  * Why the gadget session cannot exist right now, as one stable word, in the order the person can fix it.
  * Null means nothing blocks it. These words reach the caller as the detail of an `unavailable` answer.
+ *
+ * A locked device or a dark screen is NOT here on purpose: reads on the app's virtual display work with the physical
+ * screen off, so they do not block the session. They block only the actions that touch the physical phone, which
+ * answer `needs_user` naming [PhoneState.cause].
  */
 object SessionReadiness {
     const val REMOTE_ACCESS_DISABLED = "remote_access_disabled"
     const val LINK_DOWN = "gadget_link_down"
     const val ACCESSIBILITY_OFF = "accessibility_off"
-    const val DEVICE_LOCKED = "device_locked"
-    const val SCREEN_OFF = "screen_off"
 
     fun blocker(
         remoteAccessEnabled: Boolean,
         linkConnected: Boolean,
         accessibilityUp: Boolean,
-        deviceLocked: Boolean,
-        screenInteractive: Boolean,
     ): String? = when {
         !remoteAccessEnabled -> REMOTE_ACCESS_DISABLED
         !linkConnected -> LINK_DOWN
+        !accessibilityUp -> ACCESSIBILITY_OFF
+        else -> null
+    }
+}
+
+/** Why a physical-phone action must wait for the person: the one word named in `needs_user`. */
+object PhoneState {
+    const val DEVICE_LOCKED = "device_locked"
+    const val SCREEN_OFF = "screen_off"
+    const val ACCESSIBILITY_OFF = "accessibility_off"
+
+    /** Null = the phone is ready for an action. Locked wins over dark, so the person fixes the real thing first. */
+    fun cause(accessibilityUp: Boolean, deviceLocked: Boolean, screenInteractive: Boolean): String? = when {
         !accessibilityUp -> ACCESSIBILITY_OFF
         deviceLocked -> DEVICE_LOCKED
         !screenInteractive -> SCREEN_OFF
@@ -125,6 +184,8 @@ object SessionReadiness {
  * Flag sets for a virtual display the app creates itself, richest first. The app is not allowed the trusted-only
  * flags (TRUSTED, OWN_DISPLAY_GROUP, ALWAYS_UNLOCKED, OWN_FOCUS, STEAL_TOP_FOCUS_DISABLED) that the helper uses, and
  * some systems also refuse the hidden touch/rotation flags to ordinary apps, so each set is tried until one is accepted.
+ * Every set keeps DESTROY_CONTENT_ON_REMOVAL: releasing the display closes its tasks instead of moving them onto the
+ * user's main screen, which is what the shell's `finishDisplay` note promises.
  */
 object InAppDisplayFlags {
     private const val PUBLIC = 1 shl 0
@@ -140,7 +201,7 @@ object InAppDisplayFlags {
         val sets = buildList {
             if (sdk >= TIRAMISU) add(base or TOUCH_FEEDBACK_DISABLED)
             add(base)
-            add(PUBLIC or OWN_CONTENT_ONLY)
+            add(PUBLIC or OWN_CONTENT_ONLY or DESTROY_CONTENT_ON_REMOVAL)
         }
         return sets.distinct()
     }

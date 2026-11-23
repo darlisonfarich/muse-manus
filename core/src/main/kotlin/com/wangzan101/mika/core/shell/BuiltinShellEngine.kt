@@ -198,6 +198,24 @@ class BuiltinShellEngine(
     }
 
     /**
+     * Proactive wake-up (see [HelperWarmup]): asks for the helper only when the environment already lets it in, and stays
+     * dormant otherwise. Reads only; it never opens the debugging switch and never touches Wi-Fi or any radio.
+     */
+    fun warm(sinceLastAskMs: Long?): HelperWarmup.Decision {
+        val decision = HelperWarmup.decide(
+            helperUp = helper.value != null,
+            rootReady = rootStart,
+            paired = platform.paired(),
+            developerOptions = platform.developerOptions(),
+            debuggingReachable = platform.wirelessDebugging(),
+            wifiConnected = platform.wifiConnected(),
+            sinceLastAskMs = sinceLastAskMs,
+        )
+        if (decision is HelperWarmup.Decision.Ask) need()
+        return decision
+    }
+
+    /**
      * 「用 root 启动」的开关或 su 的答复变了(用户在设置、引导页里打开、关掉、重新授权):助手不在就按新的情况从头再试;
      * Mika 自己起不来了就照实改状态。
      */

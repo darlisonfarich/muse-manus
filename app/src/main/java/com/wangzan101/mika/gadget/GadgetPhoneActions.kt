@@ -6,6 +6,7 @@ import com.darlisonfarich.gadgetlink.commands.ErrorCode
 import com.darlisonfarich.gadgetlink.commands.ParamSpec
 import com.darlisonfarich.gadgetlink.commands.ParamType
 import com.darlisonfarich.gadgetlink.commands.PhoneCatalog
+import com.wangzan101.mika.core.shell.PhoneState
 import com.wangzan101.mika.mcp.DirectPhoneBatchSteps
 import com.wangzan101.mika.mcp.DirectPhoneStaleRetry
 import kotlinx.coroutines.runBlocking
@@ -89,6 +90,8 @@ internal object GadgetPhoneActions {
                 val retries = ((failedStep ?: raw)["staleRetries"] as? JsonPrimitive)?.content?.toIntOrNull()?.takeIf { it > 0 }
                 CommandResult.Err(ErrorCode.STALE_SNAPSHOT, retries?.let(DirectPhoneStaleRetry::retriesDetail))
             }
+            // The phone is locked or dark (or accessibility is off): name it instead of the bare "needs the user".
+            reason == "needs_user" && cause in PHONE_STATES -> CommandResult.Err(ErrorCode.LOCAL_GATE_DENIED, cause)
             reason in setOf("needs_user", "payment_requires_takeover", "password_requires_takeover", "approval_unavailable",
                 "confirmation_required", "approval_required", "own_app", "app_access_denied", "guard_warning", "guard_stopped",
                 "remote_access_disabled", "write_disabled") -> CommandResult.Err(ErrorCode.LOCAL_GATE_DENIED, reason)
@@ -97,7 +100,9 @@ internal object GadgetPhoneActions {
             // Never started because the phone had no session for the command in time: not a slow command, a missing
             // precondition. Say which one (the last blocker) instead of a bare timeout.
             reason == "wait_timeout" && cause == SESSION_PENDING -> CommandResult.Err(ErrorCode.UNAVAILABLE, SESSION_PENDING)
-            reason == "wait_timeout" -> CommandResult.Err(ErrorCode.TIMEOUT)
+            // The wait ended on a resource that never freed (task_running, host_busy, slot_budget_exhausted): still a
+            // timeout, but one that says what held it. Nothing was executed, so the detail is safe to name.
+            reason == "wait_timeout" -> CommandResult.Err(ErrorCode.TIMEOUT, cause?.takeIf { SAFE_CODE.matches(it) })
             // No app-only route for this key and no helper running.
             reason == "helper_required" -> CommandResult.Err(ErrorCode.UNAVAILABLE, "helper_required")
             // The host names why it is unavailable (accessibility_off, gadget_link_down, ...) when it knows.
@@ -110,6 +115,8 @@ internal object GadgetPhoneActions {
     }
 
     private const val SESSION_PENDING = "phone_session_pending"
+
+    private val PHONE_STATES = setOf(PhoneState.DEVICE_LOCKED, PhoneState.SCREEN_OFF, PhoneState.ACCESSIBILITY_OFF)
 
     /** Fixed local refusal codes only; anything else is withheld from the detail. */
     private val SAFE_CODE = Regex("[a-z_]{1,40}")

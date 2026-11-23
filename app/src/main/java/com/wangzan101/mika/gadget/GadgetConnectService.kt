@@ -260,6 +260,8 @@ class GadgetConnectService : Service() {
             val phone = PhoneServices.of(this@GadgetConnectService)
             var lastStatus: String? = null
             var lastHelper: String? = null
+            var lastAskAt: Long? = null
+            var lastWarmWord: String? = null
             var lastOff: com.wangzan101.mika.core.shell.AutoOffOutcome? = phone.shellManager.wirelessAutoOn.lastOff.value
             try {
                 while (isActive) {
@@ -270,9 +272,18 @@ class GadgetConnectService : Service() {
                     // The helper is an optional accelerator: the session is built without it, so a missing helper
                     // is never the reason the session is not ready. It is only noted on its own log line.
                     if (phone.hub.shell.value == null) {
-                        // The watchdog relaunches the helper by itself; ask it once per registration
-                        // (it keeps its own backoff) and otherwise only name what it waits on.
-                        if (lastStatus == null) phone.shellManager.need()
+                        // Proactive wake-up: only when the phone already lets the helper in (debugging reachable on a Wi-Fi
+                        // that is already connected). Otherwise dormant, without insisting and without touching Wi-Fi or any
+                        // radio; the accessibility channel carries everything meanwhile. The watchdog keeps its own backoff.
+                        val sinceAsk = lastAskAt?.let { android.os.SystemClock.elapsedRealtime() - it }
+                        val warm = phone.shellManager.engine.warm(sinceAsk)
+                        if (warm is com.wangzan101.mika.core.shell.HelperWarmup.Decision.Ask) {
+                            lastAskAt = android.os.SystemClock.elapsedRealtime()
+                            GadgetLink.log("link: helper warm-up asked")
+                        }
+                        val warmWord = (warm as? com.wangzan101.mika.core.shell.HelperWarmup.Decision.Dormant)?.reason
+                        if (warmWord != lastWarmWord && warmWord != null) GadgetLink.log("link: helper dormant $warmWord")
+                        lastWarmWord = warmWord
                         val helper = GadgetHelperDiagnosis.helperStatus(
                             phone.shellManager.engine.status.value, phone.hub.lastHandoffRejection,
                             developerOptions = runCatching {
