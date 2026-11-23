@@ -56,6 +56,12 @@ object HelperlessRouting {
         else -> KeyPath.NeedsHelper
     }
 
+    /**
+     * BACK through the accessibility global action goes to whichever display holds input focus, so it is only
+     * safe when the agent display's window is the active one and nothing on the user's main screen is.
+     */
+    fun backIsSafe(agentDisplayActive: Boolean, mainDisplayActive: Boolean): Boolean = agentDisplayActive && !mainDisplayActive
+
     /** True when the key can be delivered without the helper (used to answer `helper_required` before acting). */
     fun keyWorksWithoutHelper(keyCode: Int): Boolean = keyPath(keyCode, helperUp = false) != KeyPath.NeedsHelper
 }
@@ -112,5 +118,30 @@ object SessionReadiness {
         deviceLocked -> DEVICE_LOCKED
         !screenInteractive -> SCREEN_OFF
         else -> null
+    }
+}
+
+/**
+ * Flag sets for a virtual display the app creates itself, richest first. The app is not allowed the trusted-only
+ * flags (TRUSTED, OWN_DISPLAY_GROUP, ALWAYS_UNLOCKED, OWN_FOCUS, STEAL_TOP_FOCUS_DISABLED) that the helper uses, and
+ * some systems also refuse the hidden touch/rotation flags to ordinary apps, so each set is tried until one is accepted.
+ */
+object InAppDisplayFlags {
+    private const val PUBLIC = 1 shl 0
+    private const val OWN_CONTENT_ONLY = 1 shl 3
+    private const val SUPPORTS_TOUCH = 1 shl 6
+    private const val ROTATES_WITH_CONTENT = 1 shl 7
+    private const val DESTROY_CONTENT_ON_REMOVAL = 1 shl 8
+    private const val TOUCH_FEEDBACK_DISABLED = 1 shl 13
+    private const val TIRAMISU = 33
+
+    fun candidates(sdk: Int): List<Int> {
+        val base = PUBLIC or OWN_CONTENT_ONLY or SUPPORTS_TOUCH or ROTATES_WITH_CONTENT or DESTROY_CONTENT_ON_REMOVAL
+        val sets = buildList {
+            if (sdk >= TIRAMISU) add(base or TOUCH_FEEDBACK_DISABLED)
+            add(base)
+            add(PUBLIC or OWN_CONTENT_ONLY)
+        }
+        return sets.distinct()
     }
 }

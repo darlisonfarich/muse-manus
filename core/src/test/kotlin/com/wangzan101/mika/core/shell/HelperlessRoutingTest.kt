@@ -88,6 +88,30 @@ class HelperlessRoutingTest {
         assertTrue(HelperlessRouting.keyWorksWithoutHelper(4))
     }
 
+    @Test fun globalBackIsOnlySafeWhenTheAgentDisplayHoldsTheFocusAndTheMainScreenDoesNot() {
+        assertTrue(HelperlessRouting.backIsSafe(agentDisplayActive = true, mainDisplayActive = false))
+        assertFalse(HelperlessRouting.backIsSafe(agentDisplayActive = true, mainDisplayActive = true))
+        assertFalse(HelperlessRouting.backIsSafe(agentDisplayActive = false, mainDisplayActive = false))
+        assertFalse(HelperlessRouting.backIsSafe(agentDisplayActive = false, mainDisplayActive = true))
+    }
+
+    @Test fun appDisplayFlagsNeverAskForTrustedOnlyBitsAndEndWithThePlainPublicSet() {
+        val trustedOnly = (1 shl 10) or (1 shl 11) or (1 shl 12) or (1 shl 14) or (1 shl 16)
+        for (sdk in listOf(30, 33, 34)) {
+            val sets = InAppDisplayFlags.candidates(sdk)
+            assertTrue(sets.isNotEmpty())
+            for (f in sets) {
+                assertEquals("trusted-only bits in $f", 0, f and trustedOnly)
+                assertTrue("public + own content", f and 1 != 0 && f and (1 shl 3) != 0)
+            }
+            assertEquals(1 or (1 shl 3), sets.last())
+            assertEquals(sets.size, sets.toSet().size)
+        }
+        assertEquals(3, InAppDisplayFlags.candidates(34).size)
+        assertEquals(2, InAppDisplayFlags.candidates(30).size)
+        assertTrue("touch feedback only from Android 13", InAppDisplayFlags.candidates(30).none { it and (1 shl 13) != 0 })
+    }
+
     @Test fun readinessNamesTheFirstThingThePersonCanFix() {
         fun b(remote: Boolean = true, link: Boolean = true, a11y: Boolean = true, locked: Boolean = false, on: Boolean = true) =
             SessionReadiness.blocker(remote, link, a11y, locked, on)
