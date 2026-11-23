@@ -20,6 +20,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.content.ContextCompat
+import com.wangzan101.mika.device.ScreenWakeup
 import com.wangzan101.mika.cap.phone.a11y.ScreenAccessibility
 import com.wangzan101.mika.core.voice.SamSummonStateMachine
 import com.wangzan101.mika.core.voice.WakePhraseGate
@@ -123,11 +124,7 @@ class SamWakeService : Service() {
         if (!machine.begin(false)) return
         val power = getSystemService(PowerManager::class.java)
         val screenOn = runCatching { power.isInteractive }.getOrDefault(false)
-        val lock = if (screenOn) null else runCatching {
-            power.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP, "Muse:SamWake")
-                .apply { acquire(4_000L) }
-        }.getOrNull()
-        if (!screenOn && lock == null) { machine.screenWoke(false); report("SCREEN_WAKE_FAILED", "Não foi possível acordar a tela"); return }
+        if (!screenOn && !ScreenWakeup.wake(this)) { machine.screenWoke(false); report("SCREEN_WAKE_FAILED", "Não foi possível acordar a tela"); return }
         machine.screenWoke(true)
         try {
             try { startActivity(Intent(Intent.ACTION_ASSIST).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
