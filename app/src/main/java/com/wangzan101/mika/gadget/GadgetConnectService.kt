@@ -198,6 +198,7 @@ class GadgetConnectService : Service() {
         controlJob = controlScope.launch {
             val phone = PhoneServices.of(this@GadgetConnectService)
             var lastStatus: String? = null
+            var lastHelper: String? = null
             var lastOff: com.wangzan101.mika.core.shell.AutoOffOutcome? = phone.shellManager.wirelessAutoOn.lastOff.value
             try {
                 while (isActive) {
@@ -205,21 +206,26 @@ class GadgetConnectService : Service() {
                         phoneHost.maintainGadget(registration)
                     } catch (e: CancellationException) { throw e }
                     catch (_: Exception) { false }
+                    // The helper is an optional accelerator: the session is built without it, so a missing helper
+                    // is never the reason the session is not ready. It is only noted on its own log line.
+                    if (phone.hub.shell.value == null) {
+                        // The watchdog relaunches the helper by itself; ask it once per registration
+                        // (it keeps its own backoff) and otherwise only name what it waits on.
+                        if (lastStatus == null) phone.shellManager.need()
+                        val helper = GadgetHelperDiagnosis.helperStatus(
+                            phone.shellManager.engine.status.value, phone.hub.lastHandoffRejection,
+                            developerOptions = runCatching {
+                                com.wangzan101.mika.cap.phone.setup.DeveloperSettings.developerOptions(contentResolver)
+                            }.getOrDefault(true),
+                        )
+                        if (helper != lastHelper) GadgetLink.log("link: helper (optional) $helper")
+                        lastHelper = helper
+                    } else lastHelper = null
                     val status = when {
                         ready -> "ready"
                         !(applicationContext as MikaApp).mcp.settings.enabled.value -> "remote_access_disabled"
-                        phone.hub.shell.value == null -> {
-                            // The watchdog relaunches the helper by itself; ask it once per registration
-                            // (it keeps its own backoff) and otherwise only name what it waits on.
-                            if (lastStatus == null) phone.shellManager.need()
-                            GadgetHelperDiagnosis.helperStatus(
-                                phone.shellManager.engine.status.value, phone.hub.lastHandoffRejection,
-                                developerOptions = runCatching {
-                                    com.wangzan101.mika.cap.phone.setup.DeveloperSettings.developerOptions(contentResolver)
-                                }.getOrDefault(true),
-                            )
-                        }
-                        else -> "awaiting_accessibility_or_slot"
+                        com.wangzan101.mika.cap.phone.a11y.ScreenAccessibility.instance.value == null -> "accessibility_off"
+                        else -> "awaiting_slot"
                     }
                     val off = phone.shellManager.wirelessAutoOn.lastOff.value
                     if (off != lastOff && off != null) GadgetLink.log("link: wireless debugging after helper launch: ${off.name}")

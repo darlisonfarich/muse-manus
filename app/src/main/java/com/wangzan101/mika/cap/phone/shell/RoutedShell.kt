@@ -21,7 +21,7 @@ import com.wangzan101.mika.shell.IMikaShell
  */
 class RoutedShell(
     private val helper: () -> IMikaShell?,
-    private val inApp: IMikaShell,
+    private val inApp: InAppShell,
 ) : IMikaShell.Stub() {
     private val ledger = DisplayLedger()
 
@@ -30,6 +30,9 @@ class RoutedShell(
 
     /** True while the helper answers calls (the optional accelerator is up). */
     fun helperUp(): Boolean = helper() != null
+
+    /** BACK can reach the agent display without the helper right now (see [InAppShell.canGoBack]). */
+    fun canGoBackWithoutHelper(displayId: Int): Boolean = inApp.canGoBack(displayId)
 
     /** Releases only the displays this app created. The helper's are its own, and the helper is shared with tasks. */
     fun releaseOwn() = inApp.releaseAll()

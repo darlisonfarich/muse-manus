@@ -204,11 +204,16 @@ class InAppShell(private val context: Context) : IMikaShell.Stub() {
         }
     }
 
-    /** Global BACK only when it provably lands on the agent display (see [HelperlessRouting.backIsSafe]). */
-    private fun globalBack(displayId: Int): Boolean {
+    /** Whether a global BACK would provably land on the agent display now (see [HelperlessRouting.backIsSafe]). */
+    fun canGoBack(displayId: Int): Boolean {
         val service = a11y() ?: return false
         fun active(id: Int) = runCatching { service.windowsOn(id).any { it.isActive || it.isFocused } }.getOrDefault(false)
-        if (!HelperlessRouting.backIsSafe(active(displayId), active(Display.DEFAULT_DISPLAY))) return false
+        return own(displayId) && HelperlessRouting.backIsSafe(active(displayId), active(Display.DEFAULT_DISPLAY))
+    }
+
+    private fun globalBack(displayId: Int): Boolean {
+        val service = a11y() ?: return false
+        if (!canGoBack(displayId)) return false
         return runCatching { service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK) }.getOrDefault(false)
     }
 

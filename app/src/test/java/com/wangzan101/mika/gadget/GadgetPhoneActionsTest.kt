@@ -42,6 +42,27 @@ class GadgetPhoneActionsTest {
         assertNull(code("""{"ok":false,"error":"private user content"}""").detail)
     }
 
+    @Test fun aMissingPreconditionIsAnImmediateUnavailableThatNamesTheReason() {
+        fun err(raw: String) = GadgetPhoneActions.result("phone.tap", json(raw)) as CommandResult.Err
+        // No session in time: not a slow command. The caller learns it is unavailable, and why.
+        val pending = err("""{"ok":false,"error":"wait_timeout","cause":"phone_session_pending"}""")
+        assertEquals(ErrorCode.UNAVAILABLE, pending.code)
+        assertEquals("phone_session_pending", pending.detail)
+        // The host knows what the person can fix.
+        val off = err("""{"ok":false,"error":"phone_unavailable","cause":"accessibility_off"}""")
+        assertEquals(ErrorCode.UNAVAILABLE, off.code)
+        assertEquals("accessibility_off", off.detail)
+        // Only fixed lowercase codes reach the caller, never screen content.
+        assertNull(err("""{"ok":false,"error":"phone_unavailable","cause":"Private Text 123"}""").detail)
+        assertNull(err("""{"ok":false,"error":"phone_unavailable"}""").detail)
+        // A key with no app-only route and no helper.
+        val key = err("""{"ok":false,"error":"helper_required"}""")
+        assertEquals(ErrorCode.UNAVAILABLE, key.code)
+        assertEquals("helper_required", key.detail)
+        // A genuine slow command is still a timeout.
+        assertEquals(ErrorCode.TIMEOUT, err("""{"ok":false,"error":"wait_timeout"}""").code)
+    }
+
     @Test fun aBatchStoppedAfterSuccessfulStepsKeepsItsTopLevelCause() {
         fun err(raw: String) = GadgetPhoneActions.result("phone.run_batch", json(raw)) as CommandResult.Err
         // Nothing ran yet: the top-level cause wins over an earlier successful step.

@@ -94,14 +94,22 @@ internal object GadgetPhoneActions {
                 "remote_access_disabled", "write_disabled") -> CommandResult.Err(ErrorCode.LOCAL_GATE_DENIED, reason)
             reason in setOf("delivery_unknown", "launch_timeout_unknown", "reconciliation_required", "checkpoint_unavailable") ->
                 CommandResult.Err(ErrorCode.EXECUTOR_ERROR, "reconcile_request_id")
+            // Never started because the phone had no session for the command in time: not a slow command, a missing
+            // precondition. Say which one (the last blocker) instead of a bare timeout.
+            reason == "wait_timeout" && cause == SESSION_PENDING -> CommandResult.Err(ErrorCode.UNAVAILABLE, SESSION_PENDING)
             reason == "wait_timeout" -> CommandResult.Err(ErrorCode.TIMEOUT)
+            // No app-only route for this key and no helper running.
+            reason == "helper_required" -> CommandResult.Err(ErrorCode.UNAVAILABLE, "helper_required")
+            // The host names why it is unavailable (accessibility_off, gadget_link_down, ...) when it knows.
             reason in setOf("phone_unavailable", "launch_in_flight", "cancelled", "intent_queue_full", "session_not_found") ->
-                CommandResult.Err(ErrorCode.UNAVAILABLE)
+                CommandResult.Err(ErrorCode.UNAVAILABLE, cause?.takeIf { SAFE_CODE.matches(it) })
             // Never mute: an internal code without a mapping (invalid_commands, request_id_required, ...) still
             // reaches the caller as the detail, as long as it is a plain fixed code and not screen content.
             else -> CommandResult.Err(ErrorCode.EXECUTOR_ERROR, reason?.takeIf { SAFE_CODE.matches(it) })
         }
     }
+
+    private const val SESSION_PENDING = "phone_session_pending"
 
     /** Fixed local refusal codes only; anything else is withheld from the detail. */
     private val SAFE_CODE = Regex("[a-z_]{1,40}")
