@@ -1,9 +1,9 @@
 package com.wangzan101.mika.core.voice
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
+import org.junit.Test
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import kotlinx.coroutines.test.runTest
 
 class SamWakeLogicTest {
@@ -12,7 +12,7 @@ class SamWakeLogicTest {
         phrases.forEach { phrase ->
             val gate = WakePhraseGate(phrases)
             assertFalse(gate.accept(phrase, false, 100))
-            assertTrue(gate.accept(phrase, true, 200), phrase)
+            assertTrue(phrase, gate.accept(phrase, true, 200))
         }
         val gate = WakePhraseGate(phrases)
         assertFalse(gate.accept("Samantha", false, 100))
