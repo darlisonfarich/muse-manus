@@ -126,7 +126,7 @@ class SamWakeService : Service() {
         val screenOn = runCatching { power.isInteractive }.getOrDefault(false)
         if (!screenOn && !ScreenWakeup.wake(this)) { machine.screenWoke(false); report("SCREEN_WAKE_FAILED", "Não foi possível acordar a tela"); return }
         machine.screenWoke(true)
-        try {
+        run {
             try { startActivity(Intent(Intent.ACTION_ASSIST).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             catch (e: Exception) { machine.assistantOpened(false); report("ASSIST_LAUNCH_FAILED", "Não foi possível abrir o assistente padrão: ${e.message ?: "falha"}"); return }
             machine.assistantOpened(true)
@@ -147,7 +147,7 @@ class SamWakeService : Service() {
             }
             machine.callButtonTapped(found = false)
             report("CALL_BUTTON_NOT_FOUND", "Botão de ligação da Sam não apareceu em 3 segundos")
-        } finally { runCatching { if (lock?.isHeld == true) lock.release() } }
+        }
     }
 
     private fun findCallButton(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
