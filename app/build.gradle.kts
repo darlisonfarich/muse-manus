@@ -18,8 +18,8 @@ android {
         applicationId = "com.darlisonfarich.musemanus"
         minSdk = 30
         targetSdk = 35
-        versionCode = providers.gradleProperty("museManusVersionCode").orNull?.toInt() ?: 49
-        versionName = "0.1.48"
+        versionCode = providers.gradleProperty("museManusVersionCode").orNull?.toInt() ?: 50
+        versionName = "0.1.49"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GIT_HASH", "\"$gitHash\"")
         // 关于页版本号后的 Beta 标记;出正式版时改成 false
