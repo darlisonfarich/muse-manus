@@ -112,10 +112,15 @@ class HelperlessRoutingTest {
         assertTrue(HelperlessRouting.keyNeedsMissingHelper(orphan, 66))
     }
 
-    @Test fun withoutTheHelperEveryOtherKeyIsRefusedAsNeedingIt() {
-        for (code in listOf(187, 66, 67, 61, 19, 82, 111)) {
+    @Test fun withoutTheHelperOnlyKeysWithNoAccessibilityOrAppRouteAreRefused() {
+        for (code in listOf(66, 67, 61, 82, 111)) {
             assertEquals("key $code", KeyPath.NeedsHelper, HelperlessRouting.keyPath(code, helperUp = false))
             assertFalse(HelperlessRouting.keyWorksWithoutHelper(code))
+        }
+        for (code in listOf(187, 19)) {
+            assertEquals("key $code", if (code == 19) KeyPath.AppGlobalDpad else KeyPath.AppGlobalAction,
+                HelperlessRouting.keyPath(code, helperUp = false, sdk = 34))
+            assertTrue(HelperlessRouting.keyWorksWithoutHelper(code, sdk = 34))
         }
         assertTrue(HelperlessRouting.keyWorksWithoutHelper(24))
         assertTrue(HelperlessRouting.keyWorksWithoutHelper(4))

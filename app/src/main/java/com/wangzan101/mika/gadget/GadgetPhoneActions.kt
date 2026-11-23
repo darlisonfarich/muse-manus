@@ -134,7 +134,9 @@ internal object GadgetPhoneActions {
         val failedStep = ((raw["results"] as? JsonArray)?.lastOrNull() as? JsonObject)
             ?.takeIf { it["ok"] != JsonPrimitive(true) }
         val error = (failedStep?.get("error") ?: raw["error"]) as? JsonPrimitive
-        val cause = (raw["cause"] as? JsonPrimitive)?.content
+        // A batch step carries its own host hint (including background_launch_blocked); preserve it
+        // when the batch wrapper has no top-level cause.
+        val cause = ((failedStep?.get("cause") ?: raw["cause"]) as? JsonPrimitive)?.content
         val reason = error?.content
         // Part of a batch already ran: whatever stopped the rest, Muse must reconcile instead of retrying.
         val completed = (raw["completed"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0
