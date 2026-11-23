@@ -171,8 +171,8 @@ class SamWakeService : Service() {
                 val n = queue.removeFirst()
                 val label = listOfNotNull(n.contentDescription?.toString(), n.text?.toString()).joinToString(" ").trim()
                 if (label.isNotEmpty() || n.isClickable) {
-                    out.append(if (n.isClickable) "«${label.ifEmpty { "sem-rótulo" }}»*; ")
-                    else "«$label»; ")
+                    val mark = if (n.isClickable) "«${label.ifEmpty { "sem-rótulo" }}»*" else "«$label»"
+                    out.append(mark).append("; ")
                     count++
                 }
                 for (i in 0 until n.childCount) n.getChild(i)?.let(queue::add)
