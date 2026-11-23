@@ -119,8 +119,7 @@ class SamWakeService : Service() {
     private suspend fun summonSam() {
         val machine = SamSummonStateMachine()
         val a11y = ScreenAccessibility.instance.value
-        val root = a11y?.rootInActiveWindow
-        if (root != null && isLive(root)) { machine.begin(true); update("Sam Live já está aberto"); return }
+        if (a11y != null && isLive(allRoots(a11y))) { machine.begin(true); update("Sam Live já está aberto"); return }
         if (!machine.begin(false)) return
         val power = getSystemService(PowerManager::class.java)
         val screenOn = runCatching { power.isInteractive }.getOrDefault(false)
@@ -131,13 +130,15 @@ class SamWakeService : Service() {
             catch (e: Exception) { machine.assistantOpened(false); report("ASSIST_LAUNCH_FAILED", "Não foi possível abrir o assistente padrão: ${e.message ?: "falha"}"); return }
             machine.assistantOpened(true)
             update("Assistente aberto; procurando botão de ligação")
-            val deadline = SystemClock.elapsedRealtime() + 3_000L
+            val deadline = SystemClock.elapsedRealtime() + 8_000L
+            var lastRoots: List<AccessibilityNodeInfo> = emptyList()
             while (SystemClock.elapsedRealtime() < deadline) {
-                delay(120)
-                val service = ScreenAccessibility.instance.value
-                val active = service?.rootInActiveWindow
-                if (active != null && isLive(active)) { machine.begin(true); update("Sam Live já está aberto"); return }
-                val button = active?.let(::findCallButton)
+                delay(150)
+                val service = ScreenAccessibility.instance.value ?: continue
+                val roots = allRoots(service)
+                lastRoots = roots
+                if (isLive(roots)) { machine.begin(true); update("Sam Live já está aberto"); return }
+                val button = findCallButton(roots)
                 if (button != null) {
                     val clicked = runCatching { button.performAction(AccessibilityNodeInfo.ACTION_CLICK) }.getOrDefault(false)
                     machine.callButtonTapped(found = true, tapped = clicked)
@@ -146,30 +147,75 @@ class SamWakeService : Service() {
                 }
             }
             machine.callButtonTapped(found = false)
-            report("CALL_BUTTON_NOT_FOUND", "Botão de ligação da Sam não apareceu em 3 segundos")
+            report("CALL_BUTTON_NOT_FOUND", "Botão de ligação da Sam não apareceu em 8 segundos. Janelas/nós vistos: ${dumpTree(lastRoots)}")
         }
     }
 
-    private fun findCallButton(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        val queue = ArrayDeque<AccessibilityNodeInfo>(); queue.add(root)
-        while (queue.isNotEmpty()) {
-            val n = queue.removeFirst()
-            val label = listOfNotNull(n.contentDescription?.toString(), n.text?.toString()).joinToString(" ").lowercase()
-            val semantic = n.isClickable && (label.contains("call") || label.contains("ligar") || label.contains("telefone") ||
-                label.contains("phone") || label.contains("chamada") || label.contains("start a conversation"))
-            if (semantic) return n
-            for (i in 0 until n.childCount) n.getChild(i)?.let(queue::add)
-        }
-        return null
+    /** Roots of EVERY window the accessibility service can see (the assistant overlay is not
+     *  necessarily the "active window"), with the Muse app's window first. */
+    private fun allRoots(service: ScreenAccessibility): List<AccessibilityNodeInfo> {
+        val fromWindows = runCatching { service.windows.mapNotNull { it.root } }.getOrDefault(emptyList())
+        val active = runCatching { service.rootInActiveWindow }.getOrNull()
+        val all = (fromWindows + listOfNotNull(active)).distinct()
+        return all.sortedByDescending { it.packageName?.toString() == MUSE_PACKAGE }
     }
 
-    private fun isLive(root: AccessibilityNodeInfo): Boolean {
-        val q = ArrayDeque<AccessibilityNodeInfo>(); q.add(root)
-        while (q.isNotEmpty()) {
-            val n = q.removeFirst()
-            val label = "${n.contentDescription ?: ""} ${n.text ?: ""}".lowercase()
-            if (listOf("end call", "hang up", "encerrar chamada", "desligar chamada", "終わり").any(label::contains)) return true
-            for (i in 0 until n.childCount) n.getChild(i)?.let(q::add)
+    private fun dumpTree(roots: List<AccessibilityNodeInfo>): String {
+        val out = StringBuilder()
+        for (root in roots) {
+            if (out.length > 1_200) break
+            out.append('[').append(root.packageName?.toString() ?: "?").append("] ")
+            val queue = ArrayDeque<AccessibilityNodeInfo>(); queue.add(root)
+            var count = 0
+            while (queue.isNotEmpty() && count < 40 && out.length <= 1_400) {
+                val n = queue.removeFirst()
+                val label = listOfNotNull(n.contentDescription?.toString(), n.text?.toString()).joinToString(" ").trim()
+                if (label.isNotEmpty() || n.isClickable) {
+                    val mark = if (n.isClickable) "«${label.ifEmpty { "sem-rótulo" }}»*" else "«$label»"
+                    out.append(mark).append("; ")
+                    count++
+                }
+                for (i in 0 until n.childCount) n.getChild(i)?.let(queue::add)
+            }
+        }
+        return out.toString().ifEmpty { "nenhuma janela visível" }
+    }
+
+    private fun findCallButton(roots: List<AccessibilityNodeInfo>): AccessibilityNodeInfo? {
+        var unlabeledInClaude: AccessibilityNodeInfo? = null
+        var unlabeledRect: android.graphics.Rect? = null
+        for (root in roots) {
+            val inMuse = root.packageName?.toString() == MUSE_PACKAGE
+            val queue = ArrayDeque<AccessibilityNodeInfo>(); queue.add(root)
+            while (queue.isNotEmpty()) {
+                val n = queue.removeFirst()
+                val label = listOfNotNull(n.contentDescription?.toString(), n.text?.toString()).joinToString(" ").lowercase()
+                val semantic = n.isClickable && (label.contains("call") || label.contains("ligar") || label.contains("telefone") ||
+                    label.contains("phone") || label.contains("chamada") || label.contains("voice") || label.contains("voz") ||
+                    label.contains("live") || label.contains("conversa") || label.contains("start a conversation"))
+                if (semantic) return n
+                // Icon-only fallback inside the Muse window: keep the rightmost clickable
+                // unlabeled node in the bottom third (where the overlay's phone button sits).
+                if (inMuse && n.isClickable && label.isBlank()) {
+                    val r = android.graphics.Rect(); n.getBoundsInScreen(r)
+                    val prev = unlabeledRect
+                    if (prev == null || r.centerX() > prev.centerX()) { unlabeledInClaude = n; unlabeledRect = r }
+                }
+                for (i in 0 until n.childCount) n.getChild(i)?.let(queue::add)
+            }
+        }
+        return unlabeledInClaude
+    }
+
+    private fun isLive(roots: List<AccessibilityNodeInfo>): Boolean {
+        for (root in roots) {
+            val q = ArrayDeque<AccessibilityNodeInfo>(); q.add(root)
+            while (q.isNotEmpty()) {
+                val n = q.removeFirst()
+                val label = "${n.contentDescription ?: ""} ${n.text ?: ""}".lowercase()
+                if (listOf("end call", "hang up", "encerrar chamada", "desligar chamada", "終わり").any(label::contains)) return true
+                for (i in 0 until n.childCount) n.getChild(i)?.let(q::add)
+            }
         }
         return false
     }
@@ -189,6 +235,7 @@ class SamWakeService : Service() {
 
     companion object {
         private const val TAG = "SamWake"
+        private const val MUSE_PACKAGE = "com.facebook.aura"
         private const val CHANNEL = "sam_wake"
         private const val ID = 4305
         private const val ACTION_START = "com.darlisonfarich.musemanus.sam.WAKE_START"
